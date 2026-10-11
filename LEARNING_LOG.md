@@ -91,3 +91,25 @@ Nothing broke. Smoke test confirmed Javid answered "What is my favourite program
 
 ### Tomorrow's goal — Day 5
 Add a `delete_task` tool and a `clear_memory` tool for housekeeping. Then explore making Javid proactive: after adding a task, check if it conflicts with anything in the list.
+
+---
+
+## Day 5 — Task Management + Proactive Hints (2026-10-11)
+
+### What I built
+Upgraded Javid to v4 with full task management and prompt-driven proactivity:
+- `list_tasks` upgraded to return numbered output (1. 2. 3. …) so tasks can be referenced by number
+- `delete_task(number)` — removes task N, shifts remaining tasks up
+- `complete_task(number)` — marks task N with ✓ prefix in place
+- `clear_memory()` — resets memory.json to empty facts list
+- `_read_lines()` / `_write_lines()` — shared helpers so all mutating tools use one consistent read/write pattern
+- Proactive duplicate detection: one sentence added to the system prompt tells Javid to call list_tasks after adding a task and warn about similar entries — no extra code needed
+
+### Key insight: prompt engineering vs. code
+Making Javid proactive took one sentence in the system prompt, not a new function. This is the core prompt engineering lesson: behavior that feels like intelligence is often just a well-worded instruction. Code handles the *mechanism*; the prompt shapes the *judgment*.
+
+### What broke and how we fixed it
+Nothing broke. Smoke test confirmed: complete, delete, and clear all mutate the file correctly. Javid flagged a duplicate task ("Prepare Day 3 notes" appeared twice) without being asked — proof the proactive instruction works.
+
+### Tomorrow's goal — Day 6
+Add time and date awareness (Javid knows what day/time it is), a morning briefing tool (reads tasks + weather summary when you say "good morning"), and personality tuning.

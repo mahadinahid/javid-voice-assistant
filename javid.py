@@ -1,7 +1,7 @@
 """
-Javid v3 — push-to-talk voice loop with persistent memory
+Javid v4 — push-to-talk voice loop with task management + proactive hints
 Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> macOS `say` (voice)
-Day 4 adds: remember/recall tools, memory.json loaded into system prompt on startup
+Day 5 adds: numbered list_tasks, delete_task, complete_task, clear_memory, proactive duplicate check
 """
 
 import io
@@ -18,10 +18,10 @@ from dotenv import load_dotenv
 from groq import BadRequestError, Groq
 
 # ---------- settings ----------
-SAMPLE_RATE = 16000                    # Whisper works at 16 kHz; small file = fast upload
-STT_MODEL = "whisper-large-v3-turbo"   # fast + cheap speech-to-text
-LLM_MODEL = "openai/gpt-oss-20b"       # fast model with tool-calling support
-VOICE = "Aman"                         # list all voices: say -v '?'
+SAMPLE_RATE = 16000
+STT_MODEL = "whisper-large-v3-turbo"
+LLM_MODEL = "openai/gpt-oss-20b"
+VOICE = "Aman"
 TASKS_FILE = "tasks.txt"
 MEMORY_FILE = "memory.json"
 
@@ -42,9 +42,12 @@ def build_system_prompt() -> str:
         "You are Javid, Mahadi's personal voice assistant. "
         "Your replies are spoken aloud, so answer in 1-3 short sentences. "
         "No markdown, no lists, no emojis. "
-        "Use add_task to save tasks, list_tasks to read them back, "
+        "Use add_task to save tasks, list_tasks to read them back (tasks are numbered), "
+        "delete_task or complete_task by their number, "
         "web_search for current events, remember to save important facts "
-        "about Mahadi for future sessions, and recall to retrieve them."
+        "about Mahadi for future sessions, recall to retrieve them, "
+        "and clear_memory to wipe all stored facts. "
+        "After adding a task, always call list_tasks and warn Mahadi if a similar task already exists."
     )
     facts = load_memory()["facts"]
     if facts:
@@ -53,7 +56,6 @@ def build_system_prompt() -> str:
     return base
 
 
-# Build messages with memory-aware system prompt at startup
 messages = [{"role": "system", "content": build_system_prompt()}]
 
 
@@ -77,8 +79,36 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_tasks",
-            "description": "Read and return all tasks from Mahadi's task list.",
+            "description": "Return all tasks as a numbered list.",
             "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_task",
+            "description": "Delete a task by its number in the list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "number": {"type": "integer", "description": "The task number to delete."}
+                },
+                "required": ["number"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "complete_task",
+            "description": "Mark a task as done by its number in the list.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "number": {"type": "integer", "description": "The task number to mark complete."}
+                },
+                "required": ["number"],
+            },
         },
     },
     {
@@ -99,7 +129,7 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "remember",
-            "description": "Save an important fact about Mahadi to long-term memory so it is available in future sessions.",
+            "description": "Save an important fact about Mahadi to long-term memory.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -117,7 +147,27 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_memory",
+            "description": "Wipe all facts from long-term memory.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
+
+
+# ---------- task helpers ----------
+def _read_lines() -> list[str]:
+    if not os.path.exists(TASKS_FILE):
+        return []
+    return [l for l in open(TASKS_FILE).read().splitlines() if l.strip()]
+
+
+def _write_lines(lines: list[str]) -> None:
+    with open(TASKS_FILE, "w") as f:
+        f.write("\n".join(lines) + ("\n" if lines else ""))
 
 
 # ---------- tool implementations ----------
@@ -129,10 +179,34 @@ def add_task(task: str) -> str:
 
 
 def list_tasks() -> str:
-    if not os.path.exists(TASKS_FILE):
+    lines = _read_lines()
+    if not lines:
         return "No tasks yet."
-    content = open(TASKS_FILE).read().strip()
-    return content if content else "No tasks yet."
+    return "\n".join(f"{i + 1}. {line}" for i, line in enumerate(lines))
+
+
+def delete_task(number: int) -> str:
+    lines = _read_lines()
+    if not lines:
+        return "No tasks to delete."
+    if number < 1 or number > len(lines):
+        return f"No task number {number}. You have {len(lines)} task(s)."
+    removed = lines.pop(number - 1)
+    _write_lines(lines)
+    return f"Deleted: {removed}"
+
+
+def complete_task(number: int) -> str:
+    lines = _read_lines()
+    if not lines:
+        return "No tasks to complete."
+    if number < 1 or number > len(lines):
+        return f"No task number {number}. You have {len(lines)} task(s)."
+    if lines[number - 1].startswith("✓"):
+        return f"Task {number} is already marked complete."
+    lines[number - 1] = "✓ " + lines[number - 1]
+    _write_lines(lines)
+    return f"Completed: {lines[number - 1]}"
 
 
 def web_search(query: str) -> str:
@@ -158,19 +232,26 @@ def recall() -> str:
     return "\n".join(f"- {f}" for f in facts)
 
 
-# TOOL_MAP: single place to register tool name → function
+def clear_memory() -> str:
+    with open(MEMORY_FILE, "w") as f:
+        json.dump({"facts": []}, f, indent=2)
+    return "Memory cleared."
+
+
 TOOL_MAP = {
-    "add_task":   lambda args: add_task(**args),
-    "list_tasks": lambda args: list_tasks(),
-    "web_search": lambda args: web_search(**args),
-    "remember":   lambda args: remember(**args),
-    "recall":     lambda args: recall(),
+    "add_task":      lambda args: add_task(**args),
+    "list_tasks":    lambda args: list_tasks(),
+    "delete_task":   lambda args: delete_task(**args),
+    "complete_task": lambda args: complete_task(**args),
+    "web_search":    lambda args: web_search(**args),
+    "remember":      lambda args: remember(**args),
+    "recall":        lambda args: recall(),
+    "clear_memory":  lambda args: clear_memory(),
 }
 
 
 # ---------- 1. EARS: record from the microphone ----------
 def record() -> bytes:
-    """Record between two Enter presses. Returns WAV bytes."""
     chunks = []
 
     def on_audio(indata, frames, time, status):
@@ -201,7 +282,7 @@ def transcribe(wav: bytes) -> str:
     return result.text.strip()
 
 
-# ---------- 3. BRAIN: text -> reply (with tool dispatch) ----------
+# ---------- 3. BRAIN: text -> reply ----------
 def think(user_text: str) -> str:
     messages.append({"role": "user", "content": user_text})
     try:
@@ -251,7 +332,7 @@ def speak(text: str) -> None:
 
 # ---------- main loop ----------
 def main() -> None:
-    print("Javid v3 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
+    print("Javid v4 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
     while True:
         wav = record()
         if len(wav) < SAMPLE_RATE:

@@ -135,3 +135,35 @@ Nothing broke. All three smoke tests passed first try.
 
 ### Tomorrow's goal — Day 7
 Final day: polish and wrap-up. Add a startup greeting (Javid speaks when he starts, not just when asked), improve error messages, review all 7 days of code for anything to clean up, and do a final commit tagging v1.0.
+
+---
+
+## Day 7 — Polish + v1.0 (2026-10-11)
+
+### What I built
+Final polish to turn the project into a finished product (Javid v1.0):
+- `startup_greeting()` — pure Python, no API call, time-aware ("Good evening"), task-count-aware. Javid speaks the moment he launches.
+- Graceful Ctrl+C — `try/except KeyboardInterrupt` in `main()` catches the interrupt and speaks a farewell instead of printing a traceback
+- Network-safe `web_search()` — wrapped in `try/except Exception` so a dropped connection returns a friendly message instead of crashing the loop
+- Short transcript filter — `len(text.split()) < 2` skips single-word captures that are almost always mic noise or accidental taps
+- `_read_lines()` file-handle fix — replaced bare `open()` with `with open()` so file handles are always closed
+
+### 7-day arc summary
+| Day | Layer | What it taught |
+|-----|-------|---------------|
+| 1 | Voice loop | Audio pipeline: record → STT → LLM → TTS |
+| 2 | Tool calling | LLM requests actions; Python executes them |
+| 3 | Multiple tools + TOOL_MAP | Extensible agent architecture |
+| 4 | Persistent memory | Session vs. disk vs. model-weight memory |
+| 5 | Task management | Mutating tools, bounds checking, prompt-driven proactivity |
+| 6 | Context awareness | Static vs. dynamic context injection; personality via prompt |
+| 7 | Polish | Error resilience, UX, code quality — what separates a project from a product |
+
+### Final tool inventory (10 tools)
+add_task · list_tasks · delete_task · complete_task · web_search · remember · recall · clear_memory · get_datetime · morning_briefing
+
+### What I'd build next
+- Wake word detection (replace push-to-talk with always-listening)
+- Swap macOS `say` for a high-quality TTS API (ElevenLabs or Groq TTS)
+- Calendar integration (read/write Google Calendar events)
+- A simple web UI to see tasks and memory without opening the terminal

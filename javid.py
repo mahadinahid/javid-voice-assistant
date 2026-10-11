@@ -1,7 +1,7 @@
 """
-Javid v5 — push-to-talk voice loop with context awareness + personality
+Javid v1.0 — push-to-talk voice assistant (7-day build, complete)
 Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> macOS `say` (voice)
-Day 6 adds: get_datetime, morning_briefing, personality rewrite
+Day 7 polish: startup greeting, graceful Ctrl+C, network-safe search, file-handle fix
 """
 
 import io
@@ -178,7 +178,8 @@ TOOLS = [
 def _read_lines() -> list[str]:
     if not os.path.exists(TASKS_FILE):
         return []
-    return [l for l in open(TASKS_FILE).read().splitlines() if l.strip()]
+    with open(TASKS_FILE) as f:
+        return [l for l in f.read().splitlines() if l.strip()]
 
 
 def _write_lines(lines: list[str]) -> None:
@@ -226,8 +227,11 @@ def complete_task(number: int) -> str:
 
 
 def web_search(query: str) -> str:
-    with DDGS() as ddgs:
-        results = list(ddgs.text(query, max_results=3))
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
+    except Exception:
+        return "Search unavailable right now. Try again in a moment."
     if not results:
         return "No results found."
     return "\n".join(f"{r['title']}: {r['body'][:150]}" for r in results)
@@ -256,6 +260,23 @@ def clear_memory() -> str:
 
 def get_datetime() -> str:
     return datetime.now().strftime("It is %A, %B %d, %Y at %I:%M %p.")
+
+
+def startup_greeting() -> str:
+    now = datetime.now()
+    hour = now.hour
+    if hour < 12:
+        time_of_day = "morning"
+    elif hour < 17:
+        time_of_day = "afternoon"
+    else:
+        time_of_day = "evening"
+    pending = [l for l in _read_lines() if not l.startswith("✓")]
+    greeting = f"Good {time_of_day}, Mahadi. I'm online."
+    if pending:
+        count = len(pending)
+        greeting += f" You have {count} pending task{'s' if count != 1 else ''}."
+    return greeting
 
 
 def morning_briefing() -> str:
@@ -379,24 +400,35 @@ def speak(text: str) -> None:
 
 # ---------- main loop ----------
 def main() -> None:
-    print("Javid v5 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
-    while True:
-        wav = record()
-        if len(wav) < SAMPLE_RATE:
-            print("(too short, try again)")
-            continue
+    greeting = startup_greeting()
+    print(f"Javid: {greeting}")
+    speak(greeting)
+    print("(Say 'goodbye' to quit, Ctrl+C to force quit.)\n")
 
-        text = transcribe(wav)
-        if not text:
-            continue
-        print(f"You:   {text}")
+    try:
+        while True:
+            wav = record()
+            if len(wav) < SAMPLE_RATE:
+                print("(too short, try again)")
+                continue
 
-        reply = think(text)
-        print(f"Javid: {reply}")
-        speak(reply)
+            text = transcribe(wav)
+            if not text or len(text.split()) < 2:
+                print("(didn't catch that, try again)")
+                continue
+            print(f"You:   {text}")
 
-        if "goodbye" in text.lower():
-            break
+            reply = think(text)
+            print(f"Javid: {reply}")
+            speak(reply)
+
+            if "goodbye" in text.lower():
+                break
+
+    except KeyboardInterrupt:
+        farewell = "Goodbye, Mahadi. Talk soon."
+        print(f"\nJavid: {farewell}")
+        speak(farewell)
 
 
 if __name__ == "__main__":

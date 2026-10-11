@@ -1,7 +1,7 @@
 """
-Javid v2 — push-to-talk voice loop with multiple tools
+Javid v3 — push-to-talk voice loop with persistent memory
 Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> macOS `say` (voice)
-Day 3 adds: list_tasks tool, web_search tool, TOOL_MAP dispatcher
+Day 4 adds: remember/recall tools, memory.json loaded into system prompt on startup
 """
 
 import io
@@ -13,8 +13,8 @@ from datetime import datetime
 
 import numpy as np
 import sounddevice as sd
-from dotenv import load_dotenv
 from ddgs import DDGS
+from dotenv import load_dotenv
 from groq import BadRequestError, Groq
 
 # ---------- settings ----------
@@ -23,22 +23,41 @@ STT_MODEL = "whisper-large-v3-turbo"   # fast + cheap speech-to-text
 LLM_MODEL = "openai/gpt-oss-20b"       # fast model with tool-calling support
 VOICE = "Aman"                         # list all voices: say -v '?'
 TASKS_FILE = "tasks.txt"
+MEMORY_FILE = "memory.json"
 
 load_dotenv()
 client = Groq()
 
-messages = [{
-    "role": "system",
-    "content": (
+
+# ---------- persistent memory helpers ----------
+def load_memory() -> dict:
+    if not os.path.exists(MEMORY_FILE):
+        return {"facts": []}
+    with open(MEMORY_FILE) as f:
+        return json.load(f)
+
+
+def build_system_prompt() -> str:
+    base = (
         "You are Javid, Mahadi's personal voice assistant. "
         "Your replies are spoken aloud, so answer in 1-3 short sentences. "
         "No markdown, no lists, no emojis. "
         "Use add_task to save tasks, list_tasks to read them back, "
-        "and web_search for current events or facts you don't know."
-    ),
-}]
+        "web_search for current events, remember to save important facts "
+        "about Mahadi for future sessions, and recall to retrieve them."
+    )
+    facts = load_memory()["facts"]
+    if facts:
+        fact_lines = "\n".join(f"- {f}" for f in facts)
+        base += f"\n\nWhat you already know about Mahadi:\n{fact_lines}"
+    return base
 
-# ---------- tool schemas (tells the LLM what it can call) ----------
+
+# Build messages with memory-aware system prompt at startup
+messages = [{"role": "system", "content": build_system_prompt()}]
+
+
+# ---------- tool schemas ----------
 TOOLS = [
     {
         "type": "function",
@@ -76,7 +95,30 @@ TOOLS = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": "Save an important fact about Mahadi to long-term memory so it is available in future sessions.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "The fact to remember."}
+                },
+                "required": ["fact"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall",
+            "description": "Read all facts stored in long-term memory about Mahadi.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
+
 
 # ---------- tool implementations ----------
 def add_task(task: str) -> str:
@@ -101,11 +143,28 @@ def web_search(query: str) -> str:
     return "\n".join(f"{r['title']}: {r['body'][:150]}" for r in results)
 
 
+def remember(fact: str) -> str:
+    memory = load_memory()
+    memory["facts"].append(fact)
+    with open(MEMORY_FILE, "w") as f:
+        json.dump(memory, f, indent=2)
+    return f"Remembered: {fact}"
+
+
+def recall() -> str:
+    facts = load_memory()["facts"]
+    if not facts:
+        return "No facts stored yet."
+    return "\n".join(f"- {f}" for f in facts)
+
+
 # TOOL_MAP: single place to register tool name → function
 TOOL_MAP = {
-    "add_task": lambda args: add_task(**args),
+    "add_task":   lambda args: add_task(**args),
     "list_tasks": lambda args: list_tasks(),
     "web_search": lambda args: web_search(**args),
+    "remember":   lambda args: remember(**args),
+    "recall":     lambda args: recall(),
 }
 
 
@@ -192,7 +251,7 @@ def speak(text: str) -> None:
 
 # ---------- main loop ----------
 def main() -> None:
-    print("Javid v2 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
+    print("Javid v3 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
     while True:
         wav = record()
         if len(wav) < SAMPLE_RATE:

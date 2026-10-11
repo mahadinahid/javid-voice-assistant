@@ -67,3 +67,27 @@ An agent's power comes from its tools, not from the LLM itself. The LLM decides 
 
 ### Tomorrow's goal — Day 4
 Add persistent memory across sessions (save key facts to a JSON file so Javid remembers things between restarts), and improve the system prompt with Mahadi's preferences.
+
+---
+
+## Day 4 — Persistent Memory (2026-10-11)
+
+### What I built
+Upgraded Javid to v3 with long-term memory across restarts:
+- `memory.json` stores a list of facts as plain JSON
+- `remember(fact)` tool — LLM calls this to save something important about Mahadi
+- `recall()` tool — LLM calls this to read back stored facts mid-conversation
+- `load_memory()` + `build_system_prompt()` — on every startup, facts from memory.json are injected into the system prompt so Javid already knows them before the first word is spoken
+
+### Three layers of memory (key mental model)
+| Layer | Where | Survives restart? |
+|---|---|---|
+| In-context | `messages` list in RAM | No |
+| Persistent | `memory.json` on disk | Yes |
+| Model weights | Baked into the LLM | Always (but can't change) |
+
+### What broke and how we fixed it
+Nothing broke. Smoke test confirmed Javid answered "What is my favourite programming language?" correctly on a fresh start, with no prompting — proof the memory injection works.
+
+### Tomorrow's goal — Day 5
+Add a `delete_task` tool and a `clear_memory` tool for housekeeping. Then explore making Javid proactive: after adding a task, check if it conflicts with anything in the list.

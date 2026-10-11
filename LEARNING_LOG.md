@@ -27,3 +27,23 @@ A push-to-talk voice assistant called Javid:
 
 ### Tomorrow's goal — Day 2: Tool Calling
 Add a `add_task` tool so saying "add a task: buy groceries" writes an entry to `tasks.txt`. This introduces Groq's tool-calling API and shows how the LLM can trigger real actions, not just answer questions.
+
+---
+
+## Day 2 — Tool Calling (2026-10-11)
+
+### What I built
+Added tool calling to Javid (now v1):
+- `TOOLS` list describes `add_task` to the LLM in JSON schema format
+- `add_task()` function writes a timestamped entry to `tasks.txt`
+- `think()` updated to handle the two-step roundtrip: first API call returns a tool call request, code executes the function, second API call turns the result into a spoken reply
+- The LLM never touches the file system directly — it only requests actions; Python executes them
+
+### Key insight
+The LLM is not stateful and cannot DO anything on its own. Tool calling is the bridge: the model says "call function X with argument Y", your code runs it, and the result is sent back so the model can reply naturally. You stay in control of what actually happens.
+
+### What broke and how we fixed it
+Nothing broke — smoke test passed first try. The Day 1 BadRequestError (model trying to call `browser.run`) is now less likely since we provide valid tools the model can call instead.
+
+### Tomorrow's goal — Day 3: list_tasks + Web Search
+Add a `list_tasks` tool so Javid can read back your task list. Then add a web search tool using a search API so Javid can answer questions about current events.

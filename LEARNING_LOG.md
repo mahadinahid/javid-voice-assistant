@@ -47,3 +47,23 @@ Nothing broke — smoke test passed first try. The Day 1 BadRequestError (model 
 
 ### Tomorrow's goal — Day 3: list_tasks + Web Search
 Add a `list_tasks` tool so Javid can read back your task list. Then add a web search tool using a search API so Javid can answer questions about current events.
+
+---
+
+## Day 3 — Multiple Tools + TOOL_MAP Dispatcher (2026-10-11)
+
+### What I built
+Upgraded Javid to v2 with three tools and a clean dispatcher:
+- `list_tasks()` — reads tasks.txt and returns all entries so Javid can read your list back aloud
+- `web_search(query)` — searches DuckDuckGo via the `ddgs` package (no extra API key needed)
+- `TOOL_MAP` dictionary — maps tool names to functions, replacing the hardcoded if/else. Adding a new tool now only requires one entry in TOOL_MAP and one schema in TOOLS
+- Added a `[tool]` print line so you can see which tool fired and what it returned during a session
+
+### Key insight
+An agent's power comes from its tools, not from the LLM itself. The LLM decides *which* tool to call and *when* — your Python code decides *what actually happens*. The TOOL_MAP pattern makes this easy to extend.
+
+### What broke and how we fixed it
+1. **`duckduckgo_search` package renamed** — the package was renamed to `ddgs` in a recent release. Fix: `pip install ddgs`, update import to `from ddgs import DDGS`, removed old package.
+
+### Tomorrow's goal — Day 4
+Add persistent memory across sessions (save key facts to a JSON file so Javid remembers things between restarts), and improve the system prompt with Mahadi's preferences.

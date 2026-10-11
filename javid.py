@@ -1,7 +1,7 @@
 """
-Javid v4 — push-to-talk voice loop with task management + proactive hints
+Javid v5 — push-to-talk voice loop with context awareness + personality
 Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> macOS `say` (voice)
-Day 5 adds: numbered list_tasks, delete_task, complete_task, clear_memory, proactive duplicate check
+Day 6 adds: get_datetime, morning_briefing, personality rewrite
 """
 
 import io
@@ -39,15 +39,15 @@ def load_memory() -> dict:
 
 def build_system_prompt() -> str:
     base = (
-        "You are Javid, Mahadi's personal voice assistant. "
-        "Your replies are spoken aloud, so answer in 1-3 short sentences. "
-        "No markdown, no lists, no emojis. "
-        "Use add_task to save tasks, list_tasks to read them back (tasks are numbered), "
-        "delete_task or complete_task by their number, "
-        "web_search for current events, remember to save important facts "
-        "about Mahadi for future sessions, recall to retrieve them, "
-        "and clear_memory to wipe all stored facts. "
-        "After adding a task, always call list_tasks and warn Mahadi if a similar task already exists."
+        "You are Javid, Mahadi's sharp and reliable personal voice assistant. "
+        "Speak like a calm, confident friend — not a corporate bot. "
+        "Use Mahadi's name occasionally but not every sentence. "
+        "Your replies are spoken aloud: 1-3 short sentences, no markdown, no lists, no emojis. "
+        "Tool use: add_task / list_tasks / delete_task / complete_task for the task list; "
+        "web_search for current events; remember / recall / clear_memory for long-term facts; "
+        "get_datetime when the user asks about time or date; "
+        "morning_briefing when greeted with 'good morning', 'good afternoon', or 'good evening'. "
+        "After adding a task, call list_tasks and flag any duplicates."
     )
     facts = load_memory()["facts"]
     if facts:
@@ -155,6 +155,22 @@ TOOLS = [
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_datetime",
+            "description": "Return the current date, time, and day of the week.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "morning_briefing",
+            "description": "Return a morning briefing: current time plus a summary of pending and completed tasks.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
 ]
 
 
@@ -238,6 +254,35 @@ def clear_memory() -> str:
     return "Memory cleared."
 
 
+def get_datetime() -> str:
+    return datetime.now().strftime("It is %A, %B %d, %Y at %I:%M %p.")
+
+
+def morning_briefing() -> str:
+    now = datetime.now()
+    hour = now.hour
+    if hour < 12:
+        greeting = "Good morning"
+    elif hour < 17:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+
+    lines = _read_lines()
+    pending = [l for l in lines if not l.startswith("✓")]
+    done = [l for l in lines if l.startswith("✓")]
+
+    parts = [
+        f"{greeting}! {now.strftime('%A, %B %d at %I:%M %p')}.",
+        f"Pending tasks: {len(pending)}." if pending else "No pending tasks.",
+    ]
+    if pending:
+        parts.append("\n".join(f"  - {l}" for l in pending))
+    if done:
+        parts.append(f"Completed tasks: {len(done)}.")
+    return "\n".join(parts)
+
+
 TOOL_MAP = {
     "add_task":      lambda args: add_task(**args),
     "list_tasks":    lambda args: list_tasks(),
@@ -246,7 +291,9 @@ TOOL_MAP = {
     "web_search":    lambda args: web_search(**args),
     "remember":      lambda args: remember(**args),
     "recall":        lambda args: recall(),
-    "clear_memory":  lambda args: clear_memory(),
+    "clear_memory":      lambda args: clear_memory(),
+    "get_datetime":      lambda args: get_datetime(),
+    "morning_briefing":  lambda args: morning_briefing(),
 }
 
 
@@ -332,7 +379,7 @@ def speak(text: str) -> None:
 
 # ---------- main loop ----------
 def main() -> None:
-    print("Javid v4 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
+    print("Javid v5 ready. Say 'goodbye' to quit (Ctrl+C to force quit).")
     while True:
         wav = record()
         if len(wav) < SAMPLE_RATE:

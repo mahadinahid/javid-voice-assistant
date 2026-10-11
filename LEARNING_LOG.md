@@ -113,3 +113,25 @@ Nothing broke. Smoke test confirmed: complete, delete, and clear all mutate the 
 
 ### Tomorrow's goal — Day 6
 Add time and date awareness (Javid knows what day/time it is), a morning briefing tool (reads tasks + weather summary when you say "good morning"), and personality tuning.
+
+---
+
+## Day 6 — Context Awareness + Personality (2026-10-11)
+
+### What I built
+Upgraded Javid to v5 with time awareness and a distinct voice:
+- `get_datetime()` — returns current day, date, and time; called whenever Javid needs to know when it is
+- `morning_briefing()` — greets appropriately (morning/afternoon/evening), states the time, counts pending vs completed tasks, lists pending ones for a spoken overview
+- Personality rewrite — system prompt now describes Javid as "sharp, reliable, calm and confident like a friend, not a corporate bot." Test 3 shows the difference immediately
+- Tool instruction refactored — system prompt now lists all tools in one tight sentence each, easier to read and extend
+
+### Key insight: static vs. dynamic context
+- Static context (who Mahadi is, his preferences) → injected into system prompt at startup from memory.json. Costs zero tokens at runtime.
+- Dynamic context (what time is it, what tasks are pending) → tools the LLM calls on demand. Only fetched when actually needed.
+- Never inject dynamic data at startup — it goes stale immediately. Use a tool instead.
+
+### What broke and how we fixed it
+Nothing broke. All three smoke tests passed first try.
+
+### Tomorrow's goal — Day 7
+Final day: polish and wrap-up. Add a startup greeting (Javid speaks when he starts, not just when asked), improve error messages, review all 7 days of code for anything to clean up, and do a final commit tagging v1.0.

@@ -4,3 +4,4 @@ __pycache__/
 *.wav
 tasks.txt
 memory.json
+chat_log.jsonl

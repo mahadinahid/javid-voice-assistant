@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 from javid import (
     _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
-    load_memory, set_task_done, startup_greeting, synthesize, think_stream,
-    transcribe,
+    load_memory, read_history, reset_conversation, set_task_done,
+    startup_greeting, synthesize, think_stream, transcribe,
 )
 
 
@@ -109,15 +109,33 @@ def type_message(body: TypeBody):
     return _ndjson(_reply_stream(body.text))
 
 
+@app.get("/history")
+def history(before: int | None = None, limit: int = 60):
+    """Chat log, newest last. Page back with ?before=<index of oldest shown>."""
+    entries = read_history()
+    end = len(entries) if before is None else max(0, min(before, len(entries)))
+    start = max(0, end - limit)
+    return {
+        "messages": [{"i": i, **entries[i]} for i in range(start, end)],
+        "has_more": start > 0,
+    }
+
+
+@app.post("/reset")
+def reset():
+    reset_conversation()
+    return {"ok": True}
+
+
 @app.post("/speak")
 def speak_text(body: TypeBody):
     """Neural voice for one sentence. 503 tells the browser to use its own voice."""
     try:
-        audio = synthesize(body.text)
+        audio, media_type = synthesize(body.text)
     except Exception as e:
         print(f"[tts] unavailable: {str(e)[:120]}")
         raise HTTPException(503, "TTS unavailable")
-    return Response(audio, media_type="audio/wav")
+    return Response(audio, media_type=media_type)
 
 
 # ---------- sidebar: direct edits, no LLM ----------

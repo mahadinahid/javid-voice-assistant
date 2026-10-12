@@ -380,6 +380,46 @@ header h1 {
     border-bottom-left-radius: 4px;
 }
 
+.chat-divider {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 10.5px;
+    color: #475569;
+    letter-spacing: 0.04em;
+    margin: 6px 0;
+}
+.chat-divider::before, .chat-divider::after {
+    content: '';
+    flex: 1;
+    height: 1px;
+    background: #1a1a28;
+}
+.load-earlier {
+    align-self: center;
+    padding: 5px 14px;
+    border-radius: 14px;
+    border: 1px solid #1e1e2e;
+    background: transparent;
+    color: #64748b;
+    font-size: 11.5px;
+    cursor: pointer;
+}
+.load-earlier:hover { color: #94a3b8; border-color: #334155; }
+
+.new-chat-btn {
+    margin-left: auto;
+    padding: 6px 14px;
+    border-radius: 16px;
+    border: 1px solid #1e2d3d;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.new-chat-btn:hover { color: #60a5fa; border-color: #3b82f6; }
+
 /* Typing indicator */
 .typing { display: flex; align-items: center; gap: 5px; padding: 12px 14px; }
 .typing span {
@@ -459,6 +499,7 @@ header h1 {
 <header>
     <div class="status-dot"></div>
     <h1>JAVID</h1>
+    <button id="new-chat-btn" class="new-chat-btn" title="Start a fresh conversation (history is kept)">+ New chat</button>
 </header>
 
 <div class="layout">
@@ -841,18 +882,93 @@ function scrollChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-function addMsg(role, text) {
-    if (!text) return;
-    const chat = document.getElementById('chat');
-    const el   = document.createElement('div');
+function makeMsg(role, text) {
+    const el = document.createElement('div');
     el.className = `message ${role}`;
     el.innerHTML = `
         <span class="msg-who">${role === 'user' ? 'You' : 'Javid'}</span>
         <div class="msg-bubble">${esc(text)}</div>`;
+    return el;
+}
+
+function addMsg(role, text) {
+    if (!text) return;
+    const chat = document.getElementById('chat');
+    const el = makeMsg(role, text);
     chat.appendChild(el);
     chat.scrollTop = chat.scrollHeight;
     return el.querySelector('.msg-bubble');
 }
+
+function makeDivider(label) {
+    const el = document.createElement('div');
+    el.className = 'chat-divider';
+    el.textContent = label;
+    return el;
+}
+
+// ── History ───────────────────────────────────────────────────────────────
+let oldestIndex = null;   // log index of the oldest message on screen
+
+const fmtDay  = d => d.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+const fmtTime = d => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+// Turn log entries into DOM nodes, with a date line whenever the day changes.
+function historyNodes(entries) {
+    const nodes = [];
+    let lastDay = null;
+    for (const e of entries) {
+        const d = new Date(e.ts);
+        const day = d.toDateString();
+        if (e.role === 'divider') {
+            nodes.push(makeDivider(`New conversation · ${fmtDay(d)}, ${fmtTime(d)}`));
+            lastDay = day;
+            continue;
+        }
+        if (day !== lastDay) { nodes.push(makeDivider(fmtDay(d))); lastDay = day; }
+        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text));
+    }
+    return nodes;
+}
+
+async function loadHistory(before = null) {
+    const res = await fetch('/history' + (before === null ? '' : `?before=${before}`));
+    const { messages, has_more } = await res.json();
+    const chat = document.getElementById('chat');
+    document.getElementById('load-earlier')?.remove();
+
+    // Prepend while keeping the user's scroll position steady.
+    const prevHeight = chat.scrollHeight;
+    const frag = document.createDocumentFragment();
+    if (has_more) {
+        const btn = document.createElement('button');
+        btn.id = 'load-earlier';
+        btn.className = 'load-earlier';
+        btn.textContent = 'Load earlier messages';
+        btn.onclick = () => loadHistory(oldestIndex);
+        frag.appendChild(btn);
+    }
+    historyNodes(messages).forEach(n => frag.appendChild(n));
+    chat.prepend(frag);
+    if (messages.length) oldestIndex = messages[0].i;
+
+    chat.scrollTop = before === null ? chat.scrollHeight : chat.scrollHeight - prevHeight;
+}
+
+async function newChat() {
+    stopAll();
+    try {
+        await fetch('/reset', { method: 'POST' });
+    } catch {
+        showToast('Server error — is it running?');
+        return;
+    }
+    const chat = document.getElementById('chat');
+    chat.appendChild(makeDivider(`New conversation · ${fmtTime(new Date())}`));
+    chat.scrollTop = chat.scrollHeight;
+    document.getElementById('text-input').focus();
+}
+document.getElementById('new-chat-btn').addEventListener('click', newChat);
 
 function showTyping() {
     hideTyping();
@@ -1070,6 +1186,7 @@ setInterval(() => {
     try {
         const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
         refreshSidebar(await tr.json(), await mr.json());
+        await loadHistory();
         const { text } = await (await fetch('/greeting')).json();
         addMsg('javid', text);
         greet(text);

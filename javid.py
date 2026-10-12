@@ -4,6 +4,7 @@ Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> macOS `say` 
 Day 7 polish: startup greeting, graceful Ctrl+C, network-safe search, file-handle fix
 """
 
+import asyncio
 import io
 import json
 import os
@@ -11,6 +12,7 @@ import subprocess
 import wave
 from datetime import datetime
 
+import edge_tts
 import numpy as np
 import sounddevice as sd
 from ddgs import DDGS
@@ -22,10 +24,14 @@ SAMPLE_RATE = 16000
 STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "openai/gpt-oss-20b"
 VOICE = "Aman"                                  # macOS `say` voice (CLI)
-TTS_MODEL = "canopylabs/orpheus-v1-english"     # neural voice for the web UI
-TTS_VOICE = "troy"                              # male options: troy, austin, daniel
+TTS_ENGINE = "edge"                             # web UI voice: "edge" (free) or "groq"
+EDGE_VOICE = "en-US-AndrewNeural"               # also: BrianNeural, ChristopherNeural, en-GB-RyanNeural
+GROQ_TTS_MODEL = "canopylabs/orpheus-v1-english"  # needs terms accepted in Groq console
+GROQ_TTS_VOICE = "troy"                         # also: austin, daniel
 TASKS_FILE = "tasks.txt"
 MEMORY_FILE = "memory.json"
+HISTORY_FILE = "chat_log.jsonl"
+CONTEXT_TURNS = 20      # past messages Javid reloads into context on restart
 
 load_dotenv()
 client = Groq()
@@ -59,6 +65,45 @@ def build_system_prompt() -> str:
 
 
 messages = [{"role": "system", "content": build_system_prompt()}]
+
+
+# ---------- chat history (persists across restarts) ----------
+# One JSON object per line: {"ts", "role": "user"|"assistant"|"divider", "text"}.
+# A "divider" marks the start of a new conversation.
+def log_message(role: str, text: str) -> None:
+    entry = {"ts": datetime.now().isoformat(timespec="seconds"), "role": role, "text": text}
+    with open(HISTORY_FILE, "a") as f:
+        f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
+
+def read_history() -> list[dict]:
+    if not os.path.exists(HISTORY_FILE):
+        return []
+    entries = []
+    with open(HISTORY_FILE) as f:
+        for line in f:
+            try:
+                entries.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue  # skip a half-written line rather than lose the whole log
+    return entries
+
+
+def reset_conversation() -> None:
+    """Start a fresh conversation: clear short-term context, keep the log."""
+    del messages[1:]
+    log_message("divider", "")
+
+
+def _restore_context() -> None:
+    """Reload the tail of the current conversation so Javid remembers it after a restart."""
+    history = read_history()
+    start = max((i + 1 for i, e in enumerate(history) if e["role"] == "divider"), default=0)
+    turns = [e for e in history[start:] if e["role"] in ("user", "assistant")]
+    messages.extend({"role": e["role"], "content": e["text"]} for e in turns[-CONTEXT_TURNS:])
+
+
+_restore_context()
 
 
 # ---------- tool schemas ----------
@@ -437,6 +482,7 @@ def think_stream(user_text: str):
     """Yield ("tool", name) and ("delta", text) events as the reply is produced."""
     messages[0]["content"] = build_system_prompt()
     messages.append({"role": "user", "content": user_text})
+    log_message("user", user_text)
     reply = ""
     try:
         tool_calls = {}
@@ -479,6 +525,8 @@ def think_stream(user_text: str):
         # Runs on normal finish and when the client aborts mid-stream,
         # so history always gets whatever was actually said.
         messages.append({"role": "assistant", "content": reply.strip()})
+        if reply.strip():
+            log_message("assistant", reply.strip())
 
 
 def think(user_text: str) -> str:
@@ -486,15 +534,28 @@ def think(user_text: str) -> str:
 
 
 # ---------- 4. MOUTH: text -> speech ----------
-def synthesize(text: str) -> bytes:
-    """Neural TTS for the web UI. Returns WAV bytes."""
-    response = client.audio.speech.create(
-        model=TTS_MODEL,
-        voice=TTS_VOICE,
-        input=text,
-        response_format="wav",
-    )
-    return response.read()
+def synthesize(text: str) -> tuple[bytes, str]:
+    """Neural TTS for the web UI. Returns (audio bytes, media type)."""
+    if TTS_ENGINE == "groq":
+        response = client.audio.speech.create(
+            model=GROQ_TTS_MODEL,
+            voice=GROQ_TTS_VOICE,
+            input=text,
+            response_format="wav",
+        )
+        return response.read(), "audio/wav"
+
+    async def _edge() -> bytes:
+        audio = b""
+        async for chunk in edge_tts.Communicate(text, EDGE_VOICE).stream():
+            if chunk["type"] == "audio":
+                audio += chunk["data"]
+        return audio
+
+    audio = asyncio.run(_edge())
+    if not audio:
+        raise RuntimeError("edge-tts returned no audio")
+    return audio, "audio/mpeg"
 
 
 def speak(text: str) -> None:

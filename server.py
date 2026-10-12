@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+import calendar_tools
 from javid import (
     _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
     is_noise, load_memory, read_history, reset_conversation, set_task_done,
@@ -150,6 +151,22 @@ def history(before: int | None = None, limit: int = 60):
 def reset():
     reset_conversation()
     return {"ok": True}
+
+
+@app.get("/calendar")
+def calendar_agenda():
+    return calendar_tools.agenda("today")
+
+
+@app.post("/calendar/connect")
+def calendar_connect():
+    """Opens Google's sign-in page in the browser and waits (up to 5 min) for consent."""
+    try:
+        calendar_tools.connect()
+    except Exception as e:
+        print(f"[calendar] connect failed: {e!r}")
+        raise HTTPException(500, "Could not connect Google Calendar")
+    return calendar_tools.agenda("today")
 
 
 @app.post("/speak")

@@ -5,3 +5,5 @@ __pycache__/
 tasks.txt
 memory.json
 chat_log.jsonl
+credentials.json
+token.json

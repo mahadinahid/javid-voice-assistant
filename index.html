@@ -165,6 +165,34 @@ header h1 {
 .memory-item:last-child { border-bottom: none; }
 .mem-dot { color: #7c3aed; flex-shrink: 0; }
 
+.event-item {
+    display: flex;
+    gap: 9px;
+    padding: 5px 0;
+    border-bottom: 1px solid #181828;
+    font-size: 12.5px;
+    color: #94a3b8;
+    line-height: 1.45;
+}
+.event-item:last-child { border-bottom: none; }
+.event-item.past { opacity: 0.4; }
+.event-time { color: #f59e0b; font-size: 11px; min-width: 58px; padding-top: 1px; font-variant-numeric: tabular-nums; }
+.cal-note { font-size: 11.5px; color: #64748b; line-height: 1.5; }
+.cal-note code { color: #94a3b8; font-size: 11px; }
+.cal-connect {
+    margin-top: 8px;
+    width: 100%;
+    padding: 7px 10px;
+    border-radius: 6px;
+    border: 1px solid #b45309;
+    background: rgba(245,158,11,0.08);
+    color: #fbbf24;
+    font-size: 12px;
+    cursor: pointer;
+}
+.cal-connect:hover { background: rgba(245,158,11,0.15); }
+.cal-connect:disabled { opacity: 0.5; cursor: wait; }
+
 /* ── Main ── */
 .main {
     flex: 1;
@@ -539,6 +567,10 @@ header h1 {
 
     <!-- ── Sidebar ── -->
     <aside class="sidebar">
+        <div class="panel">
+            <div class="panel-title">Today</div>
+            <div id="calendar-list"><p class="empty">Loading…</p></div>
+        </div>
         <div class="panel">
             <div class="panel-title">Tasks</div>
             <input id="add-task" class="add-task" type="text" placeholder="+ Add a task" autocomplete="off">
@@ -1057,6 +1089,7 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
                     showToast(ev.message);
                 } else if (ev.type === 'done') {
                     refreshSidebar(ev.tasks, ev.memory);
+                    refreshCalendar();  // a reply may have added an event
                 }
             }
         }
@@ -1236,6 +1269,47 @@ function hideTyping() {
 function refreshSidebar(tasks, memory) {
     if (tasks) renderTasks(tasks);
     if (memory) renderMemory(memory);
+}
+
+// ── Calendar ──────────────────────────────────────────────────────────────
+function renderCalendar(cal) {
+    const el = document.getElementById('calendar-list');
+    if (cal.status === 'no_credentials') {
+        el.innerHTML = `<p class="cal-note">Google Calendar not set up. Add an OAuth
+            <code>credentials.json</code> to the Javid folder, then reload.</p>`;
+    } else if (cal.status === 'needs_auth') {
+        el.innerHTML = `<p class="cal-note">Ready to connect your calendar.</p>
+            <button id="cal-connect" class="cal-connect">Connect Google Calendar</button>`;
+        document.getElementById('cal-connect').onclick = connectCalendar;
+    } else if (cal.status === 'error') {
+        el.innerHTML = `<p class="cal-note">Calendar unavailable: ${esc(cal.message || '')}</p>`;
+    } else {
+        el.innerHTML = cal.events.length
+            ? cal.events.map(e => `
+                <div class="event-item${e.past ? ' past' : ''}">
+                    <span class="event-time">${esc(e.start)}</span>
+                    <span>${esc(e.title)}</span>
+                </div>`).join('')
+            : '<p class="empty">Nothing scheduled today.</p>';
+    }
+}
+
+async function refreshCalendar() {
+    try { renderCalendar(await (await fetch('/calendar')).json()); } catch { /* server down */ }
+}
+
+async function connectCalendar() {
+    const btn = document.getElementById('cal-connect');
+    btn.disabled = true;
+    btn.textContent = 'Finish sign-in in the new tab…';
+    try {
+        const res = await fetch('/calendar/connect', { method: 'POST' });
+        if (!res.ok) throw new Error(res.status);
+        renderCalendar(await res.json());
+    } catch {
+        showToast('Calendar connection failed — try again.');
+        refreshCalendar();
+    }
 }
 
 function renderTasks(tasks) {
@@ -1433,6 +1507,7 @@ setInterval(() => {
     try {
         const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
         refreshSidebar(await tr.json(), await mr.json());
+        refreshCalendar();
         await loadHistory();
         const { text } = await (await fetch('/greeting')).json();
         addMsg('javid', text);

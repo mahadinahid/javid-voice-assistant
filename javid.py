@@ -18,7 +18,9 @@ import numpy as np
 import sounddevice as sd
 from ddgs import DDGS
 from dotenv import load_dotenv
-from groq import BadRequestError, Groq
+from groq import APIError, BadRequestError, Groq
+
+import calendar_tools
 
 # ---------- settings ----------
 SAMPLE_RATE = 16000
@@ -55,12 +57,19 @@ def build_system_prompt() -> str:
         "Tool use: add_task / list_tasks / delete_task / complete_task for the task list; "
         "web_search for current events; remember / recall / clear_memory for long-term facts; "
         "get_datetime when the user asks about time or date; "
-        "morning_briefing when greeted with 'good morning', 'good afternoon', or 'good evening'. "
+        "morning_briefing whenever greeted with 'good morning', 'good afternoon', or 'good evening', "
+        "whatever the actual time. "
         "After adding a task, call list_tasks and flag any duplicates. "
         "Tool results are never shown to Mahadi, so say what matters from them in your reply. "
         "For any question about tasks (counts, what's open, what's done), always call list_tasks first "
-        "and use its counts; never answer from memory or guess."
+        "and use its counts; never answer from memory or guess. "
+        "Never state task counts or calendar contents unless a tool returned them in this turn. "
+        "Calendar: list_events / add_event / find_free_time. Pass days as the user said them "
+        "('friday', 'tomorrow') and let the tool work out the date; when you confirm, repeat the "
+        "day and date exactly as the tool result states. Say times like '3 PM', not '15:00'."
     )
+    # Rebuilt every turn, so this is always current.
+    base += f"\n\nRight now it is {datetime.now().strftime('%A, %Y-%m-%d, %H:%M')}."
     facts = load_memory()["facts"]
     if facts:
         fact_lines = "\n".join(f"- {f}" for f in facts)
@@ -218,10 +227,11 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "morning_briefing",
-            "description": "Return a morning briefing: current time plus a summary of pending and completed tasks.",
+            "description": "Return a morning briefing: current time, today's calendar, and a summary of pending and completed tasks.",
             "parameters": {"type": "object", "properties": {}, "required": []},
         },
     },
+    *calendar_tools.TOOLS,
 ]
 
 
@@ -416,6 +426,9 @@ def morning_briefing() -> str:
         parts.append("\n".join(f"  - {l}" for l in pending))
     if done:
         parts.append(f"Completed tasks: {len(done)}.")
+    calendar = calendar_tools.briefing_line()
+    if calendar:
+        parts.append(f"Calendar: {calendar}")
     return "\n".join(parts)
 
 
@@ -430,6 +443,7 @@ TOOL_MAP = {
     "clear_memory":      lambda args: clear_memory(),
     "get_datetime":      lambda args: get_datetime(),
     "morning_briefing":  lambda args: morning_briefing(),
+    **calendar_tools.TOOL_MAP,
 }
 
 
@@ -531,9 +545,19 @@ def think_stream(user_text: str):
     reply = ""
     try:
         retried_empty = False
+        retried_error = False
         for _ in range(MAX_TOOL_ROUNDS + 1):
             tool_calls = {}
-            text = "".join(_stream_completion(tool_calls))
+            try:
+                text = "".join(_stream_completion(tool_calls))
+            except APIError as e:
+                # e.g. "Failed to parse tool call arguments as JSON" — the model
+                # occasionally emits a malformed tool call; one retry usually fixes it.
+                if retried_error or isinstance(e, BadRequestError):
+                    raise
+                retried_error = True
+                print(f"[retry] {str(e)[:80]}")
+                continue
             if not tool_calls and not text.strip() and not retried_empty:
                 retried_empty = True  # model occasionally returns nothing at all; ask once more
                 continue
@@ -568,7 +592,7 @@ def think_stream(user_text: str):
             reply = "Sorry, I got stuck on that one. Try asking another way."
             yield ("delta", reply)
 
-    except BadRequestError:
+    except APIError:
         reply = "I couldn't complete that request. Try asking differently."
         yield ("delta", reply)
 

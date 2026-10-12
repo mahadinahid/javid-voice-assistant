@@ -7,14 +7,14 @@ import json
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, File, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from javid import (
     _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
-    load_memory, read_history, reset_conversation, set_task_done,
-    startup_greeting, synthesize, think_stream, transcribe,
+    is_noise, load_memory, read_history, reset_conversation, set_task_done,
+    startup_greeting, strip_wake_word, synthesize, think_stream, transcribe,
 )
 
 
@@ -83,7 +83,12 @@ def greeting():
 
 
 @app.post("/talk")
-def talk(audio: UploadFile = File(...)):
+def talk(audio: UploadFile = File(...), mode: str = Form("push")):
+    """
+    mode = "push"     push-to-talk: always answer
+           "wake"     hands-free, idle: only answer if it starts with "Javid"
+           "followup" hands-free, right after Javid spoke: no wake word needed
+    """
     audio_bytes = audio.file.read()
 
     content_type = audio.content_type or "audio/webm"
@@ -92,14 +97,34 @@ def talk(audio: UploadFile = File(...)):
         ext = "webm"
 
     transcript = transcribe(audio_bytes, f"audio.{ext}")
+    request = transcript
+
+    def ignored():
+        yield _event(type="ignored", text=transcript)
+
+    if mode in ("wake", "followup"):
+        request = strip_wake_word(transcript)
+        if request is None:
+            if mode == "wake" or is_noise(transcript):
+                print(f"[hands-free] ignored: {transcript!r}")
+                return _ndjson(ignored())
+            request = transcript  # follow-up: no wake word needed
+        elif not request or is_noise(request):
+            # Just "Hey Javid" — acknowledge and open a follow-up window.
+            def ack():
+                yield _event(type="transcript", text=transcript)
+                yield _event(type="delta", text="Yes?")
+                yield _event(type="done", tasks=None, memory=None)
+            return _ndjson(ack())
 
     def events():
         yield _event(type="transcript", text=transcript)
-        if not transcript or len(transcript.split()) < 2:
+        too_short = len(request.split()) < 2 if mode == "push" else not request
+        if too_short:
             yield _event(type="delta", text="I didn't catch that clearly. Try again.")
             yield _event(type="done", tasks=_tasks_json(), memory=_memory_json())
             return
-        yield from _reply_stream(transcript)
+        yield from _reply_stream(request)
 
     return _ndjson(events())
 

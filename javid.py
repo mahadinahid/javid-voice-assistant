@@ -8,6 +8,7 @@ import asyncio
 import io
 import json
 import os
+import re
 import subprocess
 import wave
 from datetime import datetime
@@ -55,7 +56,8 @@ def build_system_prompt() -> str:
         "web_search for current events; remember / recall / clear_memory for long-term facts; "
         "get_datetime when the user asks about time or date; "
         "morning_briefing when greeted with 'good morning', 'good afternoon', or 'good evening'. "
-        "After adding a task, call list_tasks and flag any duplicates."
+        "After adding a task, call list_tasks and flag any duplicates. "
+        "Tool results are never shown to Mahadi, so say what matters from them in your reply."
     )
     facts = load_memory()["facts"]
     if facts:
@@ -449,8 +451,33 @@ def transcribe(wav: bytes, filename: str = "speech.wav") -> str:
         file=(filename, wav),
         model=STT_MODEL,
         language="en",
+        prompt="Javid",  # biases Whisper toward spelling the assistant's name correctly
     )
     return result.text.strip()
+
+
+# ---------- wake word (hands-free mode) ----------
+# "Javid, ...", "Hey Javid ...", plus common mishearings. A bare "David" only
+# counts after a greeting, since it's a common name in ordinary speech.
+_WAKE = re.compile(
+    r"^\W*(?:(?:hey|hi|hello|okay|ok|yo)\W+(?:javid|javed|jovid|javeed|jawed|david)"
+    r"|(?:javid|javed|jovid|javeed|jawed))\b[\W]*",
+    re.IGNORECASE,
+)
+
+# Whisper tends to "hear" these in silence or background noise.
+_NOISE = {"", "you", "thank you", "thanks", "thank you for watching",
+          "thanks for watching", "bye", "okay", "uh", "um", "hmm"}
+
+
+def strip_wake_word(text: str) -> str | None:
+    """Return the request after the wake word, or None if it doesn't start with one."""
+    m = _WAKE.match(text)
+    return text[m.end():].strip() if m else None
+
+
+def is_noise(text: str) -> bool:
+    return re.sub(r"[^a-z ]", "", text.lower()).strip() in _NOISE
 
 
 # ---------- 3. BRAIN: text -> reply ----------
@@ -478,30 +505,40 @@ def _stream_completion(tool_calls: dict):
                 slot["arguments"] += tc.function.arguments
 
 
+MAX_TOOL_ROUNDS = 4
+
+
 def think_stream(user_text: str):
-    """Yield ("tool", name) and ("delta", text) events as the reply is produced."""
+    """Yield ("tool", name) and ("delta", text) events as the reply is produced.
+
+    Each round's text is held until the round ends: if the model also called
+    tools, that text was a guess made before seeing the results (e.g. a made-up
+    time before get_datetime), so it is dropped instead of spoken.
+    """
     messages[0]["content"] = build_system_prompt()
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
     reply = ""
     try:
-        tool_calls = {}
-        for text in _stream_completion(tool_calls):
-            reply += text
-            yield ("delta", text)
+        for _ in range(MAX_TOOL_ROUNDS + 1):
+            tool_calls = {}
+            text = "".join(_stream_completion(tool_calls))
+            if not tool_calls:
+                reply = text
+                if reply:
+                    yield ("delta", reply)
+                break
 
-        if tool_calls:
             calls = [tool_calls[i] for i in sorted(tool_calls)]
             messages.append({
                 "role": "assistant",
-                "content": reply or None,
+                "content": text or None,
                 "tool_calls": [
                     {"id": c["id"], "type": "function",
                      "function": {"name": c["name"], "arguments": c["arguments"]}}
                     for c in calls
                 ],
             })
-            reply = ""
             for call in calls:
                 yield ("tool", call["name"])
                 fn = TOOL_MAP.get(call["name"])
@@ -513,9 +550,9 @@ def think_stream(user_text: str):
                     "tool_call_id": call["id"],
                     "content": result,
                 })
-            for text in _stream_completion({}):
-                reply += text
-                yield ("delta", text)
+        else:
+            reply = "Sorry, I got stuck on that one. Try asking another way."
+            yield ("delta", reply)
 
     except BadRequestError:
         reply = "I couldn't complete that request. Try asking differently."

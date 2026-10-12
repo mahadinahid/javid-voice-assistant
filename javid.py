@@ -57,7 +57,9 @@ def build_system_prompt() -> str:
         "get_datetime when the user asks about time or date; "
         "morning_briefing when greeted with 'good morning', 'good afternoon', or 'good evening'. "
         "After adding a task, call list_tasks and flag any duplicates. "
-        "Tool results are never shown to Mahadi, so say what matters from them in your reply."
+        "Tool results are never shown to Mahadi, so say what matters from them in your reply. "
+        "For any question about tasks (counts, what's open, what's done), always call list_tasks first "
+        "and use its counts; never answer from memory or guess."
     )
     facts = load_memory()["facts"]
     if facts:
@@ -248,7 +250,15 @@ def list_tasks() -> str:
     lines = _read_lines()
     if not lines:
         return "No tasks yet."
-    return "\n".join(f"{i + 1}. {line}" for i, line in enumerate(lines))
+    # State the counts outright: the model miscounts ✓ marks if left to tally them.
+    done = sum(line.startswith("✓") for line in lines)
+    summary = f"{len(lines) - done} pending, {done} done ({len(lines)} total)."
+    rows = []
+    for i, line in enumerate(lines):
+        is_done, prefix, text = _task_parts(line)
+        added = f" (added {prefix.strip()[1:-1]})" if prefix else ""
+        rows.append(f"{i + 1}. [{'done' if is_done else 'pending'}] {text}{added}")
+    return summary + "\n" + "\n".join(rows)
 
 
 def delete_task(number: int) -> str:
@@ -520,9 +530,13 @@ def think_stream(user_text: str):
     log_message("user", user_text)
     reply = ""
     try:
+        retried_empty = False
         for _ in range(MAX_TOOL_ROUNDS + 1):
             tool_calls = {}
             text = "".join(_stream_completion(tool_calls))
+            if not tool_calls and not text.strip() and not retried_empty:
+                retried_empty = True  # model occasionally returns nothing at all; ask once more
+                continue
             if not tool_calls:
                 reply = text
                 if reply:

@@ -21,7 +21,9 @@ from groq import BadRequestError, Groq
 SAMPLE_RATE = 16000
 STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "openai/gpt-oss-20b"
-VOICE = "Aman"
+VOICE = "Aman"                                  # macOS `say` voice (CLI)
+TTS_MODEL = "canopylabs/orpheus-v1-english"     # neural voice for the web UI
+TTS_VOICE = "troy"                              # male options: troy, austin, daniel
 TASKS_FILE = "tasks.txt"
 MEMORY_FILE = "memory.json"
 
@@ -258,6 +260,62 @@ def clear_memory() -> str:
     return "Memory cleared."
 
 
+# ---------- direct edits (web UI sidebar, no LLM) ----------
+def _task_parts(line: str) -> tuple[bool, str, str]:
+    """Split a task line into (done, '[timestamp] ' prefix, text)."""
+    done = line.startswith("✓ ")
+    body = line.removeprefix("✓ ")
+    prefix = body[: body.index("] ") + 2] if body.startswith("[") and "] " in body else ""
+    return done, prefix, body[len(prefix):]
+
+
+def _task_line(done: bool, prefix: str, text: str) -> str:
+    return ("✓ " if done else "") + prefix + text
+
+
+def set_task_done(number: int, done: bool) -> bool:
+    lines = _read_lines()
+    if not 1 <= number <= len(lines):
+        return False
+    _, prefix, text = _task_parts(lines[number - 1])
+    lines[number - 1] = _task_line(done, prefix, text)
+    _write_lines(lines)
+    return True
+
+
+def edit_task(number: int, text: str) -> bool:
+    lines = _read_lines()
+    if not 1 <= number <= len(lines):
+        return False
+    done, prefix, _ = _task_parts(lines[number - 1])
+    lines[number - 1] = _task_line(done, prefix, text)
+    _write_lines(lines)
+    return True
+
+
+def _save_facts(facts: list[str]) -> None:
+    with open(MEMORY_FILE, "w") as f:
+        json.dump({"facts": facts}, f, indent=2)
+
+
+def edit_fact(index: int, text: str) -> bool:
+    facts = load_memory()["facts"]
+    if not 0 <= index < len(facts):
+        return False
+    facts[index] = text
+    _save_facts(facts)
+    return True
+
+
+def delete_fact(index: int) -> bool:
+    facts = load_memory()["facts"]
+    if not 0 <= index < len(facts):
+        return False
+    facts.pop(index)
+    _save_facts(facts)
+    return True
+
+
 def get_datetime() -> str:
     return datetime.now().strftime("It is %A, %B %d, %Y at %I:%M %p.")
 
@@ -377,6 +435,7 @@ def _stream_completion(tool_calls: dict):
 
 def think_stream(user_text: str):
     """Yield ("tool", name) and ("delta", text) events as the reply is produced."""
+    messages[0]["content"] = build_system_prompt()
     messages.append({"role": "user", "content": user_text})
     reply = ""
     try:
@@ -427,6 +486,17 @@ def think(user_text: str) -> str:
 
 
 # ---------- 4. MOUTH: text -> speech ----------
+def synthesize(text: str) -> bytes:
+    """Neural TTS for the web UI. Returns WAV bytes."""
+    response = client.audio.speech.create(
+        model=TTS_MODEL,
+        voice=TTS_VOICE,
+        input=text,
+        response_format="wav",
+    )
+    return response.read()
+
+
 def speak(text: str) -> None:
     subprocess.run(["say", "-v", VOICE, text])
 

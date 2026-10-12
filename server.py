@@ -7,12 +7,14 @@ import json
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, HTTPException, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from javid import (
-    _read_lines, load_memory, startup_greeting, think_stream, transcribe,
+    _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
+    load_memory, set_task_done, startup_greeting, synthesize, think_stream,
+    transcribe,
 )
 
 
@@ -107,13 +109,70 @@ def type_message(body: TypeBody):
     return _ndjson(_reply_stream(body.text))
 
 
+@app.post("/speak")
+def speak_text(body: TypeBody):
+    """Neural voice for one sentence. 503 tells the browser to use its own voice."""
+    try:
+        audio = synthesize(body.text)
+    except Exception as e:
+        print(f"[tts] unavailable: {str(e)[:120]}")
+        raise HTTPException(503, "TTS unavailable")
+    return Response(audio, media_type="audio/wav")
+
+
+# ---------- sidebar: direct edits, no LLM ----------
+class TaskPatch(BaseModel):
+    text: str | None = None
+    done: bool | None = None
+
+
+def _ok_or_404(ok: bool):
+    if not ok:
+        raise HTTPException(404, "Not found")
+
+
 @app.get("/tasks")
 def tasks():
     return _tasks_json()
 
 
+@app.post("/tasks")
+def create_task(body: TypeBody):
+    if body.text.strip():
+        add_task(body.text.strip())
+    return _tasks_json()
+
+
+@app.patch("/tasks/{number}")
+def update_task(number: int, body: TaskPatch):
+    if body.text is not None and body.text.strip():
+        _ok_or_404(edit_task(number, body.text.strip()))
+    if body.done is not None:
+        _ok_or_404(set_task_done(number, body.done))
+    return _tasks_json()
+
+
+@app.delete("/tasks/{number}")
+def remove_task(number: int):
+    _ok_or_404(not delete_task(number).startswith(("No task", "No tasks")))
+    return _tasks_json()
+
+
 @app.get("/memory")
 def memory():
+    return _memory_json()
+
+
+@app.patch("/memory/{index}")
+def update_fact(index: int, body: TypeBody):
+    if body.text.strip():
+        _ok_or_404(edit_fact(index, body.text.strip()))
+    return _memory_json()
+
+
+@app.delete("/memory/{index}")
+def remove_fact(index: int):
+    _ok_or_404(delete_fact(index))
     return _memory_json()
 
 

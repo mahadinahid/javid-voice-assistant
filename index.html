@@ -89,8 +89,69 @@ header h1 {
     line-height: 1.45;
 }
 .task-item:last-child { border-bottom: none; }
-.task-item.done { color: #374151; text-decoration: line-through; }
-.task-num { color: #374151; font-size: 11px; min-width: 16px; padding-top: 1px; }
+.task-item.done .item-text { color: #374151; text-decoration: line-through; }
+
+.check-btn {
+    flex-shrink: 0;
+    width: 15px; height: 15px;
+    margin-top: 2px;
+    border-radius: 50%;
+    border: 1.5px solid #334155;
+    background: transparent;
+    color: transparent;
+    font-size: 9px;
+    line-height: 1;
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: all 0.15s;
+}
+.check-btn:hover { border-color: #34d399; }
+.task-item.done .check-btn { background: #065f46; border-color: #065f46; color: #a7f3d0; }
+
+.item-text { flex: 1; min-width: 0; overflow-wrap: anywhere; cursor: text; }
+.item-edit {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    color: #e2e8f0;
+    background: #0c0c16;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 1px 5px;
+    outline: none;
+}
+
+.del-btn {
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.45;
+    cursor: pointer;
+    padding: 0 2px;
+    opacity: 0;
+    transition: opacity 0.15s, color 0.15s;
+}
+.task-item:hover .del-btn, .memory-item:hover .del-btn, .del-btn:focus-visible { opacity: 1; }
+.del-btn:hover { color: #f87171; }
+.del-btn.confirm { opacity: 1; color: #f87171; font-size: 10.5px; font-weight: 600; }
+@media (hover: none) { .del-btn { opacity: 1; } }
+
+.add-task {
+    width: 100%;
+    margin-bottom: 8px;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #e2e8f0;
+    background: #0c0c16;
+    border: 1px solid #1e1e2e;
+    border-radius: 6px;
+    outline: none;
+}
+.add-task:focus { border-color: #334155; }
+.add-task::placeholder { color: #2d3748; }
 
 .memory-item {
     display: flex;
@@ -102,7 +163,7 @@ header h1 {
     line-height: 1.45;
 }
 .memory-item:last-child { border-bottom: none; }
-.mem-dot { color: #7c3aed; }
+.mem-dot { color: #7c3aed; flex-shrink: 0; }
 
 /* ── Main ── */
 .main {
@@ -406,6 +467,7 @@ header h1 {
     <aside class="sidebar">
         <div class="panel">
             <div class="panel-title">Tasks</div>
+            <input id="add-task" class="add-task" type="text" placeholder="+ Add a task" autocomplete="off">
             <div id="tasks-list"><p class="empty">No tasks yet.</p></div>
         </div>
         <div class="panel">
@@ -519,37 +581,113 @@ async function onStop() {
     await submitAudio(blob, ext);
 }
 
-// ── Voice (browser speech) ────────────────────────────────────────────────
-// Javid speaks in the browser, sentence by sentence, as the reply streams in.
+// ── Voice ─────────────────────────────────────────────────────────────────
+// Each sentence is synthesized by the server's neural voice (/speak) as soon as
+// it arrives, then played in order. If /speak is unavailable, fall back to the
+// browser's built-in speech for the rest of the session.
 const synth = window.speechSynthesis;
-let voice = null;
-let pendingSpeech = '';   // text received but not yet spoken (no sentence end yet)
-let utterancesLeft = 0;   // queued utterances still to finish
+let ttsMode = 'neural';      // 'neural' | 'browser'
+let voice = null;            // browser fallback voice
+let pendingSpeech = '';      // text received but not yet spoken (no sentence end yet)
+let utterancesLeft = 0;      // queued chunks still to finish
 let streamDone = true;
+let speechQueue = [];
+let playing = false;
+let currentAudio = null;
+let speechGen = 0;           // bumps on stop, so stale callbacks are ignored
+let speechCtrl = new AbortController();
 
+// Most natural male voices first; Premium/Enhanced macOS voices win if installed.
+const MALE_VOICES = ['Evan', 'Nathan', 'Tom', 'Aaron', 'Daniel', 'Arthur', 'Oliver',
+                     'Google UK English Male', 'Reed', 'Eddy', 'Rishi', 'Alex'];
 function pickVoice() {
-    const voices = synth?.getVoices() || [];
-    const prefs = ['Aman', 'Rishi', 'Daniel', 'Google UK English Male', 'Alex', 'Samantha'];
-    voice = prefs.map(n => voices.find(v => v.name.startsWith(n))).find(Boolean)
-         || voices.find(v => v.lang.startsWith('en') && v.localService)
-         || voices.find(v => v.lang.startsWith('en'))
-         || null;
+    const voices = (synth?.getVoices() || []).filter(v => v.lang.startsWith('en'));
+    const rank = v => {
+        const i = MALE_VOICES.findIndex(n => v.name.startsWith(n));
+        if (i < 0) return Infinity;
+        return i - (/premium|enhanced/i.test(v.name) ? 100 : 0);
+    };
+    voice = voices.slice().sort((a, b) => rank(a) - rank(b))[0] || null;
+    if (voice && rank(voice) === Infinity) voice = voices.find(v => v.localService) || voice;
 }
 if (synth) {
     pickVoice();
     synth.onvoiceschanged = pickVoice;
 }
 
+async function fetchAudio(text) {
+    const res = await fetch('/speak', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+        signal: speechCtrl.signal,
+    });
+    if (!res.ok) throw new Error('tts ' + res.status);
+    return URL.createObjectURL(await res.blob());
+}
+
 function speakChunk(text) {
     text = text.trim();
-    if (!synth || !text) return;
+    if (!text || !/[a-z0-9]/i.test(text)) return;
+    utterancesLeft++;
+    const audio = ttsMode === 'neural' ? fetchAudio(text) : null;
+    audio?.catch(() => {});  // handled in playNext
+    speechQueue.push({ text, audio });
+    if (!playing) playNext();
+}
+
+async function playNext() {
+    const gen = speechGen;
+    const item = speechQueue.shift();
+    if (!item) { playing = false; maybeIdle(); return; }
+    playing = true;
+
+    let url = null;
+    if (item.audio) {
+        try { url = await item.audio; }
+        catch { if (gen === speechGen) ttsMode = 'browser'; }
+    }
+    if (gen !== speechGen) { if (url) URL.revokeObjectURL(url); return; }
+
+    const done = () => {
+        if (gen !== speechGen) return;
+        if (url) URL.revokeObjectURL(url);
+        currentAudio = null;
+        utterancesLeft--;
+        playNext();
+    };
+
+    if (url) {
+        const a = currentAudio = new Audio(url);
+        a.onplay = () => setOrb('speaking');
+        a.onended = a.onerror = done;
+        a.play().catch(done);
+    } else {
+        browserSpeak(item.text, done);
+    }
+}
+
+function browserSpeak(text, done) {
+    if (!synth) { done(); return; }
     const u = new SpeechSynthesisUtterance(text);
     if (voice) u.voice = voice;
-    u.rate = 1.05;
+    u.rate = 1.03;
     u.onstart = () => setOrb('speaking');
-    u.onend = u.onerror = () => { utterancesLeft--; maybeIdle(); };
-    utterancesLeft++;
+    u.onend = u.onerror = done;
     synth.speak(u);
+}
+
+function stopSpeech() {
+    speechGen++;
+    speechCtrl.abort();
+    speechCtrl = new AbortController();
+    speechQueue = [];
+    playing = false;
+    currentAudio?.pause();
+    currentAudio = null;
+    synth?.cancel();
+    pendingSpeech = '';
+    utterancesLeft = 0;
 }
 
 // Speak every complete sentence in the buffer; keep the unfinished tail.
@@ -583,9 +721,7 @@ function setStopVisible(on) {
 
 function stopAll() {
     abortCtrl?.abort();
-    synth?.cancel();
-    pendingSpeech = '';
-    utterancesLeft = 0;
+    stopSpeech();
     streamDone = true;
     hideTyping();
     if (!isRecording) setOrb('idle');
@@ -735,25 +871,143 @@ function hideTyping() {
     document.getElementById('typing-msg')?.remove();
 }
 
+// ── Sidebar: tasks + memory, editable in place ────────────────────────────
+// Click the circle to complete, click text to edit (Enter saves, Esc cancels),
+// ✕ then "Delete?" to remove. All direct to the server, no LLM involved.
 function refreshSidebar(tasks, memory) {
+    if (tasks) renderTasks(tasks);
+    if (memory) renderMemory(memory);
+}
+
+function renderTasks(tasks) {
     const tl = document.getElementById('tasks-list');
-    tl.innerHTML = tasks?.length
+    tl.innerHTML = tasks.length
         ? tasks.map(t => `
-            <div class="task-item${t.done ? ' done' : ''}">
-                <span class="task-num">${t.number}.</span>
-                <span>${esc(stripTimestamp(t.text))}</span>
+            <div class="task-item${t.done ? ' done' : ''}" data-n="${t.number}">
+                <button class="check-btn" title="${t.done ? 'Mark not done' : 'Mark done'}">✓</button>
+                <span class="item-text" title="Click to edit">${esc(stripTimestamp(t.text))}</span>
+                <button class="del-btn" title="Delete">✕</button>
             </div>`).join('')
         : '<p class="empty">No tasks yet.</p>';
+}
 
+function renderMemory(memory) {
     const ml = document.getElementById('memory-list');
-    ml.innerHTML = memory?.length
-        ? memory.map(f => `
-            <div class="memory-item">
+    ml.innerHTML = memory.length
+        ? memory.map((f, i) => `
+            <div class="memory-item" data-i="${i}">
                 <span class="mem-dot">•</span>
-                <span>${esc(f)}</span>
+                <span class="item-text" title="Click to edit">${esc(f)}</span>
+                <button class="del-btn" title="Delete">✕</button>
             </div>`).join('')
         : '<p class="empty">Nothing stored yet.</p>';
 }
+
+async function api(method, url, body) {
+    try {
+        const res = await fetch(url, {
+            method,
+            headers: body ? { 'Content-Type': 'application/json' } : {},
+            body: body ? JSON.stringify(body) : undefined,
+        });
+        if (!res.ok) throw new Error(res.status);
+        return await res.json();
+    } catch {
+        showToast('Could not save — refreshing.');
+        const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
+        refreshSidebar(await tr.json(), await mr.json());
+        return null;
+    }
+}
+
+const taskUrl = row => `/tasks/${row.dataset.n}`;
+const factUrl = row => `/memory/${row.dataset.i}`;
+
+function startEdit(span, save) {
+    const original = span.textContent;
+    const input = document.createElement('input');
+    input.className = 'item-edit';
+    input.value = original;
+    span.replaceWith(input);
+    input.focus();
+    input.select();
+    let finished = false;
+    const finish = commit => {
+        if (finished) return;
+        finished = true;
+        const text = input.value.trim();
+        input.replaceWith(span);
+        if (commit && text && text !== original) {
+            span.textContent = text;
+            save(text);
+        }
+    };
+    input.addEventListener('keydown', e => {
+        e.stopPropagation();  // keep Space / Esc from reaching talk & stop shortcuts
+        if (e.key === 'Enter') finish(true);
+        if (e.key === 'Escape') finish(false);
+    });
+    input.addEventListener('blur', () => finish(true));
+}
+
+function armDelete(btn, remove) {
+    if (btn.classList.contains('confirm')) { remove(); return; }
+    btn.classList.add('confirm');
+    btn.textContent = 'Delete?';
+    setTimeout(() => {
+        if (!btn.isConnected) return;
+        btn.classList.remove('confirm');
+        btn.textContent = '✕';
+    }, 2500);
+}
+
+document.getElementById('tasks-list').addEventListener('click', async e => {
+    const row = e.target.closest('.task-item');
+    if (!row) return;
+    if (e.target.closest('.check-btn')) {
+        const done = !row.classList.contains('done');
+        row.classList.toggle('done', done);  // optimistic
+        const tasks = await api('PATCH', taskUrl(row), { done });
+        if (tasks) renderTasks(tasks);
+    } else if (e.target.closest('.del-btn')) {
+        armDelete(e.target, async () => {
+            const tasks = await api('DELETE', taskUrl(row));
+            if (tasks) renderTasks(tasks);
+        });
+    } else if (e.target.classList.contains('item-text')) {
+        startEdit(e.target, async text => {
+            const tasks = await api('PATCH', taskUrl(row), { text });
+            if (tasks) renderTasks(tasks);
+        });
+    }
+});
+
+document.getElementById('memory-list').addEventListener('click', e => {
+    const row = e.target.closest('.memory-item');
+    if (!row) return;
+    if (e.target.closest('.del-btn')) {
+        armDelete(e.target, async () => {
+            const memory = await api('DELETE', factUrl(row));
+            if (memory) renderMemory(memory);
+        });
+    } else if (e.target.classList.contains('item-text')) {
+        startEdit(e.target, async text => {
+            const memory = await api('PATCH', factUrl(row), { text });
+            if (memory) renderMemory(memory);
+        });
+    }
+});
+
+document.getElementById('add-task').addEventListener('keydown', async e => {
+    e.stopPropagation();
+    if (e.key === 'Escape') { e.target.value = ''; e.target.blur(); }
+    if (e.key !== 'Enter') return;
+    const text = e.target.value.trim();
+    if (!text) return;
+    e.target.value = '';
+    const tasks = await api('POST', '/tasks', { text });
+    if (tasks) renderTasks(tasks);
+});
 
 function stripTimestamp(text) {
     return text.replace(/^\[[\d\- :]+\]\s*/, '');
@@ -779,16 +1033,16 @@ talkBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording();
 talkBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); }, { passive: false });
 talkBtn.addEventListener('touchend',   stopRecording);
 
+const typingInField = () => document.activeElement?.matches('input, textarea, [contenteditable]');
+
 document.addEventListener('keydown', e => {
-    if (e.code === 'Space' && !e.repeat
-        && document.activeElement !== document.getElementById('text-input')) {
+    if (e.code === 'Space' && !e.repeat && !typingInField()) {
         e.preventDefault();
         startRecording();
     }
 });
 document.addEventListener('keyup', e => {
-    if (e.code === 'Space'
-        && document.activeElement !== document.getElementById('text-input')) {
+    if (e.code === 'Space' && !typingInField()) {
         stopRecording();
     }
 });
@@ -825,7 +1079,6 @@ setInterval(() => {
 // Browsers block speech until the user interacts with the page,
 // so if the greeting can't play now, play it on the first click/key.
 function greet(text) {
-    if (!synth) return;
     streamDone = true;
     if (navigator.userActivation?.hasBeenActive) { speakChunk(text); return; }
     const once = e => {

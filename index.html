@@ -1,0 +1,666 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Javid</title>
+<style>
+/* ── Reset ── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #09090f;
+    color: #e2e8f0;
+    height: 100vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+/* ── Header ── */
+header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 24px;
+    background: #0c0c16;
+    border-bottom: 1px solid #1a1a28;
+    flex-shrink: 0;
+}
+.status-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #22c55e;
+    box-shadow: 0 0 8px rgba(34,197,94,0.7);
+}
+header h1 {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: #cbd5e1;
+}
+
+/* ── Layout ── */
+.layout {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+/* ── Sidebar ── */
+.sidebar {
+    width: 250px;
+    flex-shrink: 0;
+    background: #0c0c16;
+    border-right: 1px solid #1a1a28;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #1e1e30 transparent;
+}
+.panel {
+    background: #11111c;
+    border: 1px solid #1e1e2e;
+    border-radius: 10px;
+    padding: 14px;
+}
+.panel-title {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #475569;
+    margin-bottom: 10px;
+}
+.empty { font-size: 12px; color: #2d3748; font-style: italic; }
+
+.task-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 7px;
+    padding: 5px 0;
+    border-bottom: 1px solid #181828;
+    font-size: 12.5px;
+    color: #94a3b8;
+    line-height: 1.45;
+}
+.task-item:last-child { border-bottom: none; }
+.task-item.done { color: #374151; text-decoration: line-through; }
+.task-num { color: #374151; font-size: 11px; min-width: 16px; padding-top: 1px; }
+
+.memory-item {
+    display: flex;
+    gap: 7px;
+    padding: 5px 0;
+    border-bottom: 1px solid #181828;
+    font-size: 12.5px;
+    color: #94a3b8;
+    line-height: 1.45;
+}
+.memory-item:last-child { border-bottom: none; }
+.mem-dot { color: #7c3aed; }
+
+/* ── Main ── */
+.main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 28px 24px 16px;
+    gap: 18px;
+    overflow: hidden;
+    min-width: 0;
+}
+
+/* ── Orb ── */
+.orb-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+
+.orb-wrapper {
+    position: relative;
+    width: 156px;
+    height: 156px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.orb-ring {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    opacity: 0;
+    border: 1.5px solid transparent;
+    pointer-events: none;
+}
+
+.orb {
+    width: 136px;
+    height: 136px;
+    border-radius: 50%;
+    position: relative;
+    z-index: 1;
+    transition: box-shadow 0.5s ease;
+}
+
+/* — Idle: soft blue breathe — */
+.orb.idle {
+    background: radial-gradient(circle at 38% 30%, #93c5fd, #1d4ed8, #060d1f);
+    box-shadow: 0 0 28px rgba(29,78,216,0.4), 0 0 64px rgba(29,78,216,0.12);
+    animation: breathe 3.5s ease-in-out infinite;
+}
+@keyframes breathe {
+    0%,100% { transform: scale(1); }
+    50%      { transform: scale(1.05); }
+}
+
+/* — Listening: red pulse + expanding rings — */
+.orb.listening {
+    background: radial-gradient(circle at 38% 30%, #fca5a5, #b91c1c, #1c0404);
+    box-shadow: 0 0 40px rgba(185,28,28,0.6), 0 0 80px rgba(185,28,28,0.2);
+    animation: listen-pulse 0.75s ease-in-out infinite;
+}
+@keyframes listen-pulse {
+    0%,100% { transform: scale(1); }
+    50%      { transform: scale(1.07); }
+}
+.orb.listening ~ .orb-ring:nth-child(2) {
+    border-color: rgba(185,28,28,0.5);
+    animation: ring-out 1.5s ease-out infinite;
+}
+.orb.listening ~ .orb-ring:nth-child(3) {
+    border-color: rgba(185,28,28,0.3);
+    animation: ring-out 1.5s ease-out 0.75s infinite;
+}
+@keyframes ring-out {
+    0%   { transform: scale(1); opacity: 0.8; }
+    100% { transform: scale(1.9); opacity: 0; }
+}
+
+/* — Thinking: purple brightness pulse — */
+.orb.thinking {
+    background: radial-gradient(circle at 38% 30%, #d8b4fe, #7c3aed, #160929);
+    box-shadow: 0 0 40px rgba(124,58,237,0.6), 0 0 80px rgba(124,58,237,0.2);
+    animation: think-pulse 1s ease-in-out infinite;
+}
+@keyframes think-pulse {
+    0%,100% { transform: scale(1);    filter: brightness(1); }
+    50%      { transform: scale(1.03); filter: brightness(1.3); }
+}
+
+/* — Speaking: green wave — */
+.orb.speaking {
+    background: radial-gradient(circle at 38% 30%, #6ee7b7, #047857, #021a11);
+    box-shadow: 0 0 40px rgba(4,120,87,0.6), 0 0 80px rgba(4,120,87,0.2);
+    animation: speak-wave 0.35s ease-in-out infinite alternate;
+}
+@keyframes speak-wave {
+    0%   { transform: scale(1); }
+    100% { transform: scale(1.08); }
+}
+
+/* Orb label */
+.orb-label {
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    transition: color 0.3s;
+}
+.orb-label.idle      { color: #334155; }
+.orb-label.listening { color: #f87171; }
+.orb-label.thinking  { color: #a78bfa; }
+.orb-label.speaking  { color: #34d399; }
+
+/* ── Talk button ── */
+.talk-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 11px 26px;
+    border-radius: 30px;
+    border: 1.5px solid #1e2d3d;
+    background: transparent;
+    color: #64748b;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    touch-action: none;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+.talk-btn:hover { border-color: #3b82f6; color: #60a5fa; background: rgba(59,130,246,0.06); }
+.talk-btn.active { border-color: #ef4444; color: #f87171; background: rgba(239,68,68,0.08); }
+
+/* ── Chat ── */
+.chat-section {
+    flex: 1;
+    width: 100%;
+    max-width: 660px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    gap: 8px;
+}
+
+.chat {
+    flex: 1;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding-right: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: #1e1e30 transparent;
+}
+.chat::-webkit-scrollbar { width: 3px; }
+.chat::-webkit-scrollbar-thumb { background: #1e1e30; border-radius: 2px; }
+
+.message { display: flex; flex-direction: column; gap: 3px; max-width: 82%; }
+.message.user  { align-self: flex-end;  align-items: flex-end; }
+.message.javid { align-self: flex-start; align-items: flex-start; }
+
+.msg-who {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+.message.user  .msg-who { color: #3b82f6; }
+.message.javid .msg-who { color: #7c3aed; }
+
+.msg-bubble {
+    padding: 9px 14px;
+    border-radius: 14px;
+    font-size: 13.5px;
+    line-height: 1.55;
+}
+.message.user  .msg-bubble {
+    background: #1e3a5f;
+    color: #bfdbfe;
+    border-bottom-right-radius: 4px;
+}
+.message.javid .msg-bubble {
+    background: #13131f;
+    color: #e2e8f0;
+    border: 1px solid #1e1e2e;
+    border-bottom-left-radius: 4px;
+}
+
+/* Typing indicator */
+.typing { display: flex; align-items: center; gap: 5px; padding: 12px 14px; }
+.typing span {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #475569;
+    animation: dot-bounce 1.2s ease-in-out infinite;
+}
+.typing span:nth-child(2) { animation-delay: 0.2s; }
+.typing span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes dot-bounce {
+    0%,60%,100% { transform: translateY(0); }
+    30%          { transform: translateY(-6px); }
+}
+
+/* ── Input row ── */
+.input-row {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+    max-width: 660px;
+    padding-top: 8px;
+    border-top: 1px solid #1a1a28;
+    flex-shrink: 0;
+}
+.text-input {
+    flex: 1;
+    padding: 10px 16px;
+    border-radius: 22px;
+    border: 1px solid #1a1a28;
+    background: #11111c;
+    color: #e2e8f0;
+    font-size: 13.5px;
+    outline: none;
+    transition: border-color 0.2s;
+}
+.text-input:focus { border-color: #2d3748; }
+.text-input::placeholder { color: #2d3748; }
+
+.send-btn {
+    padding: 10px 20px;
+    border-radius: 22px;
+    border: none;
+    background: #1d4ed8;
+    color: #fff;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+    flex-shrink: 0;
+}
+.send-btn:hover:not(:disabled) { background: #2563eb; }
+.send-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+/* ── Toast ── */
+.toast {
+    position: fixed;
+    bottom: 20px; left: 50%;
+    transform: translateX(-50%);
+    background: #3b0000;
+    color: #fca5a5;
+    padding: 10px 20px;
+    border-radius: 8px;
+    font-size: 13px;
+    border: 1px solid #7f1d1d;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s;
+    z-index: 99;
+    white-space: nowrap;
+}
+.toast.show { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+    <div class="status-dot"></div>
+    <h1>JAVID</h1>
+</header>
+
+<div class="layout">
+
+    <!-- ── Sidebar ── -->
+    <aside class="sidebar">
+        <div class="panel">
+            <div class="panel-title">Tasks</div>
+            <div id="tasks-list"><p class="empty">No tasks yet.</p></div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">Memory</div>
+            <div id="memory-list"><p class="empty">Nothing stored yet.</p></div>
+        </div>
+    </aside>
+
+    <!-- ── Main ── -->
+    <main class="main">
+
+        <!-- Orb -->
+        <div class="orb-section">
+            <div class="orb-wrapper">
+                <div id="orb" class="orb idle"></div>
+                <div class="orb-ring"></div>
+                <div class="orb-ring"></div>
+            </div>
+            <span id="orb-label" class="orb-label idle">Ready</span>
+        </div>
+
+        <!-- Hold-to-talk -->
+        <button id="talk-btn" class="talk-btn">
+            <span>🎙</span>
+            <span id="btn-label">Hold to Talk &nbsp;·&nbsp; Space</span>
+        </button>
+
+        <!-- Chat -->
+        <div class="chat-section">
+            <div id="chat" class="chat"></div>
+
+            <!-- Input -->
+            <div class="input-row">
+                <input id="text-input" class="text-input" type="text"
+                       placeholder="Or type a message…" autocomplete="off">
+                <button id="send-btn" class="send-btn">Send</button>
+            </div>
+        </div>
+
+    </main>
+</div>
+
+<div id="toast" class="toast"></div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let mediaRecorder = null;
+let audioChunks   = [];
+let micStream     = null;
+let isRecording   = false;
+let isBusy        = false;
+
+// ── Orb ───────────────────────────────────────────────────────────────────
+const ORB_STATES = {
+    idle:      { label: 'Ready',        cls: 'idle' },
+    listening: { label: 'Listening…',   cls: 'listening' },
+    thinking:  { label: 'Thinking…',    cls: 'thinking' },
+    speaking:  { label: 'Speaking…',    cls: 'speaking' },
+};
+
+function setOrb(state) {
+    const s = ORB_STATES[state];
+    const orb   = document.getElementById('orb');
+    const label = document.getElementById('orb-label');
+    orb.className   = `orb ${s.cls}`;
+    label.className = `orb-label ${s.cls}`;
+    label.textContent = s.label;
+}
+
+// ── Recording ─────────────────────────────────────────────────────────────
+async function startRecording() {
+    if (isRecording || isBusy) return;
+    try {
+        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    } catch {
+        showToast('Microphone blocked — allow access in browser settings.');
+        return;
+    }
+    audioChunks  = [];
+    mediaRecorder = new MediaRecorder(micStream);
+    mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+    mediaRecorder.onstop = onStop;
+    mediaRecorder.start(100);
+    isRecording = true;
+    setOrb('listening');
+    const btn = document.getElementById('talk-btn');
+    btn.classList.add('active');
+    document.getElementById('btn-label').textContent = 'Release to Send';
+}
+
+function stopRecording() {
+    if (!isRecording || !mediaRecorder) return;
+    isRecording = false;
+    mediaRecorder.stop();
+    micStream.getTracks().forEach(t => t.stop());
+    const btn = document.getElementById('talk-btn');
+    btn.classList.remove('active');
+    document.getElementById('btn-label').textContent = 'Hold to Talk · Space';
+    setOrb('thinking');
+}
+
+async function onStop() {
+    if (!audioChunks.length) { setOrb('idle'); return; }
+    const mime = mediaRecorder.mimeType || 'audio/webm';
+    const blob = new Blob(audioChunks, { type: mime });
+    const ext  = mime.split('/')[1]?.split(';')[0] || 'webm';
+    await submitAudio(blob, ext);
+}
+
+// ── API ───────────────────────────────────────────────────────────────────
+async function submitAudio(blob, ext) {
+    isBusy = true;
+    showTyping();
+    const fd = new FormData();
+    fd.append('audio', blob, `audio.${ext}`);
+    try {
+        const res  = await fetch('/talk', { method: 'POST', body: fd });
+        if (!res.ok) throw new Error(res.status);
+        const data = await res.json();
+        hideTyping();
+        if (data.transcript) addMsg('user', data.transcript);
+        addMsg('javid', data.reply);
+        refreshSidebar(data.tasks, data.memory);
+        animateSpeaking(data.reply);
+    } catch (e) {
+        hideTyping();
+        showToast('Server error — is it running?');
+        setOrb('idle');
+    } finally {
+        isBusy = false;
+    }
+}
+
+async function submitText(text) {
+    if (!text.trim() || isBusy) return;
+    isBusy = true;
+    setOrb('thinking');
+    addMsg('user', text);
+    showTyping();
+    try {
+        const res  = await fetch('/type', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text }),
+        });
+        if (!res.ok) throw new Error(res.status);
+        const data = await res.json();
+        hideTyping();
+        addMsg('javid', data.reply);
+        refreshSidebar(data.tasks, data.memory);
+        animateSpeaking(data.reply);
+    } catch (e) {
+        hideTyping();
+        showToast('Server error — is it running?');
+        setOrb('idle');
+    } finally {
+        isBusy = false;
+    }
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────
+function animateSpeaking(reply) {
+    setOrb('speaking');
+    const ms = Math.min(Math.max(reply.length * 60, 1800), 9000);
+    setTimeout(() => setOrb('idle'), ms);
+}
+
+function addMsg(role, text) {
+    if (!text) return;
+    const chat = document.getElementById('chat');
+    const el   = document.createElement('div');
+    el.className = `message ${role}`;
+    el.innerHTML = `
+        <span class="msg-who">${role === 'user' ? 'You' : 'Javid'}</span>
+        <div class="msg-bubble">${esc(text)}</div>`;
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function showTyping() {
+    hideTyping();
+    const chat = document.getElementById('chat');
+    const el   = document.createElement('div');
+    el.className = 'message javid';
+    el.id = 'typing-msg';
+    el.innerHTML = `
+        <span class="msg-who">Javid</span>
+        <div class="msg-bubble typing"><span></span><span></span><span></span></div>`;
+    chat.appendChild(el);
+    chat.scrollTop = chat.scrollHeight;
+}
+
+function hideTyping() {
+    document.getElementById('typing-msg')?.remove();
+}
+
+function refreshSidebar(tasks, memory) {
+    const tl = document.getElementById('tasks-list');
+    tl.innerHTML = tasks?.length
+        ? tasks.map(t => `
+            <div class="task-item${t.done ? ' done' : ''}">
+                <span class="task-num">${t.number}.</span>
+                <span>${esc(stripTimestamp(t.text))}</span>
+            </div>`).join('')
+        : '<p class="empty">No tasks yet.</p>';
+
+    const ml = document.getElementById('memory-list');
+    ml.innerHTML = memory?.length
+        ? memory.map(f => `
+            <div class="memory-item">
+                <span class="mem-dot">•</span>
+                <span>${esc(f)}</span>
+            </div>`).join('')
+        : '<p class="empty">Nothing stored yet.</p>';
+}
+
+function stripTimestamp(text) {
+    return text.replace(/^\[[\d\- :]+\]\s*/, '');
+}
+
+function esc(str) {
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function showToast(msg) {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// ── Events ────────────────────────────────────────────────────────────────
+const talkBtn = document.getElementById('talk-btn');
+talkBtn.addEventListener('mousedown',  e => { e.preventDefault(); startRecording(); });
+talkBtn.addEventListener('mouseup',    stopRecording);
+talkBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording(); });
+talkBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); }, { passive: false });
+talkBtn.addEventListener('touchend',   stopRecording);
+
+document.addEventListener('keydown', e => {
+    if (e.code === 'Space' && !e.repeat
+        && document.activeElement !== document.getElementById('text-input')) {
+        e.preventDefault();
+        startRecording();
+    }
+});
+document.addEventListener('keyup', e => {
+    if (e.code === 'Space'
+        && document.activeElement !== document.getElementById('text-input')) {
+        stopRecording();
+    }
+});
+
+const textInput = document.getElementById('text-input');
+const sendBtn   = document.getElementById('send-btn');
+
+function handleSend() {
+    const text = textInput.value.trim();
+    if (text) { textInput.value = ''; submitText(text); }
+}
+sendBtn.addEventListener('click', handleSend);
+textInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleSend(); });
+
+// Disable Send while busy
+setInterval(() => {
+    sendBtn.disabled = isBusy;
+}, 200);
+
+// ── Init: load sidebar on page open ───────────────────────────────────────
+(async () => {
+    try {
+        const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
+        refreshSidebar(await tr.json(), await mr.json());
+    } catch { /* server not ready */ }
+})();
+</script>
+
+</body>
+</html>

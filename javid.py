@@ -341,9 +341,9 @@ def record() -> bytes:
 
 
 # ---------- 2. TRANSCRIBE: audio -> text ----------
-def transcribe(wav: bytes) -> str:
+def transcribe(wav: bytes, filename: str = "speech.wav") -> str:
     result = client.audio.transcriptions.create(
-        file=("speech.wav", wav),
+        file=(filename, wav),
         model=STT_MODEL,
         language="en",
     )

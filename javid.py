@@ -11,7 +11,7 @@ import os
 import re
 import subprocess
 import wave
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import edge_tts
 import numpy as np
@@ -64,12 +64,22 @@ def build_system_prompt() -> str:
         "For any question about tasks (counts, what's open, what's done), always call list_tasks first "
         "and use its counts; never answer from memory or guess. "
         "Never state task counts or calendar contents unless a tool returned them in this turn. "
+        "Holidays and days off: use list_holidays (official Google data), never web_search or memory, "
+        "and always name the next upcoming public holiday with its weekday and date, even if it "
+        "doesn't fall on a weekend; mention when holidays join up with the weekend into a longer break. "
+        "Don't say you checked or double-checked unless you called a tool in this turn; if a "
+        "search didn't give a clear answer, say you're not sure instead of guessing. "
+        "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
         "Calendar: list_events / add_event / find_free_time. Pass days as the user said them "
         "('friday', 'tomorrow') and let the tool work out the date; when you confirm, repeat the "
         "day and date exactly as the tool result states. Say times like '3 PM', not '15:00'."
     )
-    # Rebuilt every turn, so this is always current.
-    base += f"\n\nRight now it is {datetime.now().strftime('%A, %Y-%m-%d, %H:%M')}."
+    # Rebuilt every turn, so this is always current. The day table lets the
+    # model look weekdays up instead of computing them (it gets that wrong).
+    now = datetime.now()
+    days = ", ".join((now + timedelta(days=i)).strftime("%a %b %d") for i in range(14))
+    base += (f"\n\nRight now it is {now.strftime('%A, %Y-%m-%d, %H:%M')}."
+             f"\nThe next 14 days: {days}.")
     facts = load_memory()["facts"]
     if facts:
         fact_lines = "\n".join(f"- {f}" for f in facts)

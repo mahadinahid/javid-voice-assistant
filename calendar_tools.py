@@ -238,6 +238,73 @@ def find_free_time(day: str = "today", duration_minutes: int = 30) -> str:
         f"{_fmt_time(s)} to {_fmt_time(e)}" for s, e in slots)
 
 
+# Google's public holiday calendars: en.<code>#holiday@group.v.calendar.google.com
+HOLIDAY_CALENDARS = {
+    "bangladesh": "bd", "india": "indian", "pakistan": "pk", "usa": "usa",
+    "united states": "usa", "uk": "uk", "united kingdom": "uk", "saudi arabia": "saudiarabian",
+    "malaysia": "malaysia", "japan": "japanese", "germany": "german",
+    "australia": "australian", "canada": "canadian",
+}
+HOME_COUNTRY = "bangladesh"
+HOME_WEEKEND = {4, 5}   # Friday, Saturday (Monday = 0)
+
+
+def _breaks(holidays: dict[date, str]) -> list[str]:
+    """Runs of 3+ consecutive days off (holidays plus weekend) that include a holiday."""
+    out, seen = [], set()
+    for d in sorted(holidays):
+        if d in seen:
+            continue
+        start = end = d
+        off = lambda x: x in holidays or x.weekday() in HOME_WEEKEND
+        while off(start - timedelta(days=1)):
+            start -= timedelta(days=1)
+        while off(end + timedelta(days=1)):
+            end += timedelta(days=1)
+        span = [start + timedelta(days=i) for i in range((end - start).days + 1)]
+        seen.update(span)
+        if len(span) >= 3:
+            names = list(dict.fromkeys(holidays[x] for x in span if x in holidays))
+            out.append(f"{start.strftime('%A, %B %d')} to {end.strftime('%A, %B %d')}: "
+                       f"{len(span)} days off in a row ({', '.join(names)} plus the weekend)")
+    return out
+
+
+@_guard
+def list_holidays(country: str = HOME_COUNTRY, days: int = 60, include_observances: bool = False) -> str:
+    """Official public holidays from Google's holiday calendar — not a web guess."""
+    key = (country or HOME_COUNTRY).strip().lower()
+    code = HOLIDAY_CALENDARS.get(key)
+    if not code:
+        return f"I don't have a holiday calendar for {country}. Known: {', '.join(sorted(HOLIDAY_CALENDARS))}."
+    start = datetime.combine(date.today(), datetime.min.time(), _tz())
+    end = start + timedelta(days=max(1, min(int(days), 366)))
+    items = _service().events().list(
+        calendarId=f"en.{code}#holiday@group.v.calendar.google.com",
+        timeMin=start.isoformat(), timeMax=end.isoformat(),
+        singleEvents=True, orderBy="startTime",
+    ).execute().get("items", [])
+
+    rows, public = [], {}
+    for ev in items:
+        kind = "observance" if (ev.get("description") or "").startswith("Observance") else "public holiday"
+        if kind == "observance" and not include_observances:
+            continue
+        d = date.fromisoformat(ev["start"]["date"]) if "date" in ev["start"] else _event_times(ev)[0].date()
+        rows.append(f"- {d.strftime('%A, %B %d, %Y')}: {ev.get('summary')} ({kind})")
+        if kind == "public holiday":
+            public.setdefault(d, ev.get("summary"))
+    if not rows:
+        return f"No public holidays in {country.title()} in the next {days} days."
+    text = f"Holidays in {country.title()} (next {days} days, from Google's official calendar):\n" + "\n".join(rows)
+    if public:
+        first = min(public)
+        text += f"\nNext public holiday: {first.strftime('%A, %B %d')} ({public[first]})."
+    if key == HOME_COUNTRY and (breaks := _breaks(public)):
+        text += "\nLong breaks:\n" + "\n".join(f"- {b}" for b in breaks)
+    return text
+
+
 # ---------- web UI ----------
 def agenda(day: str = "today") -> dict:
     st = status()
@@ -271,6 +338,23 @@ _DAY_HELP = ("Pass the user's words, don't compute dates: 'today', 'tomorrow', a
              "like 'friday' or 'next tuesday', or an explicit date YYYY-MM-DD.")
 
 TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "list_holidays",
+            "description": "Official public holidays for a country from Google's holiday calendar. "
+                           "Always use this (not web_search) for questions about holidays or days off.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "country": {"type": "string", "description": f"Country name; default '{HOME_COUNTRY}'."},
+                    "days": {"type": "integer", "description": "How far ahead to look, in days (default 60).", "default": 60},
+                    "include_observances": {"type": "boolean", "description": "Also list non-holiday observances.", "default": False},
+                },
+                "required": [],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -322,6 +406,7 @@ TOOLS = [
 ]
 
 TOOL_MAP = {
+    "list_holidays":  lambda args: list_holidays(**args),
     "list_events":    lambda args: list_events(**args),
     "add_event":      lambda args: add_event(**args),
     "find_free_time": lambda args: find_free_time(**args),

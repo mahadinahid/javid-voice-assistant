@@ -3,26 +3,23 @@ Javid web server — wraps javid.py in a FastAPI backend.
 Run: python server.py  →  open http://localhost:8000
 """
 
-import threading
+import json
 from contextlib import asynccontextmanager
 
 import uvicorn
 from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from javid import (
-    _read_lines, load_memory, speak, startup_greeting, think, transcribe,
+    _read_lines, load_memory, startup_greeting, think_stream, transcribe,
 )
 
 
 # ---------- startup ----------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    greeting = startup_greeting()
-    print(f"\nJavid: {greeting}")
-    print("Open http://localhost:8000\n")
-    threading.Thread(target=speak, args=(greeting,), daemon=True).start()
+    print("\nJavid is up. Open http://localhost:8000\n")
     yield
 
 
@@ -56,6 +53,33 @@ def root():
     return FileResponse("index.html")
 
 
+def _event(**data) -> str:
+    return json.dumps(data) + "\n"
+
+
+def _reply_stream(user_text: str):
+    """Stream Javid's reply as newline-delimited JSON events."""
+    try:
+        for kind, text in think_stream(user_text):
+            if kind == "tool":
+                yield _event(type="tool", name=text)
+            else:
+                yield _event(type="delta", text=text)
+    except Exception as e:
+        print(f"[error] {e!r}")
+        yield _event(type="error", message="Something went wrong on my end.")
+    yield _event(type="done", tasks=_tasks_json(), memory=_memory_json())
+
+
+def _ndjson(gen) -> StreamingResponse:
+    return StreamingResponse(gen, media_type="application/x-ndjson")
+
+
+@app.get("/greeting")
+def greeting():
+    return {"text": startup_greeting()}
+
+
 @app.post("/talk")
 def talk(audio: UploadFile = File(...)):
     audio_bytes = audio.file.read()
@@ -67,34 +91,20 @@ def talk(audio: UploadFile = File(...)):
 
     transcript = transcribe(audio_bytes, f"audio.{ext}")
 
-    if not transcript or len(transcript.split()) < 2:
-        return {
-            "transcript": transcript,
-            "reply": "I didn't catch that clearly. Try again.",
-            "tasks": _tasks_json(),
-            "memory": _memory_json(),
-        }
+    def events():
+        yield _event(type="transcript", text=transcript)
+        if not transcript or len(transcript.split()) < 2:
+            yield _event(type="delta", text="I didn't catch that clearly. Try again.")
+            yield _event(type="done", tasks=_tasks_json(), memory=_memory_json())
+            return
+        yield from _reply_stream(transcript)
 
-    reply = think(transcript)
-    threading.Thread(target=speak, args=(reply,), daemon=True).start()
-
-    return {
-        "transcript": transcript,
-        "reply": reply,
-        "tasks": _tasks_json(),
-        "memory": _memory_json(),
-    }
+    return _ndjson(events())
 
 
 @app.post("/type")
 def type_message(body: TypeBody):
-    reply = think(body.text)
-    threading.Thread(target=speak, args=(reply,), daemon=True).start()
-    return {
-        "reply": reply,
-        "tasks": _tasks_json(),
-        "memory": _memory_json(),
-    }
+    return _ndjson(_reply_stream(body.text))
 
 
 @app.get("/tasks")

@@ -242,6 +242,28 @@ header h1 {
 .talk-btn:hover { border-color: #3b82f6; color: #60a5fa; background: rgba(59,130,246,0.06); }
 .talk-btn.active { border-color: #ef4444; color: #f87171; background: rgba(239,68,68,0.08); }
 
+.controls { display: flex; gap: 8px; align-items: center; flex-shrink: 0; }
+.stop-btn {
+    display: none;
+    padding: 11px 20px;
+    border-radius: 30px;
+    border: 1.5px solid #7f1d1d;
+    background: transparent;
+    color: #f87171;
+    font-size: 13.5px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.stop-btn.show { display: inline-flex; }
+.stop-btn:hover { background: rgba(239,68,68,0.08); }
+
+.tool-note {
+    font-size: 11px;
+    color: #64748b;
+    font-style: italic;
+}
+
 /* ── Chat ── */
 .chat-section {
     flex: 1;
@@ -406,10 +428,13 @@ header h1 {
         </div>
 
         <!-- Hold-to-talk -->
-        <button id="talk-btn" class="talk-btn">
-            <span>🎙</span>
-            <span id="btn-label">Hold to Talk &nbsp;·&nbsp; Space</span>
-        </button>
+        <div class="controls">
+            <button id="talk-btn" class="talk-btn">
+                <span>🎙</span>
+                <span id="btn-label">Hold to Talk &nbsp;·&nbsp; Space</span>
+            </button>
+            <button id="stop-btn" class="stop-btn" title="Stop (Esc)">■ Stop</button>
+        </div>
 
         <!-- Chat -->
         <div class="chat-section">
@@ -455,7 +480,8 @@ function setOrb(state) {
 
 // ── Recording ─────────────────────────────────────────────────────────────
 async function startRecording() {
-    if (isRecording || isBusy) return;
+    if (isRecording) return;
+    stopAll();  // talking over Javid cuts him off
     try {
         micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch {
@@ -493,62 +519,190 @@ async function onStop() {
     await submitAudio(blob, ext);
 }
 
-// ── API ───────────────────────────────────────────────────────────────────
-async function submitAudio(blob, ext) {
+// ── Voice (browser speech) ────────────────────────────────────────────────
+// Javid speaks in the browser, sentence by sentence, as the reply streams in.
+const synth = window.speechSynthesis;
+let voice = null;
+let pendingSpeech = '';   // text received but not yet spoken (no sentence end yet)
+let utterancesLeft = 0;   // queued utterances still to finish
+let streamDone = true;
+
+function pickVoice() {
+    const voices = synth?.getVoices() || [];
+    const prefs = ['Aman', 'Rishi', 'Daniel', 'Google UK English Male', 'Alex', 'Samantha'];
+    voice = prefs.map(n => voices.find(v => v.name.startsWith(n))).find(Boolean)
+         || voices.find(v => v.lang.startsWith('en') && v.localService)
+         || voices.find(v => v.lang.startsWith('en'))
+         || null;
+}
+if (synth) {
+    pickVoice();
+    synth.onvoiceschanged = pickVoice;
+}
+
+function speakChunk(text) {
+    text = text.trim();
+    if (!synth || !text) return;
+    const u = new SpeechSynthesisUtterance(text);
+    if (voice) u.voice = voice;
+    u.rate = 1.05;
+    u.onstart = () => setOrb('speaking');
+    u.onend = u.onerror = () => { utterancesLeft--; maybeIdle(); };
+    utterancesLeft++;
+    synth.speak(u);
+}
+
+// Speak every complete sentence in the buffer; keep the unfinished tail.
+// A boundary is .!? followed by whitespace, so "27.3" or "3.5" never split.
+function feedSpeech(text, flush = false) {
+    pendingSpeech += text;
+    const boundary = /[.!?]+["')\]]*\s+/g;
+    let m, last = 0;
+    while ((m = boundary.exec(pendingSpeech))) {
+        speakChunk(pendingSpeech.slice(last, boundary.lastIndex));
+        last = boundary.lastIndex;
+    }
+    pendingSpeech = pendingSpeech.slice(last);
+    if (flush) { speakChunk(pendingSpeech); pendingSpeech = ''; }
+}
+
+function maybeIdle() {
+    if (streamDone && utterancesLeft <= 0 && !isRecording) {
+        utterancesLeft = 0;
+        setOrb('idle');
+        setStopVisible(false);
+    }
+}
+
+// ── Streaming API ─────────────────────────────────────────────────────────
+let abortCtrl = null;
+
+function setStopVisible(on) {
+    document.getElementById('stop-btn').classList.toggle('show', on);
+}
+
+function stopAll() {
+    abortCtrl?.abort();
+    synth?.cancel();
+    pendingSpeech = '';
+    utterancesLeft = 0;
+    streamDone = true;
+    hideTyping();
+    if (!isRecording) setOrb('idle');
+    setStopVisible(false);
+}
+
+// POST and consume the newline-delimited JSON event stream.
+async function streamReply(url, init, { onTranscript } = {}) {
+    stopAll();
     isBusy = true;
+    streamDone = false;
+    const ctrl = abortCtrl = new AbortController();
+    setOrb('thinking');
+    setStopVisible(true);
     showTyping();
+
+    let bubble = null, reply = '';
+    const ensureBubble = () => {
+        if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); }
+        return bubble;
+    };
+
+    try {
+        const res = await fetch(url, { ...init, signal: ctrl.signal });
+        if (!res.ok) throw new Error(res.status);
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+
+        while (true) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            let nl;
+            while ((nl = buf.indexOf('\n')) >= 0) {
+                const line = buf.slice(0, nl).trim();
+                buf = buf.slice(nl + 1);
+                if (!line) continue;
+                const ev = JSON.parse(line);
+
+                if (ev.type === 'transcript') {
+                    onTranscript?.(ev.text);
+                } else if (ev.type === 'tool') {
+                    showToolNote(ev.name);
+                } else if (ev.type === 'delta') {
+                    reply += ev.text;
+                    ensureBubble().textContent = reply;
+                    scrollChat();
+                    feedSpeech(ev.text);
+                } else if (ev.type === 'error') {
+                    showToast(ev.message);
+                } else if (ev.type === 'done') {
+                    refreshSidebar(ev.tasks, ev.memory);
+                }
+            }
+        }
+        feedSpeech('', true);
+    } catch (e) {
+        if (e.name !== 'AbortError') showToast('Server error — is it running?');
+    } finally {
+        if (bubble && !reply.trim()) bubble.closest('.message').remove();
+        if (ctrl !== abortCtrl) return;  // a newer request has taken over
+        hideTyping();
+        streamDone = true;
+        isBusy = false;
+        abortCtrl = null;
+        maybeIdle();
+    }
+}
+
+async function submitAudio(blob, ext) {
     const fd = new FormData();
     fd.append('audio', blob, `audio.${ext}`);
-    try {
-        const res  = await fetch('/talk', { method: 'POST', body: fd });
-        if (!res.ok) throw new Error(res.status);
-        const data = await res.json();
-        hideTyping();
-        if (data.transcript) addMsg('user', data.transcript);
-        addMsg('javid', data.reply);
-        refreshSidebar(data.tasks, data.memory);
-        animateSpeaking(data.reply);
-    } catch (e) {
-        hideTyping();
-        showToast('Server error — is it running?');
-        setOrb('idle');
-    } finally {
-        isBusy = false;
-    }
+    await streamReply('/talk', { method: 'POST', body: fd }, {
+        onTranscript: text => {
+            if (!text) return;
+            hideTyping();
+            addMsg('user', text);
+            showTyping();
+        },
+    });
 }
 
 async function submitText(text) {
     if (!text.trim() || isBusy) return;
-    isBusy = true;
-    setOrb('thinking');
     addMsg('user', text);
-    showTyping();
-    try {
-        const res  = await fetch('/type', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ text }),
-        });
-        if (!res.ok) throw new Error(res.status);
-        const data = await res.json();
-        hideTyping();
-        addMsg('javid', data.reply);
-        refreshSidebar(data.tasks, data.memory);
-        animateSpeaking(data.reply);
-    } catch (e) {
-        hideTyping();
-        showToast('Server error — is it running?');
-        setOrb('idle');
-    } finally {
-        isBusy = false;
-    }
+    await streamReply('/type', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+    });
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
-function animateSpeaking(reply) {
-    setOrb('speaking');
-    const ms = Math.min(Math.max(reply.length * 60, 1800), 9000);
-    setTimeout(() => setOrb('idle'), ms);
+const TOOL_LABELS = {
+    web_search: 'Searching the web…',
+    add_task: 'Adding task…', list_tasks: 'Checking tasks…',
+    delete_task: 'Deleting task…', complete_task: 'Completing task…',
+    remember: 'Saving to memory…', recall: 'Checking memory…', clear_memory: 'Clearing memory…',
+    get_datetime: 'Checking the time…', morning_briefing: 'Preparing your briefing…',
+};
+
+function showToolNote(name) {
+    document.getElementById('tool-note')?.remove();
+    const typing = document.getElementById('typing-msg');
+    if (!typing) return;
+    const el = document.createElement('span');
+    el.id = 'tool-note';
+    el.className = 'tool-note';
+    el.textContent = TOOL_LABELS[name] || `Using ${name}…`;
+    typing.appendChild(el);
+    scrollChat();
+}
+
+function scrollChat() {
+    const chat = document.getElementById('chat');
+    chat.scrollTop = chat.scrollHeight;
 }
 
 function addMsg(role, text) {
@@ -561,6 +715,7 @@ function addMsg(role, text) {
         <div class="msg-bubble">${esc(text)}</div>`;
     chat.appendChild(el);
     chat.scrollTop = chat.scrollHeight;
+    return el.querySelector('.msg-bubble');
 }
 
 function showTyping() {
@@ -638,6 +793,9 @@ document.addEventListener('keyup', e => {
     }
 });
 
+document.getElementById('stop-btn').addEventListener('click', stopAll);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') stopAll(); });
+
 const textInput = document.getElementById('text-input');
 const sendBtn   = document.getElementById('send-btn');
 
@@ -658,8 +816,27 @@ setInterval(() => {
     try {
         const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
         refreshSidebar(await tr.json(), await mr.json());
+        const { text } = await (await fetch('/greeting')).json();
+        addMsg('javid', text);
+        greet(text);
     } catch { /* server not ready */ }
 })();
+
+// Browsers block speech until the user interacts with the page,
+// so if the greeting can't play now, play it on the first click/key.
+function greet(text) {
+    if (!synth) return;
+    streamDone = true;
+    if (navigator.userActivation?.hasBeenActive) { speakChunk(text); return; }
+    const once = e => {
+        removeEventListener('pointerdown', once, true);
+        removeEventListener('keydown', once, true);
+        if (e.code === 'Space' || e.target.closest?.('#talk-btn') || isBusy) return;  // user is about to talk
+        speakChunk(text);
+    };
+    addEventListener('pointerdown', once, true);
+    addEventListener('keydown', once, true);
+}
 </script>
 
 </body>

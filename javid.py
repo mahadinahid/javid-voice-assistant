@@ -351,46 +351,79 @@ def transcribe(wav: bytes, filename: str = "speech.wav") -> str:
 
 
 # ---------- 3. BRAIN: text -> reply ----------
-def think(user_text: str) -> str:
-    messages.append({"role": "user", "content": user_text})
-    try:
-        response = client.chat.completions.create(
-            model=LLM_MODEL,
-            messages=messages,
-            tools=TOOLS,
-            reasoning_effort="low",
-            include_reasoning=False,
-        )
-        msg = response.choices[0].message
+def _stream_completion(tool_calls: dict):
+    """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`."""
+    stream = client.chat.completions.create(
+        model=LLM_MODEL,
+        messages=messages,
+        tools=TOOLS,
+        reasoning_effort="low",
+        include_reasoning=False,
+        stream=True,
+    )
+    for chunk in stream:
+        delta = chunk.choices[0].delta
+        if delta.content:
+            yield delta.content
+        for tc in delta.tool_calls or []:
+            slot = tool_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+            if tc.id:
+                slot["id"] = tc.id
+            if tc.function and tc.function.name:
+                slot["name"] += tc.function.name
+            if tc.function and tc.function.arguments:
+                slot["arguments"] += tc.function.arguments
 
-        if msg.tool_calls:
-            messages.append(msg)
-            for tool_call in msg.tool_calls:
-                fn = TOOL_MAP.get(tool_call.function.name)
-                args = json.loads(tool_call.function.arguments)
-                result = fn(args) if fn else f"Unknown tool: {tool_call.function.name}"
-                print(f"[tool] {tool_call.function.name}({args}) → {result[:80]}")
+
+def think_stream(user_text: str):
+    """Yield ("tool", name) and ("delta", text) events as the reply is produced."""
+    messages.append({"role": "user", "content": user_text})
+    reply = ""
+    try:
+        tool_calls = {}
+        for text in _stream_completion(tool_calls):
+            reply += text
+            yield ("delta", text)
+
+        if tool_calls:
+            calls = [tool_calls[i] for i in sorted(tool_calls)]
+            messages.append({
+                "role": "assistant",
+                "content": reply or None,
+                "tool_calls": [
+                    {"id": c["id"], "type": "function",
+                     "function": {"name": c["name"], "arguments": c["arguments"]}}
+                    for c in calls
+                ],
+            })
+            reply = ""
+            for call in calls:
+                yield ("tool", call["name"])
+                fn = TOOL_MAP.get(call["name"])
+                args = json.loads(call["arguments"] or "{}")
+                result = fn(args) if fn else f"Unknown tool: {call['name']}"
+                print(f"[tool] {call['name']}({args}) → {result[:80]}")
                 messages.append({
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": call["id"],
                     "content": result,
                 })
-            follow_up = client.chat.completions.create(
-                model=LLM_MODEL,
-                messages=messages,
-                tools=TOOLS,
-                reasoning_effort="low",
-                include_reasoning=False,
-            )
-            reply = (follow_up.choices[0].message.content or "").strip()
-        else:
-            reply = (msg.content or "").strip()
+            for text in _stream_completion({}):
+                reply += text
+                yield ("delta", text)
 
     except BadRequestError:
         reply = "I couldn't complete that request. Try asking differently."
+        yield ("delta", reply)
 
-    messages.append({"role": "assistant", "content": reply})
-    return reply
+    finally:
+        # Runs on normal finish and when the client aborts mid-stream,
+        # so history always gets whatever was actually said.
+        messages.append({"role": "assistant", "content": reply.strip()})
+
+
+def think(user_text: str) -> str:
+    return "".join(text for kind, text in think_stream(user_text) if kind == "delta").strip()
 
 
 # ---------- 4. MOUTH: text -> speech ----------

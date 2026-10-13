@@ -31,6 +31,8 @@ class NotConnected(Exception):
 
 # ---------- auth ----------
 def _load_creds() -> Credentials | None:
+    _lock_down(CREDENTIALS_FILE)
+    _lock_down(TOKEN_FILE)
     if not os.path.exists(TOKEN_FILE):
         return None
     creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
@@ -46,9 +48,21 @@ def _load_creds() -> Credentials | None:
     return None
 
 
+def _lock_down(path: str) -> None:
+    """Keep the OAuth files owner-only (they hold a refresh token / client secret)."""
+    try:
+        if os.stat(path).st_mode & 0o077:
+            os.chmod(path, 0o600)
+    except OSError:
+        pass
+
+
 def _save(creds: Credentials) -> None:
-    with open(TOKEN_FILE, "w") as f:
+    # Create with 0600 so the token is never briefly world-readable, then fix a file from before.
+    fd = os.open(TOKEN_FILE, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         f.write(creds.to_json())
+    os.chmod(TOKEN_FILE, 0o600)
 
 
 def status() -> str:

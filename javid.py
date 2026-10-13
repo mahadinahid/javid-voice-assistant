@@ -641,9 +641,24 @@ def _note_headers(model: str, headers) -> None:
         _model_info.setdefault(model, {})["limits"] = limits
 
 
+_KEY_SHAPE = re.compile(r"(?:gsk_|AIza|sk-|ya29\.)[A-Za-z0-9_\-.*\u2022]{6,}")
+
+
+def _redact(text: str) -> str:
+    """Strip API keys from provider error text before it is stored, logged or sent to the browser.
+    Covers the configured keys (whole, and the prefix/suffix a provider might echo in a masked
+    form) and anything shaped like a Groq/Google/OpenAI-style key."""
+    for name, value in os.environ.items():
+        value = value.strip()
+        if len(value) >= 12 and any(t in name for t in ("KEY", "SECRET", "TOKEN")):
+            for fragment in (value, value[:8], value[-8:]):
+                text = text.replace(fragment, "[key hidden]")
+    return _KEY_SHAPE.sub("[key hidden]", text)
+
+
 def _note_error(model: str, err: Exception) -> None:
     info = _model_info.setdefault(model, {})
-    msg = str(err)
+    msg = _redact(str(err))
     kind = ("Insufficient balance: top up the account" if getattr(err, "status_code", None) == 402
             else type(err).__name__)
     info["last_error"] = {"kind": kind, "message": msg[:220], "at": time.time()}
@@ -916,10 +931,7 @@ def _write_env(name: str, value: str | None) -> None:
     tmp = ENV_FILE + ".tmp"
     with open(tmp, "w") as f:
         f.write("\n".join(kept) + "\n")
-    try:
-        os.chmod(tmp, os.stat(ENV_FILE).st_mode & 0o777)
-    except OSError:
-        os.chmod(tmp, 0o600)
+    os.chmod(tmp, 0o600)     # a secrets file is owner-only, whatever the old file's mode was
     os.replace(tmp, ENV_FILE)
 
 
@@ -986,7 +998,7 @@ def ping_models(only_provider: str | None = None) -> list[dict]:
             if isinstance(e, API_ERRORS) and _is_unavailable(e):
                 _model_cooldown[model] = time.time() + _cooldown_for(e)
                 _note_error(model, e)
-            return {"id": model, "ok": False, "ms": ms(), "error": f"{type(e).__name__}: {str(e)[:140]}"}
+            return {"id": model, "ok": False, "ms": ms(), "error": f"{type(e).__name__}: {_redact(str(e))[:140]}"}
 
     chain = [m for m in current_chain() if only_provider in (None, _split(m)[0])]
     with ThreadPoolExecutor(max_workers=max(1, len(chain))) as pool:
@@ -1079,7 +1091,7 @@ def think_stream(user_text: str):
                 if retried_error or isinstance(e, BAD_REQUEST):
                     raise
                 retried_error = True
-                print(f"[retry] {str(e)[:80]}")
+                print(f"[retry] {_redact(str(e))[:80]}")
                 continue
             if not tool_calls and not text.strip() and not retried_empty:
                 retried_empty = True  # model occasionally returns nothing at all; ask once more

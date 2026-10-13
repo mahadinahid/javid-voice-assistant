@@ -12,6 +12,7 @@ import re
 import subprocess
 import tempfile
 import time
+import uuid
 import wave
 from datetime import datetime, timedelta
 
@@ -20,9 +21,22 @@ import numpy as np
 import sounddevice as sd
 from ddgs import DDGS
 from dotenv import load_dotenv
+import groq as _groq
+import openai as _openai
 from groq import APIError, BadRequestError, Groq, InternalServerError, NotFoundError, RateLimitError
 
 import calendar_tools
+
+# Groq and OpenAI-compatible providers (Gemini) raise different exception classes for the same thing.
+API_ERRORS   = (APIError, _openai.APIError)
+BAD_REQUEST  = (BadRequestError, _openai.BadRequestError)
+RATE_LIMITED = (RateLimitError, _openai.RateLimitError)
+NOT_FOUND    = (NotFoundError, _openai.NotFoundError)
+BAD_KEY      = (_groq.AuthenticationError, _groq.PermissionDeniedError,
+                _openai.AuthenticationError, _openai.PermissionDeniedError)
+OVERLOADED   = (InternalServerError, _openai.InternalServerError,
+                _groq.APIConnectionError, _openai.APIConnectionError)   # 5xx, network, timeouts
+UNAVAILABLE  = RATE_LIMITED + NOT_FOUND + BAD_KEY + OVERLOADED          # => try the next model
 
 # ---------- settings ----------
 SAMPLE_RATE = 16000
@@ -30,7 +44,13 @@ STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "openai/gpt-oss-20b"
 # Tried in order when LLM_MODEL is rate-limited (free tier: 200k tokens/day per model) or down.
 # Quotas are per model, so each fallback has its own budget. Checked against this key's model list.
-LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+# Entries without a prefix are Groq models; "gemini:<model>" goes to Google's OpenAI-compatible
+# endpoint (needs GEMINI_API_KEY) and "deepseek:<model>" to DeepSeek's (needs DEEPSEEK_API_KEY, paid).
+# A provider without its key in .env is skipped.
+GEMINI_MODEL = "gemini-2.5-flash"
+DEEPSEEK_MODEL = "deepseek-chat"
+LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b",
+                 f"gemini:{GEMINI_MODEL}", f"deepseek:{DEEPSEEK_MODEL}"]
 # Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
 KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
 LLM_MIN_REQUEST_TOKENS = 2500   # one turn's request is ~2-3k tokens (prompt + tool schemas)
@@ -608,17 +628,21 @@ def _note_headers(model: str, headers) -> None:
             return int(headers.get(name))
         except (TypeError, ValueError):
             return None
-    _model_info.setdefault(model, {})["limits"] = {
+    limits = {
         "tpm_limit": num("x-ratelimit-limit-tokens"), "tpm_remaining": num("x-ratelimit-remaining-tokens"),
         "rpd_limit": num("x-ratelimit-limit-requests"), "rpd_remaining": num("x-ratelimit-remaining-requests"),
         "rpd_reset": headers.get("x-ratelimit-reset-requests"), "at": time.time(),
     }
+    if any(limits[k] is not None for k in ("tpm_limit", "rpd_limit")):
+        _model_info.setdefault(model, {})["limits"] = limits
 
 
-def _note_error(model: str, err: APIError) -> None:
+def _note_error(model: str, err: Exception) -> None:
     info = _model_info.setdefault(model, {})
     msg = str(err)
-    info["last_error"] = {"kind": type(err).__name__, "message": msg[:220], "at": time.time()}
+    kind = ("Insufficient balance: top up the account" if getattr(err, "status_code", None) == 402
+            else type(err).__name__)
+    info["last_error"] = {"kind": kind, "message": msg[:220], "at": time.time()}
     # "...on tokens per day (TPD): Limit 200000, Used 198720, Requested 2278..."
     m = re.search(r"\((TPD|TPM|RPD|RPM)\): Limit (\d+), Used (\d+)", msg)
     if m and m.group(1) == "TPD":
@@ -631,15 +655,87 @@ def _note_error(model: str, err: APIError) -> None:
 _load_quota()
 
 
-def _model_kwargs(model: str) -> dict:
+PROVIDERS = {
+    "groq":   {"label": "Groq"},
+    "gemini": {"label": "Google", "key_env": "GEMINI_API_KEY",
+               "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"},
+    "deepseek": {"label": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com"},
+}
+_provider_clients: dict = {}
+
+
+def _split(model_id: str) -> tuple[str, str]:
+    """'gemini:gemini-2.5-flash' -> ('gemini', 'gemini-2.5-flash'); a bare id is a Groq model."""
+    provider, sep, name = model_id.partition(":")
+    return (provider, name) if sep and provider in PROVIDERS else ("groq", model_id)
+
+
+def _provider_client(provider: str):
+    if provider == "groq":
+        return client
+    if provider not in _provider_clients:
+        key = os.environ.get(PROVIDERS[provider]["key_env"], "").strip()
+        _provider_clients[provider] = _openai.OpenAI(
+            api_key=key, base_url=PROVIDERS[provider]["base_url"], timeout=30.0, max_retries=0) if key else None
+    return _provider_clients[provider]
+
+
+def _has_key(model_id: str) -> bool:
+    return _provider_client(_split(model_id)[0]) is not None
+
+
+def _model_kwargs(model_id: str) -> dict:
+    provider, name = _split(model_id)
+    if provider == "gemini":
+        return {"reasoning_effort": "low"}      # keep thinking short: replies are spoken
     # reasoning_effort is a gpt-oss knob. Qwen given reasoning_effort="none" skipped the
     # tool call and claimed the task was added, so other models get their defaults.
-    if "gpt-oss" in model:
+    if "gpt-oss" in name:
         return {"reasoning_effort": "low", "include_reasoning": False}
     return {}
 
 
-def _retry_after(err: APIError, default: float = 60.0) -> float:
+def _messages_for(provider: str, msgs: list) -> list:
+    """Gemini hands back an `extra_content` blob on tool calls that it wants echoed; other
+    providers don't know the field, so it's stripped when failing over to them."""
+    if provider == "gemini" or not any(
+            c.get("extra_content") for m in msgs for c in m.get("tool_calls") or []):
+        return msgs
+    return [{**m, "tool_calls": [{k: v for k, v in c.items() if k != "extra_content"}
+                                 for c in m["tool_calls"]]} if m.get("tool_calls") else m
+            for m in msgs]
+
+
+def _create(model_id: str, msgs: list, *, tools=None, stream=False, max_tokens=None):
+    """One chat completion on whichever provider hosts `model_id`; returns the raw response."""
+    provider, name = _split(model_id)
+    kw = _model_kwargs(model_id)
+    if tools:
+        kw["tools"] = tools
+    if max_tokens:
+        kw["max_tokens"] = max_tokens
+    if stream:
+        kw["stream"] = True
+        if provider != "groq":
+            kw["stream_options"] = {"include_usage": True}   # else no token counts in the stream
+    return _provider_client(provider).chat.completions.with_raw_response.create(
+        model=name, messages=_messages_for(provider, msgs), **kw)
+
+
+def _is_unavailable(err: Exception) -> bool:
+    # DeepSeek answers 402 when the account balance is empty: park it instead of failing the turn.
+    return isinstance(err, UNAVAILABLE) or getattr(err, "status_code", None) == 402
+
+
+def _cooldown_for(err: Exception) -> float:
+    if getattr(err, "status_code", None) == 402 or isinstance(err, NOT_FOUND + BAD_KEY):
+        return 3600.0       # model not on this key / key rejected: don't hammer it
+    if isinstance(err, RATE_LIMITED):
+        return _retry_after(err)
+    return 30.0             # overloaded or unreachable
+
+
+def _retry_after(err: Exception, default: float = 60.0) -> float:
     """Seconds until a rate-limited model is usable again (header, else 'try again in 7m11s')."""
     header = getattr(getattr(err, "response", None), "headers", {}).get("retry-after")
     try:
@@ -647,6 +743,9 @@ def _retry_after(err: APIError, default: float = 60.0) -> float:
             return max(1.0, float(header))
     except ValueError:
         pass
+    g = re.search(r"retry(?: in|Delay['\"]?:\s*['\"]?)\s*([\d.]+)s", str(err), re.I)   # Google's wording
+    if g:
+        return max(1.0, float(g.group(1)))
     m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?", str(err))
     if m and any(m.groups()):
         h, mins, secs = (float(g) if g else 0.0 for g in m.groups())
@@ -655,26 +754,34 @@ def _retry_after(err: APIError, default: float = 60.0) -> float:
 
 
 def _models_to_try() -> list[str]:
-    chain = [LLM_MODEL, *LLM_FALLBACKS]
+    chain = [m for m in (LLM_MODEL, *LLM_FALLBACKS) if _has_key(m)]
     now = time.time()
     ready = [m for m in chain if _model_cooldown.get(m, 0) <= now]
     # Everything is cooling down: still try the one that recovers first rather than give up.
     return ready or [min(chain, key=lambda m: _model_cooldown.get(m, 0))]
 
 
-_NON_CHAT = ("whisper", "orpheus", "tts", "guard", "embed")
-_key_models: dict = {"at": 0.0, "ids": None}
+_NON_CHAT = ("whisper", "orpheus", "tts", "guard", "embed", "image", "imagen", "veo", "live", "audio")
+_key_models: dict[str, dict] = {}
 
 
-def _models_on_key() -> list[str] | None:
-    """Chat-capable model ids this API key can use (cached 10 min; None if Groq is unreachable)."""
-    if time.time() - _key_models["at"] > 600:
+def _models_on_provider(provider: str) -> list[str] | None:
+    """Chat-capable model ids (chain notation) this provider's key can use. Cached 10 min;
+    None if the provider is unreachable or has no key."""
+    c = _provider_client(provider)
+    if c is None:
+        return None
+    cache = _key_models.setdefault(provider, {"at": 0.0, "ids": None})
+    if time.time() - cache["at"] > 600:
         try:
-            ids = sorted(m.id for m in client.models.list().data)
-            _key_models.update(at=time.time(), ids=[i for i in ids if not any(k in i for k in _NON_CHAT)])
+            raw_ids = sorted(m.id.removeprefix("models/") for m in c.models.list().data)
+            keep = [i for i in raw_ids if not any(k in i for k in _NON_CHAT)]
+            if provider in ("gemini", "deepseek"):
+                keep = [i for i in keep if provider in i]
+            cache.update(at=time.time(), ids=[i if provider == "groq" else f"{provider}:{i}" for i in keep])
         except Exception:
-            _key_models.update(at=time.time() - 540, ids=_key_models["ids"])   # retry in a minute
-    return _key_models["ids"]
+            cache["at"] = time.time() - 540     # retry in a minute
+    return cache["ids"]
 
 
 def llm_status() -> dict:
@@ -686,7 +793,7 @@ def llm_status() -> dict:
     recent = [e for e in everything if e.get("ts", 0) >= now - 86400]
     # Our tally only starts when logging began; before that, usage is simply unknown to us.
     tracking_since = min((e["ts"] for e in everything), default=now)
-    on_key = _models_on_key()
+    on_key_by_provider = {p: _models_on_provider(p) for p in PROVIDERS}
     models = []
     for order, model in enumerate(chain):
         mine = [e for e in recent if e.get("model") == model]
@@ -705,7 +812,11 @@ def llm_status() -> dict:
             est_used = max(day["total"], quota["reported_used"] + since_report) if fresh else day["total"]
             remaining = max(0, quota["tpd_limit"] - est_used)
         cooling_for = max(0.0, _model_cooldown.get(model, 0) - now)
-        if on_key is not None and model not in on_key:
+        provider = _split(model)[0]
+        on_key = on_key_by_provider[provider]
+        if not _has_key(model):
+            state = "nokey"
+        elif on_key is not None and model not in on_key:
             state = "missing"
         elif cooling_for > 0:
             state = "cooling"
@@ -714,7 +825,9 @@ def llm_status() -> dict:
         else:
             state = "ready"
         models.append({
-            "id": model, "name": model.split("/")[-1], "order": order,
+            "id": model, "name": _split(model)[1].split("/")[-1], "order": order,
+            "provider": provider, "provider_label": PROVIDERS[provider]["label"],
+            "key_env": PROVIDERS[provider].get("key_env"),
             "role": "primary" if order == 0 else "fallback", "state": state,
             "retry_in_s": round(cooling_for), "tokens_24h": day,
             "session_requests": llm_usage.get(model, 0),
@@ -736,7 +849,8 @@ def llm_status() -> dict:
         "ready_count": sum(m["state"] in ("serving", "ready") for m in models),
         "min_request_tokens": LLM_MIN_REQUEST_TOKENS,
         "models": models,
-        "on_key": None if on_key is None else [{"id": i, "in_chain": i in chain} for i in on_key],
+        "on_key": [{"id": i, "in_chain": i in chain, "provider": p}
+                   for p, ids in on_key_by_provider.items() for i in ids or []],
     }
 
 
@@ -747,26 +861,23 @@ def ping_models() -> list[dict]:
 
     def ping(model: str) -> dict:
         t0 = time.time()
+        ms = lambda: round((time.time() - t0) * 1000)
+        if not _has_key(model):
+            return {"id": model, "ok": False, "ms": 0,
+                    "error": f"No API key: set {PROVIDERS[_split(model)[0]]['key_env']} in .env"}
         try:
-            raw = client.chat.completions.with_raw_response.create(
-                model=model, messages=[{"role": "user", "content": "ping"}], max_tokens=8,
-                **_model_kwargs(model))
+            raw = _create(model, [{"role": "user", "content": "ping"}], max_tokens=8)
             _note_headers(model, raw.headers)
             done = raw.parse()
             if done.usage:
                 _record_usage(model, done.usage)
             _model_cooldown.pop(model, None)
-            return {"id": model, "ok": True, "ms": round((time.time() - t0) * 1000)}
-        except (RateLimitError, InternalServerError, NotFoundError) as e:
-            wait = 3600.0 if isinstance(e, NotFoundError) else (
-                _retry_after(e) if isinstance(e, RateLimitError) else 30.0)
-            _model_cooldown[model] = time.time() + wait
-            _note_error(model, e)
-            return {"id": model, "ok": False, "ms": round((time.time() - t0) * 1000),
-                    "error": f"{type(e).__name__}: {str(e)[:140]}"}
+            return {"id": model, "ok": True, "ms": ms()}
         except Exception as e:
-            return {"id": model, "ok": False, "ms": round((time.time() - t0) * 1000),
-                    "error": f"{type(e).__name__}: {str(e)[:140]}"}
+            if isinstance(e, API_ERRORS) and _is_unavailable(e):
+                _model_cooldown[model] = time.time() + _cooldown_for(e)
+                _note_error(model, e)
+            return {"id": model, "ok": False, "ms": ms(), "error": f"{type(e).__name__}: {str(e)[:140]}"}
 
     chain = [LLM_MODEL, *LLM_FALLBACKS]
     with ThreadPoolExecutor(max_workers=len(chain)) as pool:
@@ -779,12 +890,12 @@ def _open_stream():
     last_error = None
     for model in _models_to_try():
         try:
-            raw = client.chat.completions.with_raw_response.create(
-                model=model, messages=messages, tools=TOOLS, stream=True, **_model_kwargs(model))
-        except (RateLimitError, InternalServerError, NotFoundError) as e:
-            # 429: out of quota for now. 5xx: overloaded. 404: model not on this key.
-            wait = 3600.0 if isinstance(e, NotFoundError) else (
-                _retry_after(e) if isinstance(e, RateLimitError) else 30.0)
+            raw = _create(model, messages, tools=TOOLS, stream=True)
+        except API_ERRORS as e:
+            if not _is_unavailable(e):
+                raise       # e.g. malformed tool call: think_stream retries those
+            # 429: out of quota for now. 5xx/network: overloaded. 402/404/401/403: can't serve.
+            wait = _cooldown_for(e)
             _model_cooldown[model] = time.time() + wait
             _note_error(model, e)
             print(f"[llm] {model} unavailable ({type(e).__name__}), skipping it for {wait:.0f}s")
@@ -814,7 +925,14 @@ def _stream_completion(tool_calls: dict):
         if delta.content:
             yield delta.content
         for tc in delta.tool_calls or []:
-            slot = tool_calls.setdefault(tc.index, {"id": "", "name": "", "arguments": ""})
+            idx = tc.index
+            if idx is None:   # some OpenAI-compatible servers omit it: a named chunk starts a new call
+                named = bool(tc.function and tc.function.name)
+                idx = len(tool_calls) if named or not tool_calls else max(tool_calls)
+            slot = tool_calls.setdefault(idx, {"id": "", "name": "", "arguments": ""})
+            extra = (getattr(tc, "model_extra", None) or {}).get("extra_content")
+            if extra:
+                slot["extra"] = extra     # Gemini: must be echoed back with the tool result
             if tc.id:
                 slot["id"] = tc.id
             if tc.function and tc.function.name:
@@ -846,10 +964,10 @@ def think_stream(user_text: str):
             tool_calls = {}
             try:
                 text = "".join(_stream_completion(tool_calls))
-            except APIError as e:
+            except API_ERRORS as e:
                 # e.g. "Failed to parse tool call arguments as JSON" — the model
                 # occasionally emits a malformed tool call; one retry usually fixes it.
-                if retried_error or isinstance(e, BadRequestError):
+                if retried_error or isinstance(e, BAD_REQUEST):
                     raise
                 retried_error = True
                 print(f"[retry] {str(e)[:80]}")
@@ -870,12 +988,15 @@ def think_stream(user_text: str):
                 break
 
             calls = [tool_calls[i] for i in sorted(tool_calls)]
+            for c in calls:
+                c["id"] = c["id"] or f"call_{uuid.uuid4().hex[:12]}"   # some providers send none
             messages.append({
                 "role": "assistant",
                 "content": text or None,
                 "tool_calls": [
                     {"id": c["id"], "type": "function",
-                     "function": {"name": c["name"], "arguments": c["arguments"]}}
+                     "function": {"name": c["name"], "arguments": c["arguments"]},
+                     **({"extra_content": c["extra"]} if c.get("extra") else {})}
                     for c in calls
                 ],
             })
@@ -894,7 +1015,7 @@ def think_stream(user_text: str):
             reply = "Sorry, I got stuck on that one. Try asking another way."
             yield ("delta", reply)
 
-    except APIError:
+    except API_ERRORS:
         reply = "I couldn't complete that request. Try asking differently."
         yield ("delta", reply)
 

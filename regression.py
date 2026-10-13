@@ -27,7 +27,7 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import calendar_tools as ct  # noqa: E402
 import javid  # noqa: E402
-from groq import Groq, RateLimitError  # noqa: E402
+from groq import Groq  # noqa: E402
 
 # A stalled stream must fail the run, not hang the suite.
 javid.client = Groq(timeout=30.0, max_retries=2)
@@ -51,7 +51,7 @@ def _counted_stream_completion(tool_calls):
     LLM_REQUESTS += 1
     try:
         yield from _orig_stream_completion(tool_calls)
-    except RateLimitError as e:
+    except javid.RATE_LIMITED as e:
         QUOTA_HIT.append(str(e))
         raise
 
@@ -60,17 +60,11 @@ javid._stream_completion = _counted_stream_completion
 
 
 def preflight() -> str | None:
-    """1-token calls down the model chain; returns an error message only if no model answers."""
-    problems = []
-    for model in [javid.LLM_MODEL, *javid.LLM_FALLBACKS]:
-        try:
-            javid.client.chat.completions.create(
-                model=model, messages=[{"role": "user", "content": "hi"}], max_tokens=1,
-                **javid._model_kwargs(model))
-            return None
-        except Exception as e:
-            problems.append(f"{model}: {str(e)[:160]}")
-    return "\n".join(problems)
+    """Tiny pings down the model chain; returns an error message only if no model answers."""
+    pings = javid.ping_models()
+    if any(p["ok"] for p in pings):
+        return None
+    return "\n".join(f"{p['id']}: {p.get('error', 'failed')[:160]}" for p in pings)
 
 # ---------- isolation: nothing below may touch the real files or calendar ----------
 SCRATCH = tempfile.mkdtemp(prefix="javid-regression-")

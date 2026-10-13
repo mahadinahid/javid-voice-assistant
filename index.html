@@ -211,6 +211,7 @@ header h1 {
 .m-dot.cooling { background: #f59e0b; }
 .m-dot.missing { background: #475569; }
 .m-dot.low     { background: #f97316; }
+.m-dot.nokey   { background: #334155; }
 
 .modal { position: fixed; inset: 0; z-index: 50; background: rgba(5,5,10,0.72); display: flex; align-items: center; justify-content: center; padding: 20px; }
 .modal[hidden] { display: none; }
@@ -226,7 +227,7 @@ header h1 {
 .model-card { background: #11111c; border: 1px solid #1e1e2e; border-radius: 10px; padding: 14px; font-size: 12px; color: #94a3b8; display: flex; flex-direction: column; gap: 9px; }
 .model-card.serving { border-color: #166534; box-shadow: 0 0 0 1px rgba(34,197,94,0.15); }
 .model-card.cooling, .model-card.low { border-color: #78350f; }
-.model-card.missing { opacity: 0.6; }
+.model-card.missing, .model-card.nokey { opacity: 0.65; }
 .mc-head { display: flex; align-items: center; gap: 8px; }
 .mc-name { font-size: 13.5px; font-weight: 600; color: #e2e8f0; margin-right: auto; word-break: break-all; }
 .pill { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid #2a2a3e; color: #94a3b8; white-space: nowrap; }
@@ -1630,7 +1631,7 @@ function liveModel(m) {
     if (m.state === 'cooling' && left <= 0) return { ...m, state: 'ready', retry_in_s: 0 };
     return { ...m, retry_in_s: Math.max(0, left) };
 }
-const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', cooling: 'Rate-limited', low: 'Low on daily tokens', missing: 'Not on this key' };
+const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', cooling: 'Rate-limited', low: 'Low on daily tokens', missing: 'Not on this key', nokey: 'No API key' };
 
 function renderModelsPanel() {
     const sum = document.getElementById('models-summary'), list = document.getElementById('models-list');
@@ -1645,7 +1646,7 @@ function renderModelsPanel() {
         <div class="model-row" title="${esc(m.id)} — ${STATE_TEXT[m.state]}">
             <span class="m-dot ${m.state}"></span>
             <span class="m-name">${esc(m.name)}</span>
-            <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : fmtK(m.tokens_24h.total) + ' tok'}</span>
+            <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : m.state === 'nokey' ? 'no key' : fmtK(m.tokens_24h.total) + ' tok'}</span>
         </div>`).join('');
 }
 
@@ -1671,6 +1672,7 @@ function renderModelsModal() {
         const stateLine = m.state === 'cooling'
             ? `Rate-limited · back in <b>${fmtWait(m.retry_in_s)}</b>`
             : m.state === 'low' ? `Almost out of daily tokens · about <b>${fmtN(m.remaining_24h)}</b> left, a reply needs ~${fmtN(llmStatus.min_request_tokens)}`
+            : m.state === 'nokey' ? `Add <code>${esc(m.key_env)}</code> to .env, then restart the server`
             : m.state === 'missing' ? 'This model isn’t available to your API key' : STATE_TEXT[m.state];
         const role = m.role === 'primary' ? 'Primary' : `Fallback ${m.order}`;
         let daily;
@@ -1692,8 +1694,9 @@ function renderModelsModal() {
                 <span class="pill ${m.state}">${role}</span>
             </div>
             <div class="mc-state">${stateLine}</div>
-            ${daily}
-            <div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>
+            ${m.provider !== 'groq' ? `<div class="mc-line">Requests go to <b>${esc(m.provider_label)}</b>, not Groq, when this model answers.</div>` : ''}
+            ${m.state === 'nokey' ? '' : daily}
+            ${m.state === 'nokey' ? '' : `<div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>`}
             ${lim ? meter('Tokens this minute', `${fmtN(lim.tpm_remaining)} left of ${fmtN(lim.tpm_limit)}`,
                           (lim.tpm_limit || 0) - (lim.tpm_remaining || 0), lim.tpm_limit) : ''}
             ${lim && lim.rpd_limit ? meter('Requests today', `${fmtN(lim.rpd_remaining)} left of ${fmtN(lim.rpd_limit)}`,
@@ -1704,11 +1707,12 @@ function renderModelsModal() {
         </div>`;
     }).join('');
 
-    const onKey = llmStatus.on_key;
-    document.getElementById('models-onkey').innerHTML = onKey
-        ? `Chat models on your Groq key: <b>${onKey.length}</b> — ` + onKey.map(k =>
-            `<code title="${k.in_chain ? 'in the fallback chain' : 'not used by Javid'}">${esc(k.id)}${k.in_chain ? ' ✓' : ''}</code>`).join(' ')
-        : 'Couldn’t list models on your key (Groq unreachable).';
+    const onKey = llmStatus.on_key, el = document.getElementById('models-onkey');
+    if (!onKey || !onKey.length) { el.textContent = 'Couldn’t list models on your keys (provider unreachable).'; return; }
+    const inChain = onKey.filter(k => k.in_chain), others = onKey.filter(k => !k.in_chain);
+    const code = k => `<code title="${k.in_chain ? 'in the fallback chain' : 'not used by Javid'}">${esc(k.id)}${k.in_chain ? ' ✓' : ''}</code>`;
+    el.innerHTML = `Chat models your keys can use: <b>${onKey.length}</b> — ${inChain.map(code).join(' ')}`
+        + (others.length ? ` · also available: ${others.slice(0, 4).map(code).join(' ')}${others.length > 4 ? ` +${others.length - 4} more` : ''}` : '');
 }
 
 async function refreshModels() {

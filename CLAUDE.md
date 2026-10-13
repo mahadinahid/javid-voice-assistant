@@ -13,7 +13,7 @@ lsof -ti :8000 | xargs kill   # stop a server left running in the background
 
 Run the server with `PYTHONUNBUFFERED=1` when debugging: `[tool]`, `[retry]`, `[tts]` and `[hands-free]` lines are plain `print`s and won't reach a redirected log otherwise.
 
-There is no test suite, linter, or build step. `index.html` is a single hand-written file (inline CSS + JS, no framework) served by FastAPI. Syntax-check its script with:
+There is no linter or build step. `python regression.py` is the behaviour check: 20 prompts through the real LLM and tool loop against scratch task/memory files and a fake calendar (`-n 3` repeats, `-k name` filters, `-v` shows replies). It spends ~100k Groq tokens per run — half the free tier's 200k/day for this model — so run it before/after prompt or tool changes, not in a loop; it exits 3 ("inconclusive") on 429s instead of reporting false failures. `index.html` is a single hand-written file (inline CSS + JS, no framework) served by FastAPI. Syntax-check its script with:
 
 ```bash
 python3 -c "s=open('index.html').read(); open('/tmp/ui.js','w').write(s[s.index('<script>')+8:s.index('</script>')])" && node --check /tmp/ui.js
@@ -36,6 +36,8 @@ Requires `GROQ_API_KEY` in `.env`. The README describes only the original CLI ve
 **Adding a tool:** implement it, add a schema to `TOOLS`, add a lambda to `TOOL_MAP`, and mention it in the system prompt. Calendar tools live in `calendar_tools.py`, which exports its own `TOOLS` / `TOOL_MAP` that `javid.py` splices in (`*calendar_tools.TOOLS`, `**calendar_tools.TOOL_MAP`). Calendar functions are wrapped in `_guard`, which turns auth/API errors into sentences the model can speak.
 
 **Calendar edit tools (`move_event`, `delete_event`)** find events by title words in Python (`_find_events` / `_pick`), never by model-supplied IDs; zero or several matches are reported back, not guessed. The model often fills optional `day`/`time` with an invented "today", so a hint that matches nothing falls back to a title-only search. `delete_event` is deliberately two-step and enforced in code: the first call only describes the event, and deletion is accepted only if `confirm=true` arrives on the *next* user message (`calendar_tools._turn`, bumped by `think_stream` via `new_turn()`). Don't weaken this to a prompt instruction — the model ignores those.
+
+**Model fallback chain** (`LLM_MODEL` then `LLM_FALLBACKS` in `javid.py`, via `_open_stream`): a 429 (per-model free-tier quota), 5xx or 404 puts that model on a cooldown (from `retry-after` / "try again in 7m11s") and the next model answers; cooled-down models are skipped, not retried every request. Only gpt-oss models get `reasoning_effort` — Qwen given `"none"` skipped the tool call and claimed the task was added. Model IDs must exist on the key (`client.models.list()`; `llama-3.3-70b-versatile` does not). `llm_usage` counts requests per model.
 
 **`server.py`** (FastAPI) wraps the core:
 - `/type` and `/talk` stream **NDJSON events** — `transcript`, `tool`, `delta`, `error`, `ignored`, `done` (with fresh `tasks`/`memory`) — consumed by `streamReply()` in `index.html`.

@@ -20,7 +20,7 @@ import numpy as np
 import sounddevice as sd
 from ddgs import DDGS
 from dotenv import load_dotenv
-from groq import APIError, BadRequestError, Groq
+from groq import APIError, BadRequestError, Groq, InternalServerError, NotFoundError, RateLimitError
 
 import calendar_tools
 
@@ -28,6 +28,9 @@ import calendar_tools
 SAMPLE_RATE = 16000
 STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "openai/gpt-oss-20b"
+# Tried in order when LLM_MODEL is rate-limited (free tier: 200k tokens/day per model) or down.
+# Quotas are per model, so each fallback has its own budget. Checked against this key's model list.
+LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
 VOICE = "Aman"                                  # macOS `say` voice (CLI)
 # LOCKED by the user (2026-10-13): this engine + voice is the one they approved ("perfect").
 # Don't change TTS_ENGINE, EDGE_VOICE or LOCAL_FALLBACK unless they explicitly ask.
@@ -529,16 +532,66 @@ def is_noise(text: str) -> bool:
 
 
 # ---------- 3. BRAIN: text -> reply ----------
+_model_cooldown: dict[str, float] = {}   # model -> time.time() after which it may be tried again
+llm_usage: dict[str, int] = {}           # model -> requests served (handy for tests and logs)
+
+
+def _model_kwargs(model: str) -> dict:
+    # reasoning_effort is a gpt-oss knob. Qwen given reasoning_effort="none" skipped the
+    # tool call and claimed the task was added, so other models get their defaults.
+    if "gpt-oss" in model:
+        return {"reasoning_effort": "low", "include_reasoning": False}
+    return {}
+
+
+def _retry_after(err: APIError, default: float = 60.0) -> float:
+    """Seconds until a rate-limited model is usable again (header, else 'try again in 7m11s')."""
+    header = getattr(getattr(err, "response", None), "headers", {}).get("retry-after")
+    try:
+        if header:
+            return max(1.0, float(header))
+    except ValueError:
+        pass
+    m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?", str(err))
+    if m and any(m.groups()):
+        h, mins, secs = (float(g) if g else 0.0 for g in m.groups())
+        return max(1.0, h * 3600 + mins * 60 + secs)
+    return default
+
+
+def _models_to_try() -> list[str]:
+    chain = [LLM_MODEL, *LLM_FALLBACKS]
+    now = time.time()
+    ready = [m for m in chain if _model_cooldown.get(m, 0) <= now]
+    # Everything is cooling down: still try the one that recovers first rather than give up.
+    return ready or [min(chain, key=lambda m: _model_cooldown.get(m, 0))]
+
+
+def _open_stream():
+    """Start a streaming completion on the first model in the chain that accepts it."""
+    last_error = None
+    for model in _models_to_try():
+        try:
+            stream = client.chat.completions.create(
+                model=model, messages=messages, tools=TOOLS, stream=True, **_model_kwargs(model))
+        except (RateLimitError, InternalServerError, NotFoundError) as e:
+            # 429: out of quota for now. 5xx: overloaded. 404: model not on this key.
+            wait = 3600.0 if isinstance(e, NotFoundError) else (
+                _retry_after(e) if isinstance(e, RateLimitError) else 30.0)
+            _model_cooldown[model] = time.time() + wait
+            print(f"[llm] {model} unavailable ({type(e).__name__}), skipping it for {wait:.0f}s")
+            last_error = e
+            continue
+        if model != LLM_MODEL:
+            print(f"[llm] answering with fallback {model}")
+        llm_usage[model] = llm_usage.get(model, 0) + 1
+        return stream
+    raise last_error
+
+
 def _stream_completion(tool_calls: dict):
     """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`."""
-    stream = client.chat.completions.create(
-        model=LLM_MODEL,
-        messages=messages,
-        tools=TOOLS,
-        reasoning_effort="low",
-        include_reasoning=False,
-        stream=True,
-    )
+    stream = _open_stream()
     for chunk in stream:
         delta = chunk.choices[0].delta
         if delta.content:

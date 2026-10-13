@@ -699,9 +699,10 @@ const FOLLOWUP_MS = 8000;
 const VAD = {
     preRollSec: 0.45,   // audio kept from before speech was detected
     startFrames: 3,     // consecutive loud frames (~20ms each) to start
-    endSilenceSec: 0.9, // quiet this long ends the utterance
+    endSilenceSec: 0.7, // quiet this long ends the utterance (every turn waits this long)
     minSpeechSec: 0.35, // shorter blips are ignored
     maxSec: 20,
+    cooldownSec: 0.5,   // stay deaf this long after Javid stops, so his speaker tail isn't "heard"
 };
 
 let handsFree = false;
@@ -729,35 +730,47 @@ class Tap extends AudioWorkletProcessor {
 registerProcessor('tap', Tap);`;
 
 async function startHandsFree() {
+    // Create the context first, while the click/keypress still counts as a user
+    // gesture — after the mic-permission await, some browsers leave it suspended.
+    const ctx = new AudioContext();
     let stream;
     try {
         stream = await navigator.mediaDevices.getUserMedia({
             audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
         });
     } catch {
+        ctx.close();
         showToast('Microphone blocked — allow access in browser settings.');
         return false;
     }
-    const ctx = new AudioContext();
-    const url = URL.createObjectURL(new Blob([TAP_WORKLET], { type: 'application/javascript' }));
-    await ctx.audioWorklet.addModule(url);
-    URL.revokeObjectURL(url);
-    const node = new AudioWorkletNode(ctx, 'tap');
-    ctx.createMediaStreamSource(stream).connect(node);
-    // AudioWorklet only runs when connected to the graph; send it to a muted sink.
-    const mute = ctx.createGain();
-    mute.gain.value = 0;
-    node.connect(mute).connect(ctx.destination);
-    await ctx.resume();
+    try {
+        const url = URL.createObjectURL(new Blob([TAP_WORKLET], { type: 'application/javascript' }));
+        try { await ctx.audioWorklet.addModule(url); } finally { URL.revokeObjectURL(url); }
+        const node = new AudioWorkletNode(ctx, 'tap');
+        ctx.createMediaStreamSource(stream).connect(node);
+        // AudioWorklet only runs when connected to the graph; send it to a muted sink.
+        const mute = ctx.createGain();
+        mute.gain.value = 0;
+        node.connect(mute).connect(ctx.destination);
+        await ctx.resume();
 
-    const frameSec = 1024 / ctx.sampleRate;
-    hf = {
-        ctx, stream, node, frameSec,
-        noise: 0.008,
-        preRoll: [], frames: [], loudRun: 0, quietSec: 0, voicedSec: 0, capturing: false,
-    };
-    node.port.onmessage = e => onFrame(e.data);
-    return true;
+        const frameSec = 1024 / ctx.sampleRate;
+        hf = {
+            ctx, stream, node, frameSec,
+            noise: 0.008,
+            preRoll: [], frames: [], loudRun: 0, quietSec: 0, voicedSec: 0, capturing: false,
+            mode: 'wake',       // fixed when speech starts (the follow-up window may lapse mid-sentence)
+            deafUntil: 0,       // ms timestamp; frames before this are ignored
+        };
+        node.port.onmessage = e => onFrame(e.data);
+        return true;
+    } catch (e) {
+        console.error('[hands-free] could not start audio pipeline', e);
+        stream.getTracks().forEach(t => t.stop());
+        ctx.close();
+        showToast('Could not start hands-free listening.');
+        return false;
+    }
 }
 
 function stopHandsFree() {
@@ -781,8 +794,10 @@ function onFrame(frame) {
     if (isRecording || javidIsBusy()) {           // push-to-talk or Javid talking
         if (hf.capturing) { resetCapture(); setOrb(restingState()); }
         hf.preRoll = [];
+        hf.deafUntil = Date.now() + VAD.cooldownSec * 1000;
         return;
     }
+    if (Date.now() < hf.deafUntil) { hf.preRoll = []; return; }
 
     let sum = 0;
     for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
@@ -799,11 +814,11 @@ function onFrame(frame) {
         hf.loudRun = rms > startAt ? hf.loudRun + 1 : 0;
         if (hf.loudRun >= VAD.startFrames) {
             hf.capturing = true;
+            hf.mode = Date.now() < followUntil ? 'followup' : 'wake';
             hf.frames = hf.preRoll.slice();
             hf.preRoll = [];
             hf.voicedSec = hf.loudRun * hf.frameSec;
             hf.quietSec = 0;
-            synth?.cancel();
             setOrb('listening');
         }
         return;
@@ -815,11 +830,11 @@ function onFrame(frame) {
 
     const total = hf.frames.length * hf.frameSec;
     if (hf.quietSec >= VAD.endSilenceSec || total >= VAD.maxSec) {
-        const frames = hf.frames, voiced = hf.voicedSec, rate = hf.ctx.sampleRate;
+        const frames = hf.frames, voiced = hf.voicedSec, rate = hf.ctx.sampleRate, mode = hf.mode;
         resetCapture();
         if (voiced < VAD.minSpeechSec) { setOrb(restingState()); return; }
-        const mode = Date.now() < followUntil ? 'followup' : 'wake';
-        followUntil = 0;
+        // The follow-up window is left to expire on its own: a clip the server
+        // ignores (cough, side chatter) shouldn't force the user to say "Javid" again.
         setOrb('thinking');
         submitAudio(encodeWav(frames, rate), 'wav', mode);
     }
@@ -852,14 +867,18 @@ function encodeWav(frames, inRate, outRate = 16000) {
     return new Blob([view], { type: 'audio/wav' });
 }
 
+let hfStarting = false;
 async function toggleHandsFree() {
+    if (hfStarting) return;
     const btn = document.getElementById('hf-btn');
     if (handsFree) {
         handsFree = false;
         followUntil = 0;
         stopHandsFree();
     } else {
-        if (!(await startHandsFree())) return;
+        hfStarting = true;
+        const ok = await startHandsFree().finally(() => { hfStarting = false; });
+        if (!ok) return;
         handsFree = true;
     }
     btn.classList.toggle('active', handsFree);
@@ -1076,7 +1095,8 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
                     if (quiet) { setOrb('thinking'); setStopVisible(true); }
                     onTranscript?.(ev.text);
                 } else if (ev.type === 'ignored') {
-                    // overheard speech without the wake word — drop silently
+                    // overheard speech without the wake word — no UI, but log it for debugging
+                    console.log('[hands-free] ignored:', ev.text);
                 } else if (ev.type === 'tool') {
                     showToolNote(ev.name);
                 } else if (ev.type === 'delta') {

@@ -4,6 +4,7 @@ Run: python server.py  →  open http://localhost:8000
 """
 
 import json
+import threading
 from contextlib import asynccontextmanager
 
 import uvicorn
@@ -20,9 +21,19 @@ from javid import (
 
 
 # ---------- startup ----------
+def _warm_tts():
+    try:
+        synthesize("Yes?")
+    except Exception as e:
+        print(f"[tts] warm-up failed: {str(e)[:80]}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\nJavid is up. Open http://localhost:8000\n")
+    # The first TTS call after startup is slow (cold connection); warm it and the
+    # cache with the hands-free acknowledgement so the first "Hey Javid" is quick.
+    threading.Thread(target=_warm_tts, daemon=True).start()
     yield
 
 
@@ -97,7 +108,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push")):
     if ext not in {"webm", "ogg", "mp4", "wav", "mp3", "m4a", "mpeg", "flac"}:
         ext = "webm"
 
-    transcript = transcribe(audio_bytes, f"audio.{ext}")
+    # Hands-free clips are often just noise; the name hint would make Whisper say "Javid" for them.
+    transcript = transcribe(audio_bytes, f"audio.{ext}", bias_name=(mode == "push"))
     request = transcript
 
     def ignored():

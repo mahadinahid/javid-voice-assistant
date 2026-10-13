@@ -10,6 +10,8 @@ import json
 import os
 import re
 import subprocess
+import tempfile
+import time
 import wave
 from datetime import datetime, timedelta
 
@@ -27,7 +29,7 @@ SAMPLE_RATE = 16000
 STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "openai/gpt-oss-20b"
 VOICE = "Aman"                                  # macOS `say` voice (CLI)
-TTS_ENGINE = "edge"                             # web UI voice: "edge" (free) or "groq"
+TTS_ENGINE = "edge"                             # web UI voice: "edge" (free), "groq", or "local" (macOS say, instant)
 EDGE_VOICE = "en-US-AndrewNeural"               # also: BrianNeural, ChristopherNeural, en-GB-RyanNeural
 GROQ_TTS_MODEL = "canopylabs/orpheus-v1-english"  # needs terms accepted in Groq console
 GROQ_TTS_VOICE = "troy"                         # also: austin, daniel
@@ -480,22 +482,28 @@ def record() -> bytes:
 
 
 # ---------- 2. TRANSCRIBE: audio -> text ----------
-def transcribe(wav: bytes, filename: str = "speech.wav") -> str:
+def transcribe(wav: bytes, filename: str = "speech.wav", bias_name: bool = True) -> str:
+    """
+    bias_name=True hints Whisper to spell "Javid" correctly, but on silence/noise it
+    echoes the hint back as "Javid" — a false wake word. Hands-free must pass False.
+    """
+    kwargs = {"prompt": "Javid"} if bias_name else {}
     result = client.audio.transcriptions.create(
         file=(filename, wav),
         model=STT_MODEL,
         language="en",
-        prompt="Javid",  # biases Whisper toward spelling the assistant's name correctly
+        **kwargs,
     )
     return result.text.strip()
 
 
 # ---------- wake word (hands-free mode) ----------
-# "Javid, ...", "Hey Javid ...", plus common mishearings. A bare "David" only
-# counts after a greeting, since it's a common name in ordinary speech.
+# "Javid, ...", "Hey Javid ...", plus how Whisper spells it without a prompt
+# (Javid, Javed, Jaaved, Jawid, Jovid, Jarvis...). A bare "David" only counts
+# after a greeting, since it's a common name in ordinary speech.
+_NAME = r"[jz][aeo]{1,2}[vwb][aeiou]{1,2}[dt]h?|jarvis"
 _WAKE = re.compile(
-    r"^\W*(?:(?:hey|hi|hello|okay|ok|yo)\W+(?:javid|javed|jovid|javeed|jawed|david)"
-    r"|(?:javid|javed|jovid|javeed|jawed))\b[\W]*",
+    rf"^\W*(?:(?:hey|hi|hello|okay|ok|yo)\W+(?:{_NAME}|david)|(?:{_NAME}))\b[\W]*",
     re.IGNORECASE,
 )
 
@@ -619,8 +627,67 @@ def think(user_text: str) -> str:
 
 
 # ---------- 4. MOUTH: text -> speech ----------
+_tts_cache: dict[str, tuple[bytes, str]] = {}   # short, repeated phrases ("Yes?") skip the network
+_TTS_CACHE_MAX_CHARS = 40
+_TTS_CACHE_SIZE = 64
+
+# edge-tts is a free, unofficial Microsoft endpoint. It normally answers in ~1 s
+# but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. Give it
+# a time budget; past that, speak the sentence with the local voice instead of
+# leaving the user in silence, and skip edge-tts for a while when it keeps missing.
+EDGE_BUDGET_SEC = 2.0
+EDGE_COOLDOWN_SEC = 60
+LOCAL_VOICE = "Daniel"                          # macOS `say` voice for the fallback / TTS_ENGINE="local"
+_edge_strikes = 0
+_edge_skip_until = 0.0
+
+
+async def _edge_once(text: str) -> bytes:
+    audio = b""
+    async for chunk in edge_tts.Communicate(text, EDGE_VOICE).stream():
+        if chunk["type"] == "audio":
+            audio += chunk["data"]
+    if not audio:
+        raise RuntimeError("edge-tts returned no audio")
+    return audio
+
+
+def _edge_or_none(text: str) -> bytes | None:
+    """edge-tts audio, or None if it is failing/slow right now (caller falls back)."""
+    global _edge_strikes, _edge_skip_until
+    if time.monotonic() < _edge_skip_until:
+        return None
+    try:
+        audio = asyncio.run(asyncio.wait_for(_edge_once(text), EDGE_BUDGET_SEC))
+        _edge_strikes = 0
+        return audio
+    except Exception as e:
+        _edge_strikes += 1
+        print(f"[tts] edge-tts {type(e).__name__} ({_edge_strikes}) — using local voice")
+        if _edge_strikes >= 2:
+            _edge_skip_until = time.monotonic() + EDGE_COOLDOWN_SEC
+            _edge_strikes = 1   # after the cooldown, one more miss trips it again
+        return None
+
+
+def _say_wav(text: str) -> bytes:
+    """Local macOS voice: always available, ~0.3 s."""
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "speech.wav")
+        subprocess.run(["say", "-v", LOCAL_VOICE, "-o", path, "--data-format=LEI16@22050", text],
+                       check=True, timeout=15)
+        with open(path, "rb") as f:
+            return f.read()
+
+
 def synthesize(text: str) -> tuple[bytes, str]:
     """Neural TTS for the web UI. Returns (audio bytes, media type)."""
+    if text in _tts_cache:
+        return _tts_cache[text]
+
+    if TTS_ENGINE == "local":
+        return _say_wav(text), "audio/wav"
+
     if TTS_ENGINE == "groq":
         response = client.audio.speech.create(
             model=GROQ_TTS_MODEL,
@@ -628,19 +695,18 @@ def synthesize(text: str) -> tuple[bytes, str]:
             input=text,
             response_format="wav",
         )
-        return response.read(), "audio/wav"
+        result = (response.read(), "audio/wav")
+    else:
+        audio = _edge_or_none(text)
+        if audio is None:
+            return _say_wav(text), "audio/wav"   # not cached: edge quality next time it's healthy
+        result = (audio, "audio/mpeg")
 
-    async def _edge() -> bytes:
-        audio = b""
-        async for chunk in edge_tts.Communicate(text, EDGE_VOICE).stream():
-            if chunk["type"] == "audio":
-                audio += chunk["data"]
-        return audio
-
-    audio = asyncio.run(_edge())
-    if not audio:
-        raise RuntimeError("edge-tts returned no audio")
-    return audio, "audio/mpeg"
+    if len(text) <= _TTS_CACHE_MAX_CHARS:
+        if len(_tts_cache) >= _TTS_CACHE_SIZE:
+            _tts_cache.pop(next(iter(_tts_cache)))
+        _tts_cache[text] = result
+    return result
 
 
 def speak(text: str) -> None:

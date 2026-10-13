@@ -898,6 +898,7 @@ setInterval(() => {
 // browser's built-in speech for the rest of the session.
 const synth = window.speechSynthesis;
 let ttsMode = 'neural';      // 'neural' | 'browser'
+let ttsFails = 0;            // consecutive /speak failures; 3 in a row -> browser voice
 let voice = null;            // browser fallback voice
 let pendingSpeech = '';      // text received but not yet spoken (no sentence end yet)
 let utterancesLeft = 0;      // queued chunks still to finish
@@ -955,8 +956,12 @@ async function playNext() {
 
     let url = null;
     if (item.audio) {
-        try { url = await item.audio; }
-        catch { if (gen === speechGen) ttsMode = 'browser'; }
+        try { url = await item.audio; ttsFails = 0; }
+        catch {
+            // One flaky request shouldn't swap the voice for the whole session:
+            // speak just this sentence with the browser voice, try neural again next.
+            if (gen === speechGen && ++ttsFails >= 3) ttsMode = 'browser';
+        }
     }
     if (gen !== speechGen) { if (url) URL.revokeObjectURL(url); return; }
 

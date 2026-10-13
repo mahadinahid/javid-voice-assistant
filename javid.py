@@ -637,10 +637,13 @@ _TTS_CACHE_MAX_CHARS = 40
 _TTS_CACHE_SIZE = 64
 
 # edge-tts is a free, unofficial Microsoft endpoint. It normally answers in ~1 s
-# but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. Give it
-# a time budget; past that, speak the sentence with the local voice instead of
-# leaving the user in silence, and skip edge-tts for a while when it keeps missing.
-EDGE_BUDGET_SEC = 2.0
+# but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. By
+# default Javid waits and retries so the voice is always the natural one.
+EDGE_ATTEMPTS = 3
+EDGE_ATTEMPT_SEC = 6.0       # abandon a stalled try after this long and retry
+# True: trade the voice for speed — after one 2 s try (or when edge-tts keeps
+# missing, skipped for EDGE_COOLDOWN_SEC) that sentence is spoken by macOS `say`.
+LOCAL_FALLBACK = False
 EDGE_COOLDOWN_SEC = 60
 LOCAL_VOICE = "Daniel"                          # macOS `say` voice for the fallback / TTS_ENGINE="local"
 _edge_strikes = 0
@@ -658,21 +661,24 @@ async def _edge_once(text: str) -> bytes:
 
 
 def _edge_or_none(text: str) -> bytes | None:
-    """edge-tts audio, or None if it is failing/slow right now (caller falls back)."""
+    """edge-tts audio, or None if it kept failing (or, with LOCAL_FALLBACK, is slow right now)."""
     global _edge_strikes, _edge_skip_until
-    if time.monotonic() < _edge_skip_until:
+    if LOCAL_FALLBACK and time.monotonic() < _edge_skip_until:
         return None
-    try:
-        audio = asyncio.run(asyncio.wait_for(_edge_once(text), EDGE_BUDGET_SEC))
-        _edge_strikes = 0
-        return audio
-    except Exception as e:
+    attempts, budget = (1, 2.0) if LOCAL_FALLBACK else (EDGE_ATTEMPTS, EDGE_ATTEMPT_SEC)
+    for n in range(1, attempts + 1):
+        try:
+            audio = asyncio.run(asyncio.wait_for(_edge_once(text), budget))
+            _edge_strikes = 0
+            return audio
+        except Exception as e:
+            print(f"[tts] edge-tts {type(e).__name__} (try {n}/{attempts})")
+    if LOCAL_FALLBACK:
         _edge_strikes += 1
-        print(f"[tts] edge-tts {type(e).__name__} ({_edge_strikes}) — using local voice")
         if _edge_strikes >= 2:
             _edge_skip_until = time.monotonic() + EDGE_COOLDOWN_SEC
             _edge_strikes = 1   # after the cooldown, one more miss trips it again
-        return None
+    return None
 
 
 def _say_wav(text: str) -> bytes:
@@ -704,7 +710,9 @@ def synthesize(text: str) -> tuple[bytes, str]:
     else:
         audio = _edge_or_none(text)
         if audio is None:
-            return _say_wav(text), "audio/wav"   # not cached: edge quality next time it's healthy
+            if LOCAL_FALLBACK:
+                return _say_wav(text), "audio/wav"   # not cached: edge quality next time it's healthy
+            raise RuntimeError("edge-tts unavailable")
         result = (audio, "audio/mpeg")
 
     if len(text) <= _TTS_CACHE_MAX_CHARS:

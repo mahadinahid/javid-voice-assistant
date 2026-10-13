@@ -72,9 +72,13 @@ def build_system_prompt() -> str:
         "Don't say you checked or double-checked unless you called a tool in this turn; if a "
         "search didn't give a clear answer, say you're not sure instead of guessing. "
         "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
-        "Calendar: list_events / add_event / find_free_time. Pass days as the user said them "
-        "('friday', 'tomorrow') and let the tool work out the date; when you confirm, repeat the "
-        "day and date exactly as the tool result states. Say times like '3 PM', not '15:00'."
+        "Calendar: list_events / add_event / move_event / delete_event / find_free_time. Pass days "
+        "as the user said them ('friday', 'tomorrow') and let the tool work out the date; when you "
+        "confirm, repeat the day and date exactly as the tool result states. Say times like '3 PM', "
+        "not '15:00'. To move or delete an event, pass part of its title; if the tool says several "
+        "match, ask which. delete_event never deletes on the first call: tell the user what it "
+        "found, ask yes or no, and only after they say yes call it again with confirm=true. "
+        "Never say an event was moved or deleted unless the tool result says so."
     )
     # Rebuilt every turn, so this is always current. The day table lets the
     # model look weekdays up instead of computing them (it gets that wrong).
@@ -558,6 +562,7 @@ def think_stream(user_text: str):
     time before get_datetime), so it is dropped instead of spoken.
     """
     messages[0]["content"] = build_system_prompt()
+    calendar_tools.new_turn()   # lets delete_event tell "next message" from "same turn"
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
     reply = ""

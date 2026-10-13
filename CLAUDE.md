@@ -35,6 +35,8 @@ Requires `GROQ_API_KEY` in `.env`. The README describes only the original CLI ve
 
 **Adding a tool:** implement it, add a schema to `TOOLS`, add a lambda to `TOOL_MAP`, and mention it in the system prompt. Calendar tools live in `calendar_tools.py`, which exports its own `TOOLS` / `TOOL_MAP` that `javid.py` splices in (`*calendar_tools.TOOLS`, `**calendar_tools.TOOL_MAP`). Calendar functions are wrapped in `_guard`, which turns auth/API errors into sentences the model can speak.
 
+**Calendar edit tools (`move_event`, `delete_event`)** find events by title words in Python (`_find_events` / `_pick`), never by model-supplied IDs; zero or several matches are reported back, not guessed. The model often fills optional `day`/`time` with an invented "today", so a hint that matches nothing falls back to a title-only search. `delete_event` is deliberately two-step and enforced in code: the first call only describes the event, and deletion is accepted only if `confirm=true` arrives on the *next* user message (`calendar_tools._turn`, bumped by `think_stream` via `new_turn()`). Don't weaken this to a prompt instruction — the model ignores those.
+
 **`server.py`** (FastAPI) wraps the core:
 - `/type` and `/talk` stream **NDJSON events** — `transcript`, `tool`, `delta`, `error`, `ignored`, `done` (with fresh `tasks`/`memory`) — consumed by `streamReply()` in `index.html`.
 - `/talk` takes a `mode` form field: `push` (always answer), `wake` (hands-free; answer only if the transcript starts with the wake word, via `strip_wake_word`), `followup` (hands-free window right after a reply; no wake word needed).

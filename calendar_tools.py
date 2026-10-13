@@ -1,5 +1,5 @@
 """
-Google Calendar for Javid — read today's agenda, add events, find free time.
+Google Calendar for Javid — read the agenda, add / move / delete events, find free time.
 
 Setup (once): put an OAuth "Desktop app" client file at credentials.json, then
 connect from the web UI sidebar (or call connect()). The token is saved to
@@ -207,6 +207,140 @@ def add_event(title: str, day: str, time: str, duration_minutes: int = 60, locat
             f"from {_fmt_time(begin)} to {_fmt_time(end)}.{note}")
 
 
+# ---------- finding, moving and deleting events ----------
+# Events are found by name in Python (never by model-supplied IDs). Zero or several
+# matches are reported back instead of guessed at. Deleting takes two user turns.
+_GENERIC = {"my", "the", "a", "an", "event", "appointment", "meeting", "with", "at", "on",
+            "for", "to", "of", "and"}
+SEARCH_DAYS = 30       # how far ahead an event is looked for when no day is given
+
+_turn = 0              # bumped once per user message (javid.think_stream)
+_pending_delete = None  # {"id": event id, "turn": turn it was asked about}
+
+
+def new_turn() -> None:
+    global _turn
+    _turn += 1
+
+
+def _when(start: datetime, end: datetime, all_day: bool) -> str:
+    day = start.strftime("%A, %B %d")
+    return f"{day}, all day" if all_day else f"{day} from {_fmt_time(start)} to {_fmt_time(end)}"
+
+
+def _describe(ev: dict) -> str:
+    return f"'{ev.get('summary', '(no title)')}' on {_when(*_event_times(ev))}"
+
+
+def _find_events(title: str, day: str = "", time: str = "") -> list[dict]:
+    if day:
+        start, end = _day_bounds(_parse_day(day))
+    else:
+        start, end = _day_bounds(date.today(), SEARCH_DAYS)
+    words = [w for w in re.findall(r"[a-z0-9']+", (title or "").lower()) if w not in _GENERIC]
+    hits = [ev for ev in _fetch(start, end)
+            if all(w in ev.get("summary", "").lower() for w in words)]
+    if time:
+        hour, minute = _parse_time(time)
+        exact = bool(re.search(r"[ap]\.?m", time.lower()))   # "3" alone could be 3 AM or 3 PM
+
+        def at_time(ev):
+            s, _, all_day = _event_times(ev)
+            return not all_day and s.minute == minute and (
+                s.hour == hour if exact or hour > 12 else s.hour % 12 == hour % 12)
+        hits = [ev for ev in hits if at_time(ev)]
+    return hits
+
+
+def _pick(title: str, day: str, time: str) -> tuple[dict | None, str | None]:
+    """The one event meant, or (None, a sentence explaining why not)."""
+    hits = _find_events(title, day, time)
+    if not hits and (day or time):
+        # The model often fills optional day/time with a guess ("today") the user never
+        # said. A wrong hint shouldn't hide the event, so retry on the title alone;
+        # callers show the event's real day and time before anything is changed.
+        hits = _find_events(title)
+    if not hits:
+        return None, f"I couldn't find an event matching '{title}' in the next {SEARCH_DAYS} days."
+    if len(hits) > 1:
+        same = [ev for ev in hits if ev.get("summary", "").strip().lower() == (title or "").strip().lower()]
+        if len(same) == 1:
+            return same[0], None
+        rows = "\n".join(f"- {_describe(ev)}" for ev in hits[:6])
+        return None, (f"{len(hits)} events match '{title}':\n{rows}\n"
+                      "Nothing was changed. Ask which one; its day or time tells them apart.")
+    return hits[0], None
+
+
+def _side_notes(ev: dict) -> str:
+    notes = []
+    if ev.get("recurringEventId"):
+        notes.append("This was one occurrence of a repeating event; the others are untouched.")
+    if any(not a.get("self") for a in ev.get("attendees", [])):
+        notes.append("It has guests, and they were not notified.")
+    return (" " + " ".join(notes)) if notes else ""
+
+
+@_guard
+def move_event(title: str, new_day: str = "", new_time: str = "", day: str = "", time: str = "") -> str:
+    """Reschedule an event to another day and/or time, keeping its length."""
+    if not (new_day or new_time):
+        return "Tell me where to move it: a new day, a new time, or both."
+    ev, problem = _pick(title, day, time)
+    if problem:
+        return problem
+    start, end, all_day = _event_times(ev)
+    target = _parse_day(new_day) if new_day else start.date()
+    if all_day:
+        if new_time:
+            return f"{_describe(ev)} is an all-day event, so it can only move to another day."
+        new_start = datetime.combine(target, datetime.min.time(), _tz())
+        new_end = new_start + (end - start)
+        body = {"start": {"date": target.isoformat()}, "end": {"date": new_end.date().isoformat()}}
+    else:
+        hour, minute = _parse_time(new_time) if new_time else (start.hour, start.minute)
+        new_start = datetime.combine(target, datetime.min.time(), _tz()).replace(hour=hour, minute=minute)
+        new_end = new_start + (end - start)
+        body = {"start": {"dateTime": new_start.isoformat()}, "end": {"dateTime": new_end.isoformat()}}
+        for key in ("start", "end"):
+            if ev[key].get("timeZone"):
+                body[key]["timeZone"] = ev[key]["timeZone"]
+    if new_start == start:
+        return f"{_describe(ev)} is already then. Nothing changed."
+
+    def at(t: datetime) -> str:
+        return t.strftime("%A, %B %d") + (" (all day)" if all_day else f" at {_fmt_time(t)}")
+
+    _service().events().patch(calendarId=CALENDAR_ID, eventId=ev["id"], body=body).execute()
+    clashes = [e.get("summary", "(no title)") for e in _fetch(new_start, new_end)
+               if e["id"] != ev["id"] and not _event_times(e)[2]] if not all_day else []
+    note = f" Heads up: it overlaps with {', '.join(clashes)}." if clashes else ""
+    ends = "" if all_day else f", ending at {_fmt_time(new_end)}"
+    if day and _parse_day(day) != start.date():
+        note += f" Note: it was on {start.strftime('%A, %B %d')}, not {day}."
+    return (f"Moved '{ev.get('summary', '(no title)')}' from {at(start)} to {at(new_start)}{ends}."
+            f"{note}{_side_notes(ev)}")
+
+
+@_guard
+def delete_event(title: str, day: str = "", time: str = "", confirm: bool = False) -> str:
+    """Delete an event — only after the user has confirmed on their next message."""
+    global _pending_delete
+    ev, problem = _pick(title, day, time)
+    if problem:
+        return problem
+    confirmed = (confirm and _pending_delete is not None and _pending_delete["id"] == ev["id"]
+                 and _pending_delete["turn"] + 1 == _turn)
+    if not confirmed:
+        _pending_delete = {"id": ev["id"], "turn": _turn}
+        return (f"Found {_describe(ev)}. NOT deleted yet. Ask the user, using exactly this day and "
+                f"time: \"I found {_describe(ev)}. Delete it?\" Only after they answer yes, call "
+                "delete_event again with the same arguments and confirm=true.")
+    _service().events().delete(calendarId=CALENDAR_ID, eventId=ev["id"]).execute()
+    _pending_delete = None
+    return f"Deleted {_describe(ev)}.{_side_notes(ev)}"
+
+
 @_guard
 def find_free_time(day: str = "today", duration_minutes: int = 30) -> str:
     d = _parse_day(day)
@@ -391,6 +525,44 @@ TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "move_event",
+            "description": "Reschedule an existing calendar event to another day and/or time (keeps its "
+                           "length). Identify it by title, plus its current day or time if there could "
+                           "be several.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Part of the event's title, as the user said it."},
+                    "day": {"type": "string", "description": "Its CURRENT day. Leave out unless the user said it. " + _DAY_HELP},
+                    "time": {"type": "string", "description": "Its CURRENT start time. Leave out unless the user said it."},
+                    "new_day": {"type": "string", "description": "The day to move it to. " + _DAY_HELP},
+                    "new_time": {"type": "string", "description": "The new start time as the user said it, e.g. '4pm'."},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "delete_event",
+            "description": "Delete a calendar event. The first call only finds it; the user must confirm "
+                           "(their next message), then call again with confirm=true and the same arguments.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Part of the event's title, as the user said it."},
+                    "day": {"type": "string", "description": "The event's day. Leave out unless the user said it. " + _DAY_HELP},
+                    "time": {"type": "string", "description": "Its start time. Leave out unless the user said it."},
+                    "confirm": {"type": "boolean", "description": "true only after the user said yes.", "default": False},
+                },
+                "required": ["title"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "find_free_time",
             "description": f"Find free slots between {WORK_START}:00 and {WORK_END}:00 on a day.",
             "parameters": {
@@ -409,5 +581,7 @@ TOOL_MAP = {
     "list_holidays":  lambda args: list_holidays(**args),
     "list_events":    lambda args: list_events(**args),
     "add_event":      lambda args: add_event(**args),
+    "move_event":     lambda args: move_event(**args),
+    "delete_event":   lambda args: delete_event(**args),
     "find_free_time": lambda args: find_free_time(**args),
 }

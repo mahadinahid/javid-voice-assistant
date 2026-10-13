@@ -8,15 +8,16 @@ import threading
 from contextlib import asynccontextmanager
 
 import uvicorn
-from fastapi import FastAPI, File, Form, HTTPException, Response, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import calendar_tools
 from javid import (
     _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
-    is_noise, llm_status, load_memory, ping_models, read_history, reset_conversation,
-    set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe,
+    clear_provider_key, is_noise, llm_status, load_memory, ping_models,
+    read_history, reset_conversation, set_chain, set_provider_key, set_task_done,
+    startup_greeting, strip_wake_word, synthesize, think_stream, transcribe,
 )
 
 
@@ -212,6 +213,53 @@ def llm_ping():
     """Tiny live request to each model (a few tokens each) to see who answers right now."""
     pings = ping_models()
     return {"pings": pings, "status": llm_status()}
+
+
+def _local_page_only(request: Request):
+    """Changing keys or the model order must come from this page, not from another website
+    that happens to POST to localhost (browsers always send Origin on such requests)."""
+    host = request.headers.get("host", "")
+    if host not in ("localhost:8000", "127.0.0.1:8000") or request.headers.get("origin") != f"http://{host}":
+        raise HTTPException(403, "Only the Javid page may change this.")
+
+
+class ChainBody(BaseModel):
+    chain: list[str] | None = None      # None = back to the default order
+
+
+class KeyBody(BaseModel):
+    key: str
+
+
+@app.put("/llm/chain")
+def llm_set_chain(body: ChainBody, request: Request):
+    _local_page_only(request)
+    try:
+        set_chain(body.chain)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return llm_status()
+
+
+@app.put("/llm/key/{provider}")
+def llm_set_key(provider: str, body: KeyBody, request: Request):
+    """Verify the key with the provider, save it to .env, and test that provider's models."""
+    _local_page_only(request)
+    try:
+        set_provider_key(provider, body.key)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"pings": ping_models(only_provider=provider), "status": llm_status()}
+
+
+@app.delete("/llm/key/{provider}")
+def llm_clear_key(provider: str, request: Request):
+    _local_page_only(request)
+    try:
+        clear_provider_key(provider)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return llm_status()
 
 
 # ---------- sidebar: direct edits, no LLM ----------

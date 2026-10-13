@@ -66,6 +66,8 @@ MEMORY_FILE = "memory.json"
 HISTORY_FILE = "chat_log.jsonl"
 LLM_USAGE_FILE = "llm_usage.jsonl"   # one line per LLM request: tokens by model (for the Models panel)
 LLM_QUOTA_FILE = "llm_quota.json"    # daily token limits Groq has told us about
+LLM_CHAIN_FILE = "llm_chain.json"    # model order chosen in the Models panel (absent = defaults below)
+ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 CONTEXT_TURNS = 20      # past messages Javid reloads into context on restart
 
 load_dotenv()
@@ -664,6 +666,41 @@ PROVIDERS = {
 _provider_clients: dict = {}
 
 
+def default_chain() -> list[str]:
+    return [LLM_MODEL, *LLM_FALLBACKS]
+
+
+def current_chain() -> list[str]:
+    """Models in the order they're tried: the user's choice from the panel, else the defaults."""
+    try:
+        with open(LLM_CHAIN_FILE) as f:
+            ids = [m for m in json.load(f).get("chain", []) if isinstance(m, str) and m]
+        if ids:
+            return ids
+    except (OSError, ValueError, AttributeError):
+        pass
+    return default_chain()
+
+
+def set_chain(ids: list[str] | None) -> None:
+    """Save a new model order (None restores the defaults). Every entry must be a default model
+    or one the provider's key actually lists, so typos can't end up in the chain."""
+    if ids is None:
+        try:
+            os.remove(LLM_CHAIN_FILE)
+        except OSError:
+            pass
+        return
+    if not 1 <= len(ids) <= 10 or len(set(ids)) != len(ids):
+        raise ValueError("Pick between 1 and 10 different models.")
+    for m in ids:
+        known = m in default_chain() or m in (_models_on_provider(_split(m)[0]) or [])
+        if not known:
+            raise ValueError(f"{m} isn't a model your keys can use.")
+    with open(LLM_CHAIN_FILE, "w") as f:
+        json.dump({"chain": ids}, f, indent=2)
+
+
 def _split(model_id: str) -> tuple[str, str]:
     """'gemini:gemini-2.5-flash' -> ('gemini', 'gemini-2.5-flash'); a bare id is a Groq model."""
     provider, sep, name = model_id.partition(":")
@@ -754,7 +791,7 @@ def _retry_after(err: Exception, default: float = 60.0) -> float:
 
 
 def _models_to_try() -> list[str]:
-    chain = [m for m in (LLM_MODEL, *LLM_FALLBACKS) if _has_key(m)]
+    chain = [m for m in current_chain() if _has_key(m)] or default_chain()[:1]
     now = time.time()
     ready = [m for m in chain if _model_cooldown.get(m, 0) <= now]
     # Everything is cooling down: still try the one that recovers first rather than give up.
@@ -788,7 +825,7 @@ def llm_status() -> dict:
     """Everything the Models panel shows: chain order, who can serve now, token usage, limits."""
     _load_quota()   # another process (CLI, regression run) may have seen a 429 since we started
     now = time.time()
-    chain = [LLM_MODEL, *LLM_FALLBACKS]
+    chain = current_chain()
     everything = _read_usage(0)
     recent = [e for e in everything if e.get("ts", 0) >= now - 86400]
     # Our tally only starts when logging began; before that, usage is simply unknown to us.
@@ -843,7 +880,14 @@ def llm_status() -> dict:
     serving = next((m for m in models if m["state"] == "ready"), None)
     if serving:
         serving["state"] = "serving"
+    providers = {}
+    for name, cfg in PROVIDERS.items():
+        key = os.environ.get(cfg.get("key_env", "GROQ_API_KEY"), "").strip()
+        providers[name] = {"label": cfg["label"], "key_env": cfg.get("key_env", "GROQ_API_KEY"),
+                           "has_key": bool(key), "key_hint": key[-4:] if len(key) >= 8 else "",
+                           "editable": name != "groq"}   # the Groq key also drives speech, set it in .env
     return {
+        "providers": providers, "is_default_chain": chain == default_chain(),
         "now": now, "serving": serving["id"] if serving else None,
         "chain_size": len(chain), "tracking_since": tracking_since,
         "ready_count": sum(m["state"] in ("serving", "ready") for m in models),
@@ -854,8 +898,72 @@ def llm_status() -> dict:
     }
 
 
-def ping_models() -> list[dict]:
-    """Send a tiny no-tools request to every model in the chain, in parallel.
+_KEY_FORMAT = re.compile(r"^[A-Za-z0-9._\-]{8,300}$")
+
+
+def _write_env(name: str, value: str | None) -> None:
+    """Set (or with None, remove) one NAME=value line in .env, leaving everything else as it was."""
+    try:
+        with open(ENV_FILE) as f:
+            lines = f.read().splitlines()
+    except OSError:
+        lines = []
+    pat = re.compile(rf"^\s*(?:export\s+)?{re.escape(name)}\s*=")
+    kept = [l for l in lines if not pat.match(l)]
+    if value is not None:
+        kept.append(f"{name}={value}")
+    tmp = ENV_FILE + ".tmp"
+    with open(tmp, "w") as f:
+        f.write("\n".join(kept) + "\n")
+    try:
+        os.chmod(tmp, os.stat(ENV_FILE).st_mode & 0o777)
+    except OSError:
+        os.chmod(tmp, 0o600)
+    os.replace(tmp, ENV_FILE)
+
+
+def _forget_provider(provider: str) -> None:
+    """After a key change: rebuild the client and drop cooldowns/errors from the old key."""
+    _provider_clients.pop(provider, None)
+    _key_models.pop(provider, None)
+    for m in set(current_chain()) | set(default_chain()):
+        if _split(m)[0] == provider:
+            _model_cooldown.pop(m, None)
+            _model_info.get(m, {}).pop("last_error", None)
+
+
+def set_provider_key(provider: str, key: str) -> None:
+    """Check `key` against the provider (a model-list call: no tokens spent), then save it to
+    .env and use it straight away. Raises ValueError with a message safe to show the user."""
+    cfg = PROVIDERS.get(provider, {})
+    if not cfg.get("key_env"):
+        raise ValueError("That provider's key can't be changed here.")
+    key = key.strip()
+    if not _KEY_FORMAT.match(key):
+        raise ValueError("That doesn't look like an API key (letters, digits, - _ . only, no spaces).")
+    try:
+        _openai.OpenAI(api_key=key, base_url=cfg["base_url"], timeout=15.0, max_retries=0).models.list()
+    except API_ERRORS as e:
+        if getattr(e, "status_code", None) in (400, 401, 403):
+            raise ValueError(f"{cfg['label']} rejected this key. Nothing was saved.") from None
+        raise ValueError(f"Couldn't reach {cfg['label']} to check the key ({type(e).__name__}). "
+                         "Nothing was saved; try again.") from None
+    _write_env(cfg["key_env"], key)
+    os.environ[cfg["key_env"]] = key
+    _forget_provider(provider)
+
+
+def clear_provider_key(provider: str) -> None:
+    cfg = PROVIDERS.get(provider, {})
+    if not cfg.get("key_env"):
+        raise ValueError("That provider's key can't be changed here.")
+    _write_env(cfg["key_env"], None)
+    os.environ.pop(cfg["key_env"], None)
+    _forget_provider(provider)
+
+
+def ping_models(only_provider: str | None = None) -> list[dict]:
+    """Send a tiny no-tools request to every model in the chain (or one provider's), in parallel.
     Shows which ones answer right now and how fast; a success clears that model's cooldown."""
     from concurrent.futures import ThreadPoolExecutor
 
@@ -879,8 +987,8 @@ def ping_models() -> list[dict]:
                 _note_error(model, e)
             return {"id": model, "ok": False, "ms": ms(), "error": f"{type(e).__name__}: {str(e)[:140]}"}
 
-    chain = [LLM_MODEL, *LLM_FALLBACKS]
-    with ThreadPoolExecutor(max_workers=len(chain)) as pool:
+    chain = [m for m in current_chain() if only_provider in (None, _split(m)[0])]
+    with ThreadPoolExecutor(max_workers=max(1, len(chain))) as pool:
         return list(pool.map(ping, chain))
 
 
@@ -902,7 +1010,7 @@ def _open_stream():
             last_error = e
             continue
         _note_headers(model, raw.headers)
-        if model != LLM_MODEL:
+        if model != current_chain()[0]:
             print(f"[llm] answering with fallback {model}")
         llm_usage[model] = llm_usage.get(model, 0) + 1
         return model, raw.parse()

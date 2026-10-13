@@ -396,7 +396,7 @@ def main() -> int:
         print(f"No case matches {args.filter!r}")
         return 2
     print(f"Running {len(cases)} case(s) x {args.repeat}; model chain: "
-          f"{' -> '.join([javid.LLM_MODEL, *javid.LLM_FALLBACKS])} (scratch: {SCRATCH})\n")
+          f"{' -> '.join(javid.current_chain())} (scratch: {SCRATCH})\n")
 
     def on_alarm(signum, frame):
         raise InfraError(f"timed out after {RUN_TIMEOUT_SEC}s")

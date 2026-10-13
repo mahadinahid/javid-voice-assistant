@@ -15,8 +15,8 @@ from pydantic import BaseModel
 import calendar_tools
 from javid import (
     _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
-    is_noise, load_memory, read_history, reset_conversation, set_task_done,
-    startup_greeting, strip_wake_word, synthesize, think_stream, transcribe,
+    is_noise, llm_status, load_memory, ping_models, read_history, reset_conversation,
+    set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe,
 )
 
 
@@ -28,12 +28,21 @@ def _warm_tts():
         print(f"[tts] warm-up failed: {str(e)[:80]}")
 
 
+def _check_models():
+    """Tiny ping to each model at startup, so the Models panel starts out truthful."""
+    try:
+        ping_models()
+    except Exception as e:
+        print(f"[llm] startup check failed: {str(e)[:80]}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("\nJavid is up. Open http://localhost:8000\n")
     # The first TTS call after startup is slow (cold connection); warm it and the
     # cache with the hands-free acknowledgement so the first "Hey Javid" is quick.
     threading.Thread(target=_warm_tts, daemon=True).start()
+    threading.Thread(target=_check_models, daemon=True).start()
     yield
 
 
@@ -190,6 +199,19 @@ def speak_text(body: TypeBody):
         print(f"[tts] unavailable: {str(e)[:120]}")
         raise HTTPException(503, "TTS unavailable")
     return Response(audio, media_type=media_type)
+
+
+# ---------- model chain status (Models panel) ----------
+@app.get("/llm")
+def llm():
+    return llm_status()
+
+
+@app.post("/llm/ping")
+def llm_ping():
+    """Tiny live request to each model (a few tokens each) to see who answers right now."""
+    pings = ping_models()
+    return {"pings": pings, "status": llm_status()}
 
 
 # ---------- sidebar: direct edits, no LLM ----------

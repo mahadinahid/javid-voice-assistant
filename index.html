@@ -193,6 +193,61 @@ header h1 {
 .cal-connect:hover { background: rgba(245,158,11,0.15); }
 .cal-connect:disabled { opacity: 0.5; cursor: wait; }
 
+
+/* ── Models panel + dialog ── */
+.panel-title .link-btn {
+    float: right; background: none; border: none; cursor: pointer;
+    font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #6366f1;
+}
+.panel-title .link-btn:hover { color: #818cf8; }
+.models-summary { font-size: 11.5px; color: #64748b; margin-bottom: 8px; line-height: 1.4; }
+.model-row { display: flex; align-items: center; gap: 8px; padding: 5px 0; font-size: 12px; color: #94a3b8; border-bottom: 1px solid #181828; }
+.model-row:last-child { border-bottom: none; }
+.model-row .m-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-row .m-meta { font-size: 11px; color: #64748b; font-variant-numeric: tabular-nums; }
+.m-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: #475569; }
+.m-dot.serving { background: #22c55e; box-shadow: 0 0 8px rgba(34,197,94,0.7); }
+.m-dot.ready   { background: #38bdf8; }
+.m-dot.cooling { background: #f59e0b; }
+.m-dot.missing { background: #475569; }
+.m-dot.low     { background: #f97316; }
+
+.modal { position: fixed; inset: 0; z-index: 50; background: rgba(5,5,10,0.72); display: flex; align-items: center; justify-content: center; padding: 20px; }
+.modal[hidden] { display: none; }
+.modal-card { width: min(860px, 100%); max-height: 92vh; overflow-y: auto; background: #0c0c16; border: 1px solid #1e1e2e; border-radius: 14px; padding: 20px 22px; scrollbar-width: thin; scrollbar-color: #1e1e30 transparent; }
+.modal-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.modal-head h2 { font-size: 15px; letter-spacing: 0.12em; text-transform: uppercase; color: #cbd5e1; margin-right: auto; }
+.btn-ghost { background: #11111c; border: 1px solid #2a2a3e; color: #cbd5e1; border-radius: 8px; padding: 7px 12px; font-size: 12px; cursor: pointer; }
+.btn-ghost:hover { border-color: #6366f1; }
+.btn-ghost:disabled { opacity: 0.5; cursor: wait; }
+.models-headline { margin: 10px 0 16px; font-size: 13px; color: #94a3b8; line-height: 1.5; }
+.models-headline b { color: #e2e8f0; font-weight: 600; }
+.model-cards { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+.model-card { background: #11111c; border: 1px solid #1e1e2e; border-radius: 10px; padding: 14px; font-size: 12px; color: #94a3b8; display: flex; flex-direction: column; gap: 9px; }
+.model-card.serving { border-color: #166534; box-shadow: 0 0 0 1px rgba(34,197,94,0.15); }
+.model-card.cooling, .model-card.low { border-color: #78350f; }
+.model-card.missing { opacity: 0.6; }
+.mc-head { display: flex; align-items: center; gap: 8px; }
+.mc-name { font-size: 13.5px; font-weight: 600; color: #e2e8f0; margin-right: auto; word-break: break-all; }
+.pill { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid #2a2a3e; color: #94a3b8; white-space: nowrap; }
+.pill.serving { color: #86efac; border-color: #166534; background: rgba(34,197,94,0.08); }
+.pill.ready   { color: #7dd3fc; border-color: #0c4a6e; background: rgba(56,189,248,0.08); }
+.pill.cooling, .pill.low { color: #fcd34d; border-color: #78350f; background: rgba(245,158,11,0.08); }
+.mc-state { font-size: 12.5px; color: #cbd5e1; }
+.meter-label { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #64748b; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.meter-label b { color: #cbd5e1; font-weight: 600; }
+.meter { height: 6px; border-radius: 3px; background: #1a1a28; overflow: hidden; }
+.meter > i { display: block; height: 100%; border-radius: 3px; background: #6366f1; }
+.meter > i.warn { background: #f59e0b; }
+.meter > i.crit { background: #ef4444; }
+.mc-line { font-size: 11.5px; color: #64748b; line-height: 1.45; font-variant-numeric: tabular-nums; }
+.mc-line b { color: #94a3b8; font-weight: 600; }
+.mc-err { font-size: 11px; color: #b45309; line-height: 1.4; word-break: break-word; }
+.mc-ping.ok { color: #86efac; } .mc-ping.bad { color: #fca5a5; }
+.models-onkey { margin-top: 16px; font-size: 11.5px; color: #64748b; line-height: 1.7; }
+.models-onkey code { background: #11111c; border: 1px solid #1e1e2e; border-radius: 5px; padding: 1px 6px; color: #94a3b8; font-size: 11px; }
+.modal-foot { margin-top: 14px; font-size: 11px; color: #475569; line-height: 1.55; }
+
 /* ── Main ── */
 .main {
     flex: 1;
@@ -580,6 +635,11 @@ header h1 {
             <div class="panel-title">Memory</div>
             <div id="memory-list"><p class="empty">Nothing stored yet.</p></div>
         </div>
+        <div class="panel" id="models-panel">
+            <div class="panel-title">Models <button id="models-open" class="link-btn" title="Token usage, limits and fallback order">Details</button></div>
+            <div id="models-summary" class="models-summary">Checking…</div>
+            <div id="models-list"></div>
+        </div>
     </aside>
 
     <!-- ── Main ── -->
@@ -618,6 +678,22 @@ header h1 {
         </div>
 
     </main>
+</div>
+
+<div id="models-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-label="Language models">
+        <div class="modal-head">
+            <h2>Language models</h2>
+            <button id="models-ping" class="btn-ghost" title="Sends a tiny request (~20 tokens) to each model">Test all now</button>
+            <button id="models-close" class="btn-ghost" aria-label="Close">✕</button>
+        </div>
+        <div id="models-headline" class="models-headline"></div>
+        <div id="models-cards" class="model-cards"></div>
+        <div id="models-onkey" class="models-onkey"></div>
+        <p class="modal-foot">Token counts are Groq's own numbers for requests made through Javid; other apps sharing the
+        key aren't included. A daily limit appears once Groq has reported it. Models are tried in the order shown; one that
+        is rate-limited is skipped until its timer ends.</p>
+    </div>
 </div>
 
 <div id="toast" class="toast"></div>
@@ -1115,6 +1191,7 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
                 } else if (ev.type === 'done') {
                     refreshSidebar(ev.tasks, ev.memory);
                     refreshCalendar();  // a reply may have added an event
+                    refreshModels();    // tokens were just spent
                 }
             }
         }
@@ -1494,7 +1571,8 @@ talkBtn.addEventListener('mouseleave', () => { if (isRecording) stopRecording();
 talkBtn.addEventListener('touchstart', e => { e.preventDefault(); startRecording(); }, { passive: false });
 talkBtn.addEventListener('touchend',   stopRecording);
 
-const typingInField = () => document.activeElement?.matches('input, textarea, [contenteditable]');
+const typingInField = () => !document.getElementById('models-modal').hidden
+    || document.activeElement?.matches('input, textarea, [contenteditable]');
 
 document.addEventListener('keydown', e => {
     if (e.code === 'Space' && !e.repeat && !typingInField()) {
@@ -1529,6 +1607,142 @@ textInput.addEventListener('keydown', e => { if (e.key === 'Enter') handleSend()
 setInterval(() => {
     sendBtn.disabled = isBusy;
 }, 200);
+
+
+// ── Models: which LLMs can serve right now, with token usage ──────────────
+let llmStatus = null, llmFetchedAt = 0, llmPings = {};
+
+const fmtN = n => n == null ? '—' : Number(n).toLocaleString();
+const fmtK = n => n == null ? '—' : n >= 10000 ? (n / 1000).toFixed(0) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
+function fmtWait(sec) {
+    sec = Math.max(0, Math.round(sec));
+    if (sec >= 3600) return `${Math.floor(sec / 3600)}h ${Math.floor(sec % 3600 / 60)}m`;
+    return sec >= 60 ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s` : `${sec}s`;
+}
+function fmtAgo(ts) {
+    if (!ts) return 'never';
+    const s = Math.max(0, Date.now() / 1000 - ts);
+    return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
+}
+// state as of *now* (the server's countdown, minus time since we fetched it)
+function liveModel(m) {
+    const left = m.retry_in_s - (Date.now() - llmFetchedAt) / 1000;
+    if (m.state === 'cooling' && left <= 0) return { ...m, state: 'ready', retry_in_s: 0 };
+    return { ...m, retry_in_s: Math.max(0, left) };
+}
+const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', cooling: 'Rate-limited', low: 'Low on daily tokens', missing: 'Not on this key' };
+
+function renderModelsPanel() {
+    const sum = document.getElementById('models-summary'), list = document.getElementById('models-list');
+    if (!llmStatus) { sum.textContent = 'Unavailable'; list.innerHTML = ''; return; }
+    const ms = llmStatus.models.map(liveModel);
+    const ready = ms.filter(m => m.state === 'serving' || m.state === 'ready').length;
+    const serving = ms.find(m => m.state === 'serving') || ms.find(m => m.state === 'ready');
+    sum.textContent = ready
+        ? `${ready} of ${ms.length} ready · next answer: ${serving.name}`
+        : `No model can serve right now`;
+    list.innerHTML = ms.map(m => `
+        <div class="model-row" title="${esc(m.id)} — ${STATE_TEXT[m.state]}">
+            <span class="m-dot ${m.state}"></span>
+            <span class="m-name">${esc(m.name)}</span>
+            <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : fmtK(m.tokens_24h.total) + ' tok'}</span>
+        </div>`).join('');
+}
+
+function meter(label, valueText, used, total) {
+    if (!total) return '';
+    const pct = Math.min(100, Math.max(0, used / total * 100));
+    const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
+    return `<div><div class="meter-label"><span>${label}</span><b>${valueText}</b></div>
+            <div class="meter"><i class="${cls}" style="width:${pct.toFixed(1)}%"></i></div></div>`;
+}
+
+function renderModelsModal() {
+    if (!llmStatus) return;
+    const ms = llmStatus.models.map(liveModel);
+    const ready = ms.filter(m => m.state === 'serving' || m.state === 'ready');
+    const next = ms.find(m => m.state === 'serving') || ready[0];
+    document.getElementById('models-headline').innerHTML = ready.length
+        ? `<b>${ready.length} of ${ms.length}</b> models can serve right now · the next request goes to <b>${esc(next.name)}</b>.`
+        : `<b>None</b> of the ${ms.length} models can serve right now — Javid will try the one that recovers first.`;
+
+    document.getElementById('models-cards').innerHTML = ms.map(m => {
+        const t = m.tokens_24h, lim = m.limits, ping = llmPings[m.id];
+        const stateLine = m.state === 'cooling'
+            ? `Rate-limited · back in <b>${fmtWait(m.retry_in_s)}</b>`
+            : m.state === 'low' ? `Almost out of daily tokens · about <b>${fmtN(m.remaining_24h)}</b> left, a reply needs ~${fmtN(llmStatus.min_request_tokens)}`
+            : m.state === 'missing' ? 'This model isn’t available to your API key' : STATE_TEXT[m.state];
+        const role = m.role === 'primary' ? 'Primary' : `Fallback ${m.order}`;
+        let daily;
+        const partial = llmStatus.now - llmStatus.tracking_since < 86400;   // counting began < 24 h ago
+        const since = partial ? `<div class="mc-line">Javid began counting <b>${fmtAgo(llmStatus.tracking_since)}</b>; earlier use isn’t included.</div>` : '';
+        if (m.tpd_limit) {
+            const used = m.est_used_24h ?? t.total;
+            daily = since + meter((partial ? 'Tokens counted so far' : 'Tokens in the last 24 h') + (m.reported ? ' (est.)' : ''),
+                          `${fmtN(used)} / ${fmtN(m.tpd_limit)}`, used, m.tpd_limit)
+                  + (m.reported ? `<div class="mc-line">Groq reported <b>${fmtN(m.reported.used)}</b> used at ${fmtAgo(m.reported.at)}.</div>` : '');
+        } else {
+            daily = since + `<div class="mc-line"><b>${fmtN(t.total)}</b> tokens ${partial ? 'counted so far' : 'in the last 24 h'} · daily limit not reported yet</div>`;
+        }
+        return `
+        <div class="model-card ${m.state}">
+            <div class="mc-head">
+                <span class="m-dot ${m.state}"></span>
+                <span class="mc-name">${esc(m.name)}</span>
+                <span class="pill ${m.state}">${role}</span>
+            </div>
+            <div class="mc-state">${stateLine}</div>
+            ${daily}
+            <div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>
+            ${lim ? meter('Tokens this minute', `${fmtN(lim.tpm_remaining)} left of ${fmtN(lim.tpm_limit)}`,
+                          (lim.tpm_limit || 0) - (lim.tpm_remaining || 0), lim.tpm_limit) : ''}
+            ${lim && lim.rpd_limit ? meter('Requests today', `${fmtN(lim.rpd_remaining)} left of ${fmtN(lim.rpd_limit)}`,
+                          lim.rpd_limit - lim.rpd_remaining, lim.rpd_limit) : ''}
+            <div class="mc-line">Last used <b>${fmtAgo(m.last_used)}</b>${m.sends_reasoning_effort ? ' · reasoning: low' : ' · default reasoning'}</div>
+            ${ping ? `<div class="mc-line mc-ping ${ping.ok ? 'ok' : 'bad'}">${ping.ok ? `✓ answered in ${ping.ms} ms` : '✗ ' + esc(ping.error || 'failed')}</div>` : ''}
+            ${m.last_error ? `<div class="mc-err">Last problem ${fmtAgo(m.last_error.at)}: ${esc(m.last_error.kind)}${m.last_error.window ? ' (' + m.last_error.window + ')' : ''}</div>` : ''}
+        </div>`;
+    }).join('');
+
+    const onKey = llmStatus.on_key;
+    document.getElementById('models-onkey').innerHTML = onKey
+        ? `Chat models on your Groq key: <b>${onKey.length}</b> — ` + onKey.map(k =>
+            `<code title="${k.in_chain ? 'in the fallback chain' : 'not used by Javid'}">${esc(k.id)}${k.in_chain ? ' ✓' : ''}</code>`).join(' ')
+        : 'Couldn’t list models on your key (Groq unreachable).';
+}
+
+async function refreshModels() {
+    try {
+        llmStatus = await (await fetch('/llm')).json();
+        llmFetchedAt = Date.now();
+    } catch { llmStatus = null; }
+    renderModelsPanel();
+    if (!modelsModal.hidden) renderModelsModal();
+}
+
+async function pingModels() {
+    const btn = document.getElementById('models-ping');
+    btn.disabled = true; btn.textContent = 'Testing…';
+    try {
+        const data = await (await fetch('/llm/ping', { method: 'POST' })).json();
+        llmPings = Object.fromEntries(data.pings.map(p => [p.id, p]));
+        llmStatus = data.status; llmFetchedAt = Date.now();
+        renderModelsPanel(); renderModelsModal();
+    } catch { showToast('Model test failed — is the server running?'); }
+    btn.disabled = false; btn.textContent = 'Test all now';
+}
+
+const modelsModal = document.getElementById('models-modal');
+function openModels() { modelsModal.hidden = false; renderModelsModal(); refreshModels(); }
+function closeModels() { modelsModal.hidden = true; }
+document.getElementById('models-open').addEventListener('click', openModels);
+document.getElementById('models-close').addEventListener('click', closeModels);
+document.getElementById('models-ping').addEventListener('click', pingModels);
+modelsModal.addEventListener('click', e => { if (e.target === modelsModal) closeModels(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modelsModal.hidden) closeModels(); });
+setInterval(() => { renderModelsPanel(); if (!modelsModal.hidden) renderModelsModal(); }, 1000);   // countdowns
+setInterval(() => refreshModels(), 10000);
+refreshModels();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────
 (async () => {

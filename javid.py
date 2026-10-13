@@ -31,6 +31,9 @@ LLM_MODEL = "openai/gpt-oss-20b"
 # Tried in order when LLM_MODEL is rate-limited (free tier: 200k tokens/day per model) or down.
 # Quotas are per model, so each fallback has its own budget. Checked against this key's model list.
 LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b"]
+# Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
+KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
+LLM_MIN_REQUEST_TOKENS = 2500   # one turn's request is ~2-3k tokens (prompt + tool schemas)
 VOICE = "Aman"                                  # macOS `say` voice (CLI)
 # LOCKED by the user (2026-10-13): this engine + voice is the one they approved ("perfect").
 # Don't change TTS_ENGINE, EDGE_VOICE or LOCAL_FALLBACK unless they explicitly ask.
@@ -41,6 +44,8 @@ GROQ_TTS_VOICE = "troy"                         # also: austin, daniel
 TASKS_FILE = "tasks.txt"
 MEMORY_FILE = "memory.json"
 HISTORY_FILE = "chat_log.jsonl"
+LLM_USAGE_FILE = "llm_usage.jsonl"   # one line per LLM request: tokens by model (for the Models panel)
+LLM_QUOTA_FILE = "llm_quota.json"    # daily token limits Groq has told us about
 CONTEXT_TURNS = 20      # past messages Javid reloads into context on restart
 
 load_dotenv()
@@ -549,6 +554,83 @@ _model_cooldown: dict[str, float] = {}   # model -> time.time() after which it m
 llm_usage: dict[str, int] = {}           # model -> requests served (handy for tests and logs)
 
 
+_model_info: dict[str, dict] = {}        # model -> {"limits", "last_error", "quota"} learned at runtime
+
+
+def _load_quota() -> None:
+    try:
+        with open(LLM_QUOTA_FILE) as f:
+            for model, q in json.load(f).items():
+                _model_info.setdefault(model, {})["quota"] = q
+    except (OSError, ValueError):
+        pass
+
+
+def _save_quota() -> None:
+    try:
+        with open(LLM_QUOTA_FILE, "w") as f:
+            json.dump({m: i["quota"] for m, i in _model_info.items() if "quota" in i}, f, indent=2)
+    except OSError:
+        pass
+
+
+def _record_usage(model: str, usage) -> None:
+    """Append one request's token counts (Groq's own numbers) to the usage log."""
+    entry = {"ts": round(time.time(), 1), "model": model, "prompt": usage.prompt_tokens or 0,
+             "completion": usage.completion_tokens or 0, "total": usage.total_tokens or 0}
+    try:
+        with open(LLM_USAGE_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+def _read_usage(since: float) -> list[dict]:
+    out = []
+    try:
+        with open(LLM_USAGE_FILE) as f:
+            for line in f:
+                try:
+                    e = json.loads(line)
+                except ValueError:
+                    continue
+                if e.get("ts", 0) >= since:
+                    out.append(e)
+    except OSError:
+        pass
+    return out
+
+
+def _note_headers(model: str, headers) -> None:
+    """Groq reports per-minute token and per-day request headroom on every response."""
+    def num(name):
+        try:
+            return int(headers.get(name))
+        except (TypeError, ValueError):
+            return None
+    _model_info.setdefault(model, {})["limits"] = {
+        "tpm_limit": num("x-ratelimit-limit-tokens"), "tpm_remaining": num("x-ratelimit-remaining-tokens"),
+        "rpd_limit": num("x-ratelimit-limit-requests"), "rpd_remaining": num("x-ratelimit-remaining-requests"),
+        "rpd_reset": headers.get("x-ratelimit-reset-requests"), "at": time.time(),
+    }
+
+
+def _note_error(model: str, err: APIError) -> None:
+    info = _model_info.setdefault(model, {})
+    msg = str(err)
+    info["last_error"] = {"kind": type(err).__name__, "message": msg[:220], "at": time.time()}
+    # "...on tokens per day (TPD): Limit 200000, Used 198720, Requested 2278..."
+    m = re.search(r"\((TPD|TPM|RPD|RPM)\): Limit (\d+), Used (\d+)", msg)
+    if m and m.group(1) == "TPD":
+        info["quota"] = {"tpd_limit": int(m.group(2)), "reported_used": int(m.group(3)), "reported_at": time.time()}
+        _save_quota()
+    elif m:
+        info["last_error"]["window"] = m.group(1)
+
+
+_load_quota()
+
+
 def _model_kwargs(model: str) -> dict:
     # reasoning_effort is a gpt-oss knob. Qwen given reasoning_effort="none" skipped the
     # tool call and claimed the task was added, so other models get their defaults.
@@ -580,32 +662,154 @@ def _models_to_try() -> list[str]:
     return ready or [min(chain, key=lambda m: _model_cooldown.get(m, 0))]
 
 
+_NON_CHAT = ("whisper", "orpheus", "tts", "guard", "embed")
+_key_models: dict = {"at": 0.0, "ids": None}
+
+
+def _models_on_key() -> list[str] | None:
+    """Chat-capable model ids this API key can use (cached 10 min; None if Groq is unreachable)."""
+    if time.time() - _key_models["at"] > 600:
+        try:
+            ids = sorted(m.id for m in client.models.list().data)
+            _key_models.update(at=time.time(), ids=[i for i in ids if not any(k in i for k in _NON_CHAT)])
+        except Exception:
+            _key_models.update(at=time.time() - 540, ids=_key_models["ids"])   # retry in a minute
+    return _key_models["ids"]
+
+
+def llm_status() -> dict:
+    """Everything the Models panel shows: chain order, who can serve now, token usage, limits."""
+    _load_quota()   # another process (CLI, regression run) may have seen a 429 since we started
+    now = time.time()
+    chain = [LLM_MODEL, *LLM_FALLBACKS]
+    everything = _read_usage(0)
+    recent = [e for e in everything if e.get("ts", 0) >= now - 86400]
+    # Our tally only starts when logging began; before that, usage is simply unknown to us.
+    tracking_since = min((e["ts"] for e in everything), default=now)
+    on_key = _models_on_key()
+    models = []
+    for order, model in enumerate(chain):
+        mine = [e for e in recent if e.get("model") == model]
+        day = {"requests": len(mine), "prompt": sum(e["prompt"] for e in mine),
+               "completion": sum(e["completion"] for e in mine), "total": sum(e["total"] for e in mine)}
+        info = _model_info.get(model, {})
+        quota = info.get("quota")
+        if not quota and model in KNOWN_TPD_LIMITS:
+            quota = {"tpd_limit": KNOWN_TPD_LIMITS[model], "reported_used": 0, "reported_at": 0}
+        est_used = remaining = None
+        if quota:
+            # Groq's reported figure counts every client on the key; ours only counts Javid.
+            # Right after a report, trust Groq's number plus what we've spent since.
+            since_report = sum(e["total"] for e in mine if e["ts"] >= quota["reported_at"])
+            fresh = quota["reported_at"] and now - quota["reported_at"] < 3600
+            est_used = max(day["total"], quota["reported_used"] + since_report) if fresh else day["total"]
+            remaining = max(0, quota["tpd_limit"] - est_used)
+        cooling_for = max(0.0, _model_cooldown.get(model, 0) - now)
+        if on_key is not None and model not in on_key:
+            state = "missing"
+        elif cooling_for > 0:
+            state = "cooling"
+        elif remaining is not None and remaining < LLM_MIN_REQUEST_TOKENS:
+            state = "low"       # answers a tiny ping, but a real reply won't fit in what's left
+        else:
+            state = "ready"
+        models.append({
+            "id": model, "name": model.split("/")[-1], "order": order,
+            "role": "primary" if order == 0 else "fallback", "state": state,
+            "retry_in_s": round(cooling_for), "tokens_24h": day,
+            "session_requests": llm_usage.get(model, 0),
+            "last_used": max((e["ts"] for e in mine), default=None),
+            "limits": info.get("limits"),
+            "tpd_limit": quota["tpd_limit"] if quota else None,
+            "est_used_24h": est_used, "remaining_24h": remaining,
+            "reported": ({"used": quota["reported_used"], "at": quota["reported_at"]}
+                         if quota and quota["reported_at"] else None),
+            "last_error": info.get("last_error"),
+            "sends_reasoning_effort": "gpt-oss" in model,
+        })
+    serving = next((m for m in models if m["state"] == "ready"), None)
+    if serving:
+        serving["state"] = "serving"
+    return {
+        "now": now, "serving": serving["id"] if serving else None,
+        "chain_size": len(chain), "tracking_since": tracking_since,
+        "ready_count": sum(m["state"] in ("serving", "ready") for m in models),
+        "min_request_tokens": LLM_MIN_REQUEST_TOKENS,
+        "models": models,
+        "on_key": None if on_key is None else [{"id": i, "in_chain": i in chain} for i in on_key],
+    }
+
+
+def ping_models() -> list[dict]:
+    """Send a tiny no-tools request to every model in the chain, in parallel.
+    Shows which ones answer right now and how fast; a success clears that model's cooldown."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    def ping(model: str) -> dict:
+        t0 = time.time()
+        try:
+            raw = client.chat.completions.with_raw_response.create(
+                model=model, messages=[{"role": "user", "content": "ping"}], max_tokens=8,
+                **_model_kwargs(model))
+            _note_headers(model, raw.headers)
+            done = raw.parse()
+            if done.usage:
+                _record_usage(model, done.usage)
+            _model_cooldown.pop(model, None)
+            return {"id": model, "ok": True, "ms": round((time.time() - t0) * 1000)}
+        except (RateLimitError, InternalServerError, NotFoundError) as e:
+            wait = 3600.0 if isinstance(e, NotFoundError) else (
+                _retry_after(e) if isinstance(e, RateLimitError) else 30.0)
+            _model_cooldown[model] = time.time() + wait
+            _note_error(model, e)
+            return {"id": model, "ok": False, "ms": round((time.time() - t0) * 1000),
+                    "error": f"{type(e).__name__}: {str(e)[:140]}"}
+        except Exception as e:
+            return {"id": model, "ok": False, "ms": round((time.time() - t0) * 1000),
+                    "error": f"{type(e).__name__}: {str(e)[:140]}"}
+
+    chain = [LLM_MODEL, *LLM_FALLBACKS]
+    with ThreadPoolExecutor(max_workers=len(chain)) as pool:
+        return list(pool.map(ping, chain))
+
+
 def _open_stream():
-    """Start a streaming completion on the first model in the chain that accepts it."""
+    """Start a streaming completion on the first model in the chain that accepts it.
+    Returns (model, stream)."""
     last_error = None
     for model in _models_to_try():
         try:
-            stream = client.chat.completions.create(
+            raw = client.chat.completions.with_raw_response.create(
                 model=model, messages=messages, tools=TOOLS, stream=True, **_model_kwargs(model))
         except (RateLimitError, InternalServerError, NotFoundError) as e:
             # 429: out of quota for now. 5xx: overloaded. 404: model not on this key.
             wait = 3600.0 if isinstance(e, NotFoundError) else (
                 _retry_after(e) if isinstance(e, RateLimitError) else 30.0)
             _model_cooldown[model] = time.time() + wait
+            _note_error(model, e)
             print(f"[llm] {model} unavailable ({type(e).__name__}), skipping it for {wait:.0f}s")
             last_error = e
             continue
+        _note_headers(model, raw.headers)
         if model != LLM_MODEL:
             print(f"[llm] answering with fallback {model}")
         llm_usage[model] = llm_usage.get(model, 0) + 1
-        return stream
+        return model, raw.parse()
     raise last_error
 
 
 def _stream_completion(tool_calls: dict):
     """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`."""
-    stream = _open_stream()
+    model, stream = _open_stream()
+    counted = False
     for chunk in stream:
+        if not counted:
+            usage = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None)
+            if usage:   # arrives on the final chunk
+                _record_usage(model, usage)
+                counted = True
+        if not chunk.choices:
+            continue
         delta = chunk.choices[0].delta
         if delta.content:
             yield delta.content

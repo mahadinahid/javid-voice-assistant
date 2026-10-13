@@ -7,3 +7,5 @@ memory.json
 chat_log.jsonl
 credentials.json
 token.json
+llm_usage.jsonl
+llm_quota.json

@@ -47,7 +47,9 @@ LLM_MODEL = "openai/gpt-oss-20b"
 # Entries without a prefix are Groq models; "gemini:<model>" goes to Google's OpenAI-compatible
 # endpoint (needs GEMINI_API_KEY) and "deepseek:<model>" to DeepSeek's (needs DEEPSEEK_API_KEY, paid).
 # A provider without its key in .env is skipped.
-GEMINI_MODEL = "gemini-2.5-flash"
+# Highest model that answered on the free tier on 2026-10-13 (tool calls OK). gemini-3.8-flash is newer
+# but returned 503 "high demand" on every try; gemini-3-flash-preview is much faster (~2 s vs 6-8 s).
+GEMINI_MODEL = "gemini-3.7-flash"
 DEEPSEEK_MODEL = "deepseek-chat"
 LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b",
                  f"gemini:{GEMINI_MODEL}", f"deepseek:{DEEPSEEK_MODEL}"]
@@ -780,10 +782,9 @@ def _retry_after(err: Exception, default: float = 60.0) -> float:
             return max(1.0, float(header))
     except ValueError:
         pass
-    g = re.search(r"retry(?: in|Delay['\"]?:\s*['\"]?)\s*([\d.]+)s", str(err), re.I)   # Google's wording
-    if g:
-        return max(1.0, float(g.group(1)))
-    m = re.search(r"try again in (?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?", str(err))
+    # Groq: "try again in 7m11.1s"; Google: "Please retry in 6h21m37.1s" or retryDelay: '41s'
+    m = re.search(r"(?:try again in|retry in|retryDelay['\"]?:\s*['\"]?)\s*"
+                  r"(?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?", str(err), re.I)
     if m and any(m.groups()):
         h, mins, secs = (float(g) if g else 0.0 for g in m.groups())
         return max(1.0, h * 3600 + mins * 60 + secs)

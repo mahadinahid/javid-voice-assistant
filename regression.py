@@ -20,6 +20,7 @@ import os
 import re
 import signal
 import sys
+import time
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -46,14 +47,24 @@ QUOTA_HIT: list[str] = []
 _orig_stream_completion = javid._stream_completion
 
 
+PER_MINUTE_WAIT_MAX = 90   # a 429 that clears within this is a per-minute limit: wait it out
+
+
 def _counted_stream_completion(tool_calls):
+    """Count requests; ride out per-minute 429s (Gemini's free tier allows 5/min per model) and
+    treat a longer wait (daily cap) as 'out of quota' so the suite stops instead of lying."""
     global LLM_REQUESTS
-    LLM_REQUESTS += 1
-    try:
-        yield from _orig_stream_completion(tool_calls)
-    except javid.RATE_LIMITED as e:
-        QUOTA_HIT.append(str(e))
-        raise
+    for attempt in range(6):
+        LLM_REQUESTS += 1
+        try:
+            yield from _orig_stream_completion(tool_calls)
+            return
+        except javid.RATE_LIMITED as e:
+            wait = javid._retry_after(e)
+            if wait > PER_MINUTE_WAIT_MAX or attempt == 5:
+                QUOTA_HIT.append(str(e))
+                raise
+            time.sleep(wait + 1)   # no chunk was yielded yet: a 429 arrives when the stream opens
 
 
 javid._stream_completion = _counted_stream_completion
@@ -386,7 +397,14 @@ def main() -> int:
     ap.add_argument("-n", "--repeat", type=int, default=1, help="runs per case")
     ap.add_argument("-k", "--filter", default="", help="only cases whose name contains this")
     ap.add_argument("-v", "--verbose", action="store_true", help="show replies for passing runs too")
+    ap.add_argument("--models", default="",
+                    help="comma-separated model ids to use as the chain for this run, e.g. gemini:gemini-3.7-flash")
     args = ap.parse_args()
+    if args.models:   # test one provider in isolation: no fallback to Groq masking its failures
+        chain_file = os.path.join(SCRATCH, "chain.json")
+        with open(chain_file, "w") as f:
+            json.dump({"chain": [m.strip() for m in args.models.split(",") if m.strip()]}, f)
+        javid.LLM_CHAIN_FILE = chain_file
 
     if (problem := preflight()):
         print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")

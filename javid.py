@@ -29,6 +29,8 @@ SAMPLE_RATE = 16000
 STT_MODEL = "whisper-large-v3-turbo"
 LLM_MODEL = "openai/gpt-oss-20b"
 VOICE = "Aman"                                  # macOS `say` voice (CLI)
+# LOCKED by the user (2026-10-13): this engine + voice is the one they approved ("perfect").
+# Don't change TTS_ENGINE, EDGE_VOICE or LOCAL_FALLBACK unless they explicitly ask.
 TTS_ENGINE = "edge"                             # web UI voice: "edge" (free), "groq", or "local" (macOS say, instant)
 EDGE_VOICE = "en-US-AndrewNeural"               # also: BrianNeural, ChristopherNeural, en-GB-RyanNeural
 GROQ_TTS_MODEL = "canopylabs/orpheus-v1-english"  # needs terms accepted in Groq console

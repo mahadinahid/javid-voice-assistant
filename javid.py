@@ -129,11 +129,24 @@ def reset_conversation() -> None:
     log_message("divider", "")
 
 
+def _is_garbled(text: str) -> bool:
+    """Degenerate output: a run of ellipses/dots or one word on repeat (seen from gpt-oss-120b
+    answering a question about itself). Real replies are never mostly punctuation."""
+    s = text.strip()
+    marks = sum(c in ".…" for c in s)
+    non_space = sum(not c.isspace() for c in s)
+    if non_space >= 12 and marks / non_space > 0.3:
+        return True
+    words = re.findall(r"[a-z']+", s.lower())
+    return len(words) >= 8 and len(set(words)) / len(words) < 0.3
+
+
 def _restore_context() -> None:
     """Reload the tail of the current conversation so Javid remembers it after a restart."""
     history = read_history()
     start = max((i + 1 for i, e in enumerate(history) if e["role"] == "divider"), default=0)
-    turns = [e for e in history[start:] if e["role"] in ("user", "assistant")]
+    turns = [e for e in history[start:] if e["role"] in ("user", "assistant")
+             and not (e["role"] == "assistant" and _is_garbled(e["text"]))]
     messages.extend({"role": e["role"], "content": e["text"]} for e in turns[-CONTEXT_TURNS:])
 
 
@@ -624,6 +637,7 @@ def think_stream(user_text: str):
     try:
         retried_empty = False
         retried_error = False
+        retried_garbled = False
         for _ in range(MAX_TOOL_ROUNDS + 1):
             tool_calls = {}
             try:
@@ -639,6 +653,12 @@ def think_stream(user_text: str):
             if not tool_calls and not text.strip() and not retried_empty:
                 retried_empty = True  # model occasionally returns nothing at all; ask once more
                 continue
+            if not tool_calls and _is_garbled(text):
+                if not retried_garbled:
+                    retried_garbled = True
+                    print(f"[retry] garbled reply: {text[:60]!r}")
+                    continue
+                text = "Sorry, I lost my train of thought. Could you ask that again?"
             if not tool_calls:
                 reply = text
                 if reply:

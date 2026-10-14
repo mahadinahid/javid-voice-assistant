@@ -993,13 +993,11 @@ setInterval(() => {
 }, 500);
 
 // ── Voice ─────────────────────────────────────────────────────────────────
-// Each sentence is synthesized by the server's neural voice (/speak) as soon as
-// it arrives, then played in order. If /speak is unavailable, fall back to the
-// browser's built-in speech for the rest of the session.
-const synth = window.speechSynthesis;
-let ttsMode = 'neural';      // 'neural' | 'browser'
-let ttsFails = 0;            // consecutive /speak failures; 3 in a row -> browser voice
-let voice = null;            // browser fallback voice
+// Each sentence is synthesized by the server's voice (/speak, en-US-AndrewNeural)
+// as soon as it arrives, then played in order. That is the ONLY voice: the user
+// made it permanent, so there is no browser-speech fallback. A sentence /speak
+// can't voice (after one more try) is skipped; the text stays on screen.
+let voiceNoticeAt = 0;       // last "voice unavailable" toast, so it isn't shown per sentence
 let pendingSpeech = '';      // text received but not yet spoken (no sentence end yet)
 let utterancesLeft = 0;      // queued chunks still to finish
 let streamDone = true;
@@ -1008,24 +1006,6 @@ let playing = false;
 let currentAudio = null;
 let speechGen = 0;           // bumps on stop, so stale callbacks are ignored
 let speechCtrl = new AbortController();
-
-// Most natural male voices first; Premium/Enhanced macOS voices win if installed.
-const MALE_VOICES = ['Evan', 'Nathan', 'Tom', 'Aaron', 'Daniel', 'Arthur', 'Oliver',
-                     'Google UK English Male', 'Reed', 'Eddy', 'Rishi', 'Alex'];
-function pickVoice() {
-    const voices = (synth?.getVoices() || []).filter(v => v.lang.startsWith('en'));
-    const rank = v => {
-        const i = MALE_VOICES.findIndex(n => v.name.startsWith(n));
-        if (i < 0) return Infinity;
-        return i - (/premium|enhanced/i.test(v.name) ? 100 : 0);
-    };
-    voice = voices.slice().sort((a, b) => rank(a) - rank(b))[0] || null;
-    if (voice && rank(voice) === Infinity) voice = voices.find(v => v.localService) || voice;
-}
-if (synth) {
-    pickVoice();
-    synth.onvoiceschanged = pickVoice;
-}
 
 async function fetchAudio(text) {
     const res = await fetch('/speak', {
@@ -1042,8 +1022,8 @@ function speakChunk(text) {
     text = text.trim();
     if (!text || !/[a-z0-9]/i.test(text)) return;
     utterancesLeft++;
-    const audio = ttsMode === 'neural' ? fetchAudio(text) : null;
-    audio?.catch(() => {});  // handled in playNext
+    const audio = fetchAudio(text);
+    audio.catch(() => {});   // handled in playNext
     speechQueue.push({ text, audio });
     if (!playing) playNext();
 }
@@ -1055,15 +1035,17 @@ async function playNext() {
     playing = true;
 
     let url = null;
-    if (item.audio) {
-        try { url = await item.audio; ttsFails = 0; }
-        catch {
-            // One flaky request shouldn't swap the voice for the whole session:
-            // speak just this sentence with the browser voice, try neural again next.
-            if (gen === speechGen && ++ttsFails >= 3) ttsMode = 'browser';
+    try { url = await item.audio; }
+    catch {
+        if (gen === speechGen) {
+            try { url = await fetchAudio(item.text); } catch {}   // one more try, same voice
         }
     }
     if (gen !== speechGen) { if (url) URL.revokeObjectURL(url); return; }
+    if (!url && Date.now() - voiceNoticeAt > 60000) {
+        voiceNoticeAt = Date.now();
+        showToast('Voice unavailable right now — the reply is shown as text.');
+    }
 
     let finished = false;
     const done = () => {
@@ -1085,18 +1067,8 @@ async function playNext() {
         a.onended = a.onerror = done;
         a.play().catch(done);
     } else {
-        browserSpeak(item.text, done);
+        done();     // never a substitute voice: skip this sentence
     }
-}
-
-function browserSpeak(text, done) {
-    if (!synth) { done(); return; }
-    const u = new SpeechSynthesisUtterance(text);
-    if (voice) u.voice = voice;
-    u.rate = 1.03;
-    u.onstart = () => setOrb('speaking');
-    u.onend = u.onerror = done;
-    synth.speak(u);
 }
 
 function stopSpeech() {
@@ -1107,7 +1079,6 @@ function stopSpeech() {
     playing = false;
     currentAudio?.pause();
     currentAudio = null;
-    synth?.cancel();
     pendingSpeech = '';
     utterancesLeft = 0;
 }

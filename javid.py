@@ -1,6 +1,6 @@
 """
 Javid v1.0 — push-to-talk voice assistant (7-day build, complete)
-Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> macOS `say` (voice)
+Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> edge-tts en-US-AndrewNeural (voice)
 Day 7 polish: startup greeting, graceful Ctrl+C, network-safe search, file-handle fix
 """
 
@@ -56,13 +56,11 @@ LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b",
 # Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
 KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
 LLM_MIN_REQUEST_TOKENS = 1500   # one request is ~0.6-1.7k tokens (prompt + the tools sent); a turn ~2 requests
-VOICE = "Aman"                                  # macOS `say` voice (CLI)
-# LOCKED by the user (2026-10-13): this engine + voice is the one they approved ("perfect").
-# Don't change TTS_ENGINE, EDGE_VOICE or LOCAL_FALLBACK unless they explicitly ask.
-TTS_ENGINE = "edge"                             # web UI voice: "edge" (free), "groq", or "local" (macOS say, instant)
-EDGE_VOICE = "en-US-AndrewNeural"               # also: BrianNeural, ChristopherNeural, en-GB-RyanNeural
-GROQ_TTS_MODEL = "canopylabs/orpheus-v1-english"  # needs terms accepted in Groq console
-GROQ_TTS_VOICE = "troy"                         # also: austin, daniel
+# LOCKED by the user: approved as "perfect" on 2026-10-13, made permanent on 2026-10-14 ("set this
+# voice for everything, don't change it again"). Every spoken word, web UI and CLI, is this voice
+# via edge-tts. There is deliberately no other engine and no fallback voice: if edge-tts fails,
+# the reply is shown as text, not spoken by something else. Never change this unless told to.
+EDGE_VOICE = "en-US-AndrewNeural"
 TASKS_FILE = "tasks.txt"
 MEMORY_FILE = "memory.json"
 HISTORY_FILE = "chat_log.jsonl"
@@ -1270,17 +1268,10 @@ _TTS_CACHE_MAX_CHARS = 40
 _TTS_CACHE_SIZE = 64
 
 # edge-tts is a free, unofficial Microsoft endpoint. It normally answers in ~1 s
-# but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. By
-# default Javid waits and retries so the voice is always the natural one.
+# but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. Javid
+# waits and retries so the voice is always EDGE_VOICE, never a substitute.
 EDGE_ATTEMPTS = 3
 EDGE_ATTEMPT_SEC = 6.0       # abandon a stalled try after this long and retry
-# True: trade the voice for speed — after one 2 s try (or when edge-tts keeps
-# missing, skipped for EDGE_COOLDOWN_SEC) that sentence is spoken by macOS `say`.
-LOCAL_FALLBACK = False
-EDGE_COOLDOWN_SEC = 60
-LOCAL_VOICE = "Daniel"                          # macOS `say` voice for the fallback / TTS_ENGINE="local"
-_edge_strikes = 0
-_edge_skip_until = 0.0
 
 
 async def _edge_once(text: str) -> bytes:
@@ -1294,60 +1285,23 @@ async def _edge_once(text: str) -> bytes:
 
 
 def _edge_or_none(text: str) -> bytes | None:
-    """edge-tts audio, or None if it kept failing (or, with LOCAL_FALLBACK, is slow right now)."""
-    global _edge_strikes, _edge_skip_until
-    if LOCAL_FALLBACK and time.monotonic() < _edge_skip_until:
-        return None
-    attempts, budget = (1, 2.0) if LOCAL_FALLBACK else (EDGE_ATTEMPTS, EDGE_ATTEMPT_SEC)
-    for n in range(1, attempts + 1):
+    """edge-tts audio, or None if every try failed."""
+    for n in range(1, EDGE_ATTEMPTS + 1):
         try:
-            audio = asyncio.run(asyncio.wait_for(_edge_once(text), budget))
-            _edge_strikes = 0
-            return audio
+            return asyncio.run(asyncio.wait_for(_edge_once(text), EDGE_ATTEMPT_SEC))
         except Exception as e:
-            print(f"[tts] edge-tts {type(e).__name__} (try {n}/{attempts})")
-    if LOCAL_FALLBACK:
-        _edge_strikes += 1
-        if _edge_strikes >= 2:
-            _edge_skip_until = time.monotonic() + EDGE_COOLDOWN_SEC
-            _edge_strikes = 1   # after the cooldown, one more miss trips it again
+            print(f"[tts] edge-tts {type(e).__name__} (try {n}/{EDGE_ATTEMPTS})")
     return None
 
 
-def _say_wav(text: str) -> bytes:
-    """Local macOS voice: always available, ~0.3 s."""
-    with tempfile.TemporaryDirectory() as d:
-        path = os.path.join(d, "speech.wav")
-        subprocess.run(["say", "-v", LOCAL_VOICE, "-o", path, "--data-format=LEI16@22050", text],
-                       check=True, timeout=15)
-        with open(path, "rb") as f:
-            return f.read()
-
-
 def synthesize(text: str) -> tuple[bytes, str]:
-    """Neural TTS for the web UI. Returns (audio bytes, media type)."""
+    """The one voice (EDGE_VOICE) as MP3 bytes. Raises if edge-tts is down: there is no fallback."""
     if text in _tts_cache:
         return _tts_cache[text]
-
-    if TTS_ENGINE == "local":
-        return _say_wav(text), "audio/wav"
-
-    if TTS_ENGINE == "groq":
-        response = client.audio.speech.create(
-            model=GROQ_TTS_MODEL,
-            voice=GROQ_TTS_VOICE,
-            input=text,
-            response_format="wav",
-        )
-        result = (response.read(), "audio/wav")
-    else:
-        audio = _edge_or_none(text)
-        if audio is None:
-            if LOCAL_FALLBACK:
-                return _say_wav(text), "audio/wav"   # not cached: edge quality next time it's healthy
-            raise RuntimeError("edge-tts unavailable")
-        result = (audio, "audio/mpeg")
-
+    audio = _edge_or_none(text)
+    if audio is None:
+        raise RuntimeError("edge-tts unavailable")
+    result = (audio, "audio/mpeg")
     if len(text) <= _TTS_CACHE_MAX_CHARS:
         if len(_tts_cache) >= _TTS_CACHE_SIZE:
             _tts_cache.pop(next(iter(_tts_cache)))
@@ -1356,7 +1310,16 @@ def synthesize(text: str) -> tuple[bytes, str]:
 
 
 def speak(text: str) -> None:
-    subprocess.run(["say", "-v", VOICE, text])
+    """CLI: the same voice as the web UI, played with macOS afplay."""
+    try:
+        audio, _ = synthesize(text)
+    except RuntimeError:
+        print("(voice unavailable right now; reply shown as text only)")
+        return
+    with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
+        f.write(audio)
+        f.flush()
+        subprocess.run(["afplay", f.name])
 
 
 # ---------- main loop ----------

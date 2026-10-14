@@ -13,6 +13,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import calendar_tools
+import web_tools
 from javid import (
     _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
     clear_provider_key, is_noise, llm_status, load_memory, ping_models,
@@ -25,6 +26,7 @@ from javid import (
 def _warm_tts():
     try:
         synthesize("Yes?")
+        synthesize(web_tools.SEARCHING)
     except Exception as e:
         print(f"[tts] warm-up failed: {str(e)[:80]}")
 
@@ -84,11 +86,15 @@ def _event(**data) -> str:
 def _reply_stream(user_text: str):
     """Stream Javid's reply as newline-delimited JSON events."""
     try:
-        for kind, text in think_stream(user_text):
+        for kind, value in think_stream(user_text):
             if kind == "tool":
-                yield _event(type="tool", name=text)
+                yield _event(type="tool", name=value)
+            elif kind == "say":
+                yield _event(type="say", text=value)
+            elif kind == "sources":
+                yield _event(type="sources", items=value)
             else:
-                yield _event(type="delta", text=text)
+                yield _event(type="delta", text=value)
     except Exception as e:
         print(f"[error] {e!r}")
         yield _event(type="error", message="Something went wrong on my end.")

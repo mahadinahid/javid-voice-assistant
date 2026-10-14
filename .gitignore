@@ -9,5 +9,6 @@ credentials.json
 token.json
 llm_usage.jsonl
 llm_turns.jsonl
+tavily_usage.jsonl
 llm_quota.json
 llm_chain.json

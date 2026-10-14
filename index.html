@@ -460,6 +460,10 @@ header h1 {
     color: #64748b;
     font-style: italic;
 }
+.msg-sources { display: flex; flex-direction: column; gap: 2px; padding: 2px 4px 0; font-size: 11.5px; }
+.msg-sources a { color: #7dd3fc; text-decoration: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.msg-sources a:hover { text-decoration: underline; }
+.msg-sources .src-date { color: #64748b; }
 
 /* ── Chat ── */
 .chat-section {
@@ -1168,7 +1172,7 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
         showTyping();
     }
 
-    let bubble = null, reply = '';
+    let bubble = null, reply = '', sources = null;
     const ensureBubble = () => {
         if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); }
         return bubble;
@@ -1200,6 +1204,10 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
                     console.log('[hands-free] ignored:', ev.text);
                 } else if (ev.type === 'tool') {
                     showToolNote(ev.name);
+                } else if (ev.type === 'say') {
+                    speakChunk(ev.text);    // e.g. "Searching…" while a web search runs
+                } else if (ev.type === 'sources') {
+                    sources = ev.items;
                 } else if (ev.type === 'delta') {
                     reply += ev.text;
                     if (handsFree) followupPending = true;
@@ -1220,6 +1228,7 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
         if (e.name !== 'AbortError') showToast('Server error — is it running?');
     } finally {
         if (bubble && !reply.trim()) bubble.closest('.message').remove();
+        else if (bubble && sources?.length) { addSources(bubble.closest('.message'), sources); scrollChat(); }
         if (ctrl !== abortCtrl) return;  // a newer request has taken over
         hideTyping();
         streamDone = true;
@@ -1256,7 +1265,7 @@ async function submitText(text) {
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const TOOL_LABELS = {
-    web_search: 'Searching the web…',
+    web_search: 'Searching the web…', read_page: 'Reading the page…',
     add_task: 'Adding task…', list_tasks: 'Checking tasks…',
     delete_task: 'Deleting task…', complete_task: 'Completing task…',
     remember: 'Saving to memory…', recall: 'Checking memory…', clear_memory: 'Clearing memory…',
@@ -1283,13 +1292,24 @@ function scrollChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-function makeMsg(role, text) {
+function makeMsg(role, text, sources) {
     const el = document.createElement('div');
     el.className = `message ${role}`;
     el.innerHTML = `
         <span class="msg-who">${role === 'user' ? 'You' : 'Javid'}</span>
         <div class="msg-bubble">${esc(text)}</div>`;
+    if (sources?.length) addSources(el, sources);
     return el;
+}
+
+// Web answers: the links Javid found, under the bubble (they're never spoken).
+function addSources(msgEl, sources) {
+    const box = document.createElement('div');
+    box.className = 'msg-sources';
+    box.innerHTML = sources.filter(s => /^https?:\/\//.test(s.url)).map(s =>
+        `<a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer" title="${esc(s.title || s.url)}">` +
+        `${s.n}. ${esc(s.name)}${s.official ? ' (official)' : ''} <span class="src-date">· ${esc(s.date_text)}</span></a>`).join('');
+    msgEl.appendChild(box);
 }
 
 function addMsg(role, text) {
@@ -1327,7 +1347,7 @@ function historyNodes(entries) {
             continue;
         }
         if (day !== lastDay) { nodes.push(makeDivider(fmtDay(d))); lastDay = day; }
-        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text));
+        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources));
     }
     return nodes;
 }
@@ -1573,7 +1593,8 @@ function stripTimestamp(text) {
 
 function esc(str) {
     return String(str)
-        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+        .replace(/"/g,'&quot;').replace(/'/g,'&#39;');   // also used inside attributes (link URLs)
 }
 
 function showToast(msg) {
@@ -1666,7 +1687,39 @@ function renderModelsPanel() {
             <span class="m-dot ${m.state}"></span>
             <span class="m-name">${esc(m.name)}</span>
             <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : m.state === 'nokey' ? 'no key' : fmtK(m.tokens_24h.total) + ' tok'}</span>
-        </div>`).join('');
+        </div>`).join('') + webRow(llmStatus.web);
+}
+
+function webState(w) {
+    return !w.has_key ? 'nokey' : w.used_today >= w.cap ? 'cooling' : w.used_today >= w.cap * 0.75 ? 'low' : 'ready';
+}
+
+function webRow(w) {
+    if (!w) return '';
+    const st = webState(w);
+    return `
+        <div class="model-row" title="Tavily web search — ${w.used_today} of ${w.cap} credits used today">
+            <span class="m-dot ${st}"></span>
+            <span class="m-name">web search</span>
+            <span class="m-meta">${w.has_key ? `${w.used_today}/${w.cap} cr` : 'no key'}</span>
+        </div>`;
+}
+
+function webCard(w) {
+    if (!w) return '';
+    const st = webState(w);
+    const state = !w.has_key ? 'No Tavily key yet — add <b>TAVILY_API_KEY</b> to <code>.env</code> and restart'
+        : st === 'cooling' ? 'Daily budget used up · resets at midnight' : st === 'low' ? 'Running low on today’s budget' : 'Ready';
+    return `
+        <div class="model-card ${st}">
+            <div class="mc-head"><span class="m-dot ${st}"></span><span class="mc-name">Web search</span>
+                <span class="pill ${st}">Tavily</span></div>
+            <div class="mc-state">${state}</div>
+            ${meter('Credits today', `${fmtN(w.used_today)} / ${fmtN(w.cap)}`, w.used_today, w.cap)}
+            <div class="mc-line"><b>${fmtN(w.searches)}</b> search${w.searches === 1 ? '' : 'es'} · <b>${fmtN(w.reads)}</b> page read${w.reads === 1 ? '' : 's'} · <b>${fmtN(w.cache_hits)}</b> reused from cache (free, ${w.cache_minutes} min)</div>
+            <div class="mc-line">Last used <b>${fmtAgo(w.last_used)}</b> · basic search, up to 5 results</div>
+            ${w.last_error ? `<div class="mc-err">Last problem ${fmtAgo(w.last_error.at)}: ${esc(w.last_error.kind)}</div>` : ''}
+        </div>`;
 }
 
 function meter(label, valueText, used, total) {
@@ -1730,7 +1783,7 @@ function renderModelsModal() {
             ${ping ? `<div class="mc-line mc-ping ${ping.ok ? 'ok' : 'bad'}">${ping.ok ? `✓ answered in ${ping.ms} ms` : '✗ ' + esc(ping.error || 'failed')}</div>` : ''}
             ${m.last_error ? `<div class="mc-err">Last problem ${fmtAgo(m.last_error.at)}: ${esc(m.last_error.kind)}${m.last_error.window ? ' (' + m.last_error.window + ')' : ''}</div>` : ''}
         </div>`;
-    }).join('');
+    }).join('') + webCard(llmStatus.web);
     const cardsEl = document.getElementById('models-cards');
     if (cardsEl.dataset.html !== cardsHtml) {   // don't rebuild identical cards: a click could land mid-rebuild
         cardsEl.innerHTML = cardsHtml;

@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 20 prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 28 prompts through the real LLM + tool loop.
 
     python regression.py              # run everything once
     python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
@@ -7,7 +7,8 @@ Regression check for Javid's agent behaviour: 20 prompts through the real LLM + 
     python regression.py -v           # print every reply, not just failures
 
 Safe to run: tasks, memory and chat history go to a temp dir, the Google Calendar is a
-fake in-memory service, and web search is stubbed. Your real data is never touched.
+fake in-memory service, and Tavily is a fake with fixed results (no credits spent, no key
+needed). Your real data is never touched.
 Needs GROQ_API_KEY. A full run makes ~40-50 LLM requests (~40-45k tokens): on Groq's free tier
 (200k tokens/day for this model) that is half the day's budget, so don't loop it. Exit code: 0 all passed, 1 a check failed, 3 only API/network errors (inconclusive).
 """
@@ -28,6 +29,7 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import calendar_tools as ct  # noqa: E402
 import javid  # noqa: E402
+import web_tools  # noqa: E402
 from groq import Groq  # noqa: E402
 
 # A stalled stream must fail the run, not hang the suite.
@@ -83,6 +85,7 @@ javid.TASKS_FILE = os.path.join(SCRATCH, "tasks.txt")
 javid.MEMORY_FILE = os.path.join(SCRATCH, "memory.json")
 javid.HISTORY_FILE = os.path.join(SCRATCH, "chat_log.jsonl")
 javid.LLM_TURNS_FILE = os.path.join(SCRATCH, "llm_turns.jsonl")   # the Models panel averages real turns only
+web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
 TURN_TOKENS: list[tuple[str, dict]] = []   # (case name, javid.last_turn_usage) for every turn run
 
 
@@ -157,6 +160,78 @@ class FakeService:
 TODAY = date.today()
 
 
+# ---------- fake Tavily ----------
+def _rfc(d: date) -> str:     # Tavily's news results carry RFC 2822 dates
+    return datetime.combine(d, datetime.min.time()).strftime("%a, %d %b %Y 08:00:00 GMT")
+
+
+def hit(url, title, content, day=None):
+    return {"url": url, "title": title, "content": content, "score": 0.8,
+            **({"published_date": _rfc(day)} if day else {})}
+
+
+YESTERDAY = TODAY - timedelta(days=1)
+BBS_URL = "https://bbs.gov.bd/site/page/cpi-september"
+# (query regex, results), first match wins; the euro case must come before the general rate one.
+WEB_FIXTURES = [
+    (r"metro", [
+        hit("https://www.dhakatribune.com/metro-rail-hours", "Metro rail to run until 11pm from November 1",
+            "Dhaka Metro Rail Line 6 will run until 11pm from November 1, DMTCL said on Monday.", TODAY),
+        hit("https://www.thedailystar.net/metro-hours", "Metro rail hours extended",
+            "Commuters welcomed the move to extend metro rail service hours to 11pm.", YESTERDAY)]),
+    (r"cricket|tigers|odi", [
+        hit("https://www.espncricinfo.com/bangladesh-zimbabwe-1st-odi", "Bangladesh beat Zimbabwe by six wickets",
+            "Bangladesh beat Zimbabwe by six wickets in the first ODI in Harare to go 1-0 up in the series.", YESTERDAY)]),
+    (r"euro|\beur\b", [
+        hit("https://fxquotes-blog.com/eur-bdt", "EUR to BDT today", "Today 1 EUR = 133.20 BDT, according to our tracker."),
+        hit("https://travelnotes.example.com/dhaka-money", "Changing money in Dhaka",
+            "Exchanging euros in Dhaka is easy at licensed money changers in Gulshan and Motijheel.")]),
+    (r"dollar|usd|exchange rate|taka", [
+        hit("https://www.bb.org.bd/en/index.php/econdata/exchangerate", "Exchange rate of Taka",
+            "Bangladesh Bank reference rate: 1 USD = 122.50 BDT."),
+        hit("https://www.thedailystar.net/business/dollar-rate", "Dollar steady in interbank market",
+            "The dollar traded at Tk 122.50 in the interbank market on Tuesday.", TODAY)]),
+    (r"gold", [
+        hit("https://en.prothomalo.com/business/gold-price", "Gold price rises again",
+            "22-carat gold is selling at Tk 15,200 per gram in Dhaka today, jewellers said.", TODAY),
+        hit("https://www.tbsnews.net/economy/gold-price-cut", "Bajus cuts gold price",
+            "Gold price in Dhaka: 22-carat now costs Tk 14,650 per gram after Bajus cut prices.", TODAY)]),
+    (r"inflation", [
+        hit(BBS_URL, "Consumer Price Index and inflation, September 2026",
+            "The Bangladesh Bureau of Statistics publishes the monthly CPI release with point-to-point inflation figures."),
+        hit("https://www.tbsnews.net/economy/inflation-eases", "Inflation eases in September",
+            "Inflation eased in September, according to BBS data released on Sunday.", YESTERDAY)]),
+    (r"everest", [
+        hit("https://en.wikipedia.org/wiki/Mount_Everest", "Mount Everest - Wikipedia",
+            "Mount Everest is Earth's highest mountain above sea level, with an elevation of 8,849 m (29,032 ft)."),
+        hit("https://www.britannica.com/place/Mount-Everest", "Mount Everest | Britannica",
+            "Mount Everest, at 29,032 feet (8,849 metres), is the highest point on Earth.")]),
+    (r"padma", [
+        hit("https://en.wikipedia.org/wiki/Padma_Bridge", "Padma Bridge - Wikipedia",
+            "The Padma Bridge was inaugurated on 25 June 2022 and opened to traffic the next day.")]),
+    (r"capital|australia", [
+        hit("https://en.wikipedia.org/wiki/Canberra", "Canberra - Wikipedia", "Canberra is the capital city of Australia."),
+        hit("https://www.britannica.com/place/Canberra", "Canberra | Britannica", "Canberra, the capital of Australia, located in the ACT.")]),
+]
+WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 percent, down from 8.91 percent in August."}
+
+
+class FakeTavily:
+    def __init__(self):
+        self.searches, self.extracts = [], []
+
+    def search(self, query, **kw):
+        self.searches.append((query, kw))
+        results = next((r for pat, r in WEB_FIXTURES if re.search(pat, query, re.I)), [])
+        return {"query": query, "results": copy.deepcopy(results), "usage": {"credits": 1}}
+
+    def extract(self, urls, **kw):
+        urls = [urls] if isinstance(urls, str) else urls
+        self.extracts.append(urls)
+        return {"results": [{"url": u, "raw_content": WEB_PAGES[u]} for u in urls if u in WEB_PAGES],
+                "failed_results": [{"url": u} for u in urls if u not in WEB_PAGES], "usage": {"credits": 1}}
+
+
 def next_weekday(wd: int) -> date:   # Monday = 0; always in the future
     return TODAY + timedelta(days=(wd - TODAY.weekday()) % 7 or 7)
 
@@ -186,6 +261,9 @@ class Result:
     facts: list            # memory facts after the run
     cal_log: list          # fake-calendar writes after the run
     cal_log_by_turn: list  # cumulative len(cal_log) after each turn
+    sources: list = field(default_factory=list)  # links shown on screen (last turn that had any)
+    said: list = field(default_factory=list)     # "say" events (spoken, not part of the reply)
+    web: object = None                           # the FakeTavily used
 
     @property
     def tool_names(self):
@@ -295,6 +373,34 @@ def tool_arg(tool, key, pattern):
     return check
 
 
+def web_cited(r):
+    """Names one of the turn's sources and gives a date (web_tools.finalize guarantees it)."""
+    names = [s["name"] for s in r.sources]
+    if not any(n.lower() in r.last.lower() for n in names):
+        return f"reply names no source (have {names})"
+    return None if web_tools._HAS_DATE.search(r.last) else "reply has no date"
+
+
+def links_shown(r):
+    return None if r.sources and all(s["url"].startswith("http") for s in r.sources) else "no source links sent to the screen"
+
+
+def said_searching(r):
+    return None if web_tools.SEARCHING in r.said else "'Searching…' wasn't spoken"
+
+
+def at_most_3_sentences(r):
+    n = len(web_tools.sentences(r.last))
+    return None if n <= 3 else f"reply has {n} sentences"
+
+
+def news_search(r):
+    kws = [kw for _, kw in r.web.searches]
+    return None if any(kw.get("topic") == "news" and kw.get("days") for kw in kws) else f"no news-topic search with a time filter: {kws}"
+
+
+WEB_OK = [called("web_search"), web_cited, links_shown, said_searching, at_most_3_sentences]
+DISAGREES = r"disagree|differ|vary|varies|conflict|inconsisten|mixed|discrepan"
 WEEKDAY = TODAY.strftime("%A")
 
 T3 = ["[2026-10-01 09:00] Call mom", "[2026-10-01 09:05] Buy milk", "[2026-10-02 10:00] Send report"]
@@ -327,6 +433,23 @@ CASES = [
          [called("get_datetime"), reply_has(WEEKDAY, f"today's weekday ({WEEKDAY})")]),
     Case("info: web search", ["Search the web for the capital of Australia."],
          [called("web_search"), reply_has("canberra")]),
+    # --- web (fake Tavily) ---
+    Case("web: news", ["What's the latest news on the Dhaka metro rail?"],
+         WEB_OK + [news_search, reply_has("11")]),
+    Case("web: news, sports", ["Any news on the Bangladesh cricket team today?"],
+         WEB_OK + [news_search, reply_has("zimbabwe")]),
+    Case("web: exchange rate, official", ["What's the US dollar to taka exchange rate today?"],
+         WEB_OK + [reply_has(r"122\.5")]),
+    Case("web: rate from one unofficial site isn't stated", ["What's the euro to taka exchange rate?"],
+         WEB_OK + [reply_lacks(r"133")]),
+    Case("web: factual lookup", ["Look up how tall Mount Everest is."],
+         WEB_OK + [reply_has(r"8,?849|29,?032")]),
+    Case("web: factual lookup, date", ["When did the Padma Bridge open? Search online."],
+         WEB_OK + [reply_has("2022")]),
+    Case("web: reads a top result when snippets lack the figure", ["What's Bangladesh's latest inflation rate?"],
+         WEB_OK + [called("read_page"), tool_arg("read_page", "url", "bbs.gov.bd"), reply_has(r"8\.36")]),
+    Case("web: sources conflict", ["What's the price of 22-carat gold per gram in Dhaka today?"],
+         WEB_OK + [reply_has(DISAGREES, "says sources disagree")]),
     Case("info: morning briefing", ["Good morning."],
          [called("morning_briefing"), reply_has(r"\b(3|three)\b", "3 pending")], tasks=T5),
     # --- calendar ---
@@ -350,7 +473,7 @@ CASES = [
     Case("calendar: holidays from official data", ["When is the next public holiday?"],
          [called("list_holidays"), not_called("web_search"), reply_has("victory day test")]),
 ]
-assert len(CASES) == 20, len(CASES)
+assert len(CASES) == 28, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -380,9 +503,12 @@ def run_case(case: Case) -> Result:
     ct._service = lambda: svc
     ct.status = lambda: "connected"
     ct._pending_delete = None
+    fake_web = FakeTavily()
+    web_tools._client = lambda: fake_web
+    web_tools._cache.clear()
     del javid.messages[1:]
 
-    tools, replies, by_turn = [], [], []
+    tools, replies, by_turn, sources, said = [], [], [], [], []
     real_map = dict(javid.TOOL_MAP)
     turn = {"i": 0}
 
@@ -393,15 +519,19 @@ def run_case(case: Case) -> Result:
         return call
     for name in real_map:
         javid.TOOL_MAP[name] = spy(name)
-    javid.TOOL_MAP["web_search"] = lambda args: (
-        tools.append((turn["i"], "web_search", dict(args))) or
-        "Canberra - Wikipedia: Canberra is the capital city of Australia.\n"
-        "Australia - Britannica: Canberra is the capital of Australia, located in the ACT.")
     try:
         for i, text in enumerate(case.turns):
             turn["i"] = i
+            deltas = []
             with contextlib.redirect_stdout(io.StringIO()):   # silence the [tool] debug prints
-                reply = javid.think(text)
+                for kind, value in javid.think_stream(text):
+                    if kind == "delta":
+                        deltas.append(value)
+                    elif kind == "sources":
+                        sources[:] = value
+                    elif kind == "say":
+                        said.append(value)
+            reply = "".join(deltas).strip()
             if javid.last_turn_usage:
                 TURN_TOKENS.append((case.name, javid.last_turn_usage))
             if reply.startswith(API_FAILED_REPLY):
@@ -413,7 +543,8 @@ def run_case(case: Case) -> Result:
 
     with open(javid.TASKS_FILE) as f:
         tasks = [l for l in f.read().splitlines() if l.strip()]
-    return Result(case.turns, replies, tools, tasks, javid.load_memory()["facts"], list(svc.log), by_turn)
+    return Result(case.turns, replies, tools, tasks, javid.load_memory()["facts"], list(svc.log), by_turn,
+                  sources, said, fake_web)
 
 
 def main() -> int:

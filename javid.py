@@ -19,13 +19,13 @@ from datetime import datetime, timedelta
 import edge_tts
 import numpy as np
 import sounddevice as sd
-from ddgs import DDGS
 from dotenv import load_dotenv
 import groq as _groq
 import openai as _openai
 from groq import APIError, BadRequestError, Groq, InternalServerError, NotFoundError, RateLimitError
 
 import calendar_tools
+import web_tools
 
 # Groq and OpenAI-compatible providers (Gemini) raise different exception classes for the same thing.
 API_ERRORS   = (APIError, _openai.APIError)
@@ -130,8 +130,8 @@ messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 # ---------- chat history (persists across restarts) ----------
 # One JSON object per line: {"ts", "role": "user"|"assistant"|"divider", "text"}.
 # A "divider" marks the start of a new conversation.
-def log_message(role: str, text: str) -> None:
-    entry = {"ts": datetime.now().isoformat(timespec="seconds"), "role": role, "text": text}
+def log_message(role: str, text: str, **extra) -> None:
+    entry = {"ts": datetime.now().isoformat(timespec="seconds"), "role": role, "text": text, **extra}
     with open(HISTORY_FILE, "a") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
@@ -197,8 +197,6 @@ TOOLS = [
           "its counts; never answer from memory."),
     _tool("delete_task", "Delete a task, by number or by words from it.", _TASK_REF),
     _tool("complete_task", "Mark a task done, by number or by words from it.", _TASK_REF),
-    _tool("web_search", "Search the web for current news, events or facts.",
-          {"query": {"type": "string", "description": "The search query."}}, ("query",)),
     _tool("remember", "Save a fact about Mahadi to long-term memory.",
           {"fact": {"type": "string", "description": "The fact to remember."}}, ("fact",)),
     _tool("recall", "Read all facts stored about Mahadi."),
@@ -207,6 +205,7 @@ TOOLS = [
     _tool("morning_briefing", "Time, today's calendar and a task summary. Call it whenever greeted with "
           "good morning, good afternoon or good evening, whatever the actual time; always say how many "
           "tasks are pending and what's on today."),
+    *web_tools.TOOLS,
     *calendar_tools.TOOLS,
 ]
 
@@ -305,17 +304,6 @@ def complete_task(number: int | None = None, text: str | None = None) -> str:
     lines[i] = "✓ " + lines[i]
     _write_lines(lines)
     return f"Completed task #{i + 1}: {_task_parts(lines[i])[2]}."
-
-
-def web_search(query: str) -> str:
-    try:
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=3))
-    except Exception:
-        return "Search unavailable right now. Try again in a moment."
-    if not results:
-        return "No results found."
-    return "\n".join(f"{r['title']}: {r['body'][:150]}" for r in results)
 
 
 def remember(fact: str) -> str:
@@ -449,12 +437,12 @@ TOOL_MAP = {
     "list_tasks":    lambda args: list_tasks(),
     "delete_task":   lambda args: delete_task(**args),
     "complete_task": lambda args: complete_task(**args),
-    "web_search":    lambda args: web_search(**args),
     "remember":      lambda args: remember(**args),
     "recall":        lambda args: recall(),
     "clear_memory":      lambda args: clear_memory(),
     "get_datetime":      lambda args: get_datetime(),
     "morning_briefing":  lambda args: morning_briefing(),
+    **web_tools.TOOL_MAP,
     **calendar_tools.TOOL_MAP,
 }
 
@@ -470,8 +458,9 @@ TOOL_GROUPS = [
      r"cancel|\bdrop|tick|check (it )?off|that one"),
     (["remember", "recall", "clear_memory"],
      r"remember|forget|memor|recall|what do you know|about me|what'?s my|what is my|\bmy \w+ called"),
-    (["web_search"], r"search|look (it )?up|google|news|headline|latest|weather|forecast|price|stock|"
-     r"score|\bwho (is|was|won)|capital of|population"),
+    (["web_search", "read_page"], r"search|look (it )?up|google|news|headline|latest|weather|forecast|"
+     r"price|stock|score|\bwho (is|was|won)|capital of|population|exchange|\brates?\b|currenc|dollar|"
+     r"taka|euro|gold|inflation|how (tall|high|big|far|old|long)|when (was|did|is)|website|online"),
     (["get_datetime"], r"\btime\b|\bdate\b|what day|which day|today|clock|o'?clock"),
     (["morning_briefing"], r"good (morning|afternoon|evening)|briefing"),
     (["list_events", "add_event", "move_event", "delete_event", "find_free_time"],
@@ -941,6 +930,7 @@ def llm_status() -> dict:
         "ready_count": sum(m["state"] in ("serving", "ready") for m in models),
         "min_request_tokens": LLM_MIN_REQUEST_TOKENS,
         "models": models,
+        "web": web_tools.status(),
         "on_key": [{"id": i, "in_chain": i in chain, "provider": p}
                    for p, ids in on_key_by_provider.items() for i in ids or []],
     }
@@ -1150,7 +1140,8 @@ def _tools_used_in_previous_turn(turn_start: int) -> set[str]:
 
 
 def think_stream(user_text: str):
-    """Yield ("tool", name) and ("delta", text) events as the reply is produced.
+    """Yield ("tool", name), ("say", text), ("sources", links) and ("delta", text) events as
+    the reply is produced. "say" is spoken but isn't part of the reply ("Searching…").
 
     Each round's text is held until the round ends: if the model also called
     tools, that text was a guess made before seeing the results (e.g. a made-up
@@ -1158,19 +1149,33 @@ def think_stream(user_text: str):
     """
     _start_turn_usage()
     calendar_tools.new_turn()   # lets delete_event tell "next message" from "same turn"
+    web_tools.new_turn()
     turn_start = len(messages)
     tools = select_tools(user_text, _tools_used_in_previous_turn(turn_start))
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
     reply = ""
+    links = []
     try:
         retried_empty = False
         retried_error = False
         retried_garbled = False
-        for _ in range(MAX_TOOL_ROUNDS + 1):
+        said_searching = False
+        # A web answer that fails web_tools.check_reply gets one rewrite. The rejected draft and the
+        # note go only into requests (never `messages`), at the point in the turn they were made.
+        check_note, check_at = [], 0
+        rounds = MAX_TOOL_ROUNDS + 2
+        for round_no in range(rounds):
             tool_calls = {}
+            # Last round: no tools, so the model has to answer with what it has instead of
+            # ending the turn on "I got stuck".
+            round_tools = tools if round_no < rounds - 1 else []
+            req = _request_messages(turn_start)
+            if check_note:
+                cut = len(req) - (len(messages) - check_at)
+                req = req[:cut] + check_note + req[cut:]
             try:
-                text = "".join(_stream_completion(tool_calls, _request_messages(turn_start), tools))
+                text = "".join(_stream_completion(tool_calls, req, round_tools))
             except API_ERRORS as e:
                 # The model reached for a tool select_tools didn't send (Groq rejects the call):
                 # widen to every tool and ask again.
@@ -1194,6 +1199,17 @@ def think_stream(user_text: str):
                     print(f"[retry] garbled reply: {text[:60]!r}")
                     continue
                 text = "Sorry, I lost my train of thought. Could you ask that again?"
+            if not tool_calls and web_tools.used():
+                problems = web_tools.check_reply(text)
+                if problems and not check_note:
+                    print(f"[web] answer rejected: {problems}")
+                    check_note = [{"role": "assistant", "content": text},
+                                  {"role": "user", "content": web_tools.correction(problems)}]
+                    check_at = len(messages)
+                    continue
+                text = web_tools.finalize(text, problems)
+                links = web_tools.sources()
+                yield ("sources", links)
             if not tool_calls:
                 reply = text
                 if reply:
@@ -1214,6 +1230,9 @@ def think_stream(user_text: str):
                 ],
             })
             for call in calls:
+                if call["name"] == "web_search" and not said_searching:
+                    said_searching = True
+                    yield ("say", web_tools.SEARCHING)   # spoken while the search runs
                 yield ("tool", call["name"])
                 fn = TOOL_MAP.get(call["name"])
                 args = json.loads(call["arguments"] or "{}")
@@ -1237,7 +1256,7 @@ def think_stream(user_text: str):
         # so history always gets whatever was actually said.
         messages.append({"role": "assistant", "content": reply.strip()})
         if reply.strip():
-            log_message("assistant", reply.strip())
+            log_message("assistant", reply.strip(), **({"sources": links} if links else {}))
         _finish_turn_usage()
 
 

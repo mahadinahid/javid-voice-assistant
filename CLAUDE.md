@@ -24,7 +24,7 @@ There is no linter or build step. `index.html` is one hand-written file (inline 
 python3 -c "s=open('index.html').read(); open('/tmp/ui.js','w').write(s[s.index('<script>')+8:s.index('</script>')])" && node --check /tmp/ui.js
 ```
 
-**`python regression.py` is the behaviour check** — 20 prompts through the real LLM and tool loop, against scratch task/memory/history files and a fake in-memory calendar (your tasks, memory and calendar are never touched; token usage is still logged to `llm_usage.jsonl` because the tokens are really spent). Run it before/after prompt, tool or agent-loop changes.
+**`python regression.py` is the behaviour check** — 28 prompts through the real LLM and tool loop, against scratch task/memory/history files, a fake in-memory calendar and a fake Tavily with fixed results (your tasks, memory and calendar are never touched and no Tavily credits are spent; token usage is still logged to `llm_usage.jsonl` because the tokens are really spent). Run it before/after prompt, tool or agent-loop changes.
 
 ```bash
 python regression.py -k "delete needs"                      # one case (substring of its name)
@@ -35,15 +35,15 @@ python regression.py --models gemini:gemini-3-flash-preview # that chain only, n
 
 A full run is ~40–50 LLM requests (~40–45k tokens) and ends with average tokens per turn (`--tokens-out FILE` saves every turn's counts, for before/after comparisons). Exit code 0 = all passed, 1 = a check failed, 3 = inconclusive (429/network — never reported as a pass or fail). Per-minute 429s are waited out; a longer wait stops the suite.
 
-Setup needs `GROQ_API_KEY` in `.env` (also used for speech recognition). `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` are optional. `README.md` describes only the original CLI version (10 tools, macOS `say`); the web UI, calendar, hands-free and model chain are documented here.
+Setup needs `GROQ_API_KEY` in `.env` (also used for speech recognition). `TAVILY_API_KEY` enables web search (without it `web_search` says it isn't set up). `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` are optional. `README.md` describes only the original CLI version (10 tools, macOS `say`); the web UI, calendar, hands-free and model chain are documented here.
 
 ## Architecture
 
 **`javid.py` is the shared core** for the CLI and the web server: tool implementations, `TOOLS` schemas / `TOOL_MAP` dispatch, conversation state (module-level `messages`), STT (`transcribe`), TTS (`synthesize` for web, `speak` via macOS `say` for CLI), the LLM provider chain, and the agent loop. `server.py` (FastAPI) and `index.html` wrap it; `calendar_tools.py` adds the Google Calendar tools.
 
 ### Agent loop — `think_stream(user_text)`
-A generator yielding `("tool", name)` and `("delta", text)`; `think()` joins the deltas (CLI). Behaviours that aren't obvious:
-- Up to `MAX_TOOL_ROUNDS` tool rounds per turn. Tool results do the follow-up work so the model needn't spend a round on it: `add_task` reports the new number, the pending count and likely duplicates; `complete_task`/`delete_task` accept words from the task as well as its number.
+A generator yielding `("tool", name)`, `("say", text)` (spoken, not part of the reply: "Searching…"), `("sources", links)` and `("delta", text)`; `think()` joins the deltas (CLI). Behaviours that aren't obvious:
+- Up to `MAX_TOOL_ROUNDS` tool rounds per turn (plus one for a web rewrite); the last round is sent with no tools, so the model has to answer instead of ending on "I got stuck". Tool results do the follow-up work so the model needn't spend a round on it: `add_task` reports the new number, the pending count and likely duplicates; `complete_task`/`delete_task` accept words from the task as well as its number.
 - Each round's text is **buffered** and emitted only if that round made no tool calls — text alongside a tool call is the model guessing before it saw results.
 - One retry each for an empty reply, for an `APIError` (malformed tool-call JSON), and for a **garbled** reply (`_is_garbled`: mostly dots/ellipses or one repeated word — seen from gpt-oss-120b); a second garbled reply becomes a short apology. Garbled assistant messages are also skipped by `_restore_context()`.
 - `finally` appends the reply to `messages` and `chat_log.jsonl`, so aborted streams still record what was said.
@@ -55,6 +55,13 @@ A generator yielding `("tool", name)` and `("delta", text)`; `think()` joins the
 
 ### Adding a tool
 Implement it, add a schema to `TOOLS` (put its usage rules in the description), add a lambda to `TOOL_MAP`, and add it to a `TOOL_GROUPS` entry with words that should trigger it — otherwise it's only sent when no group matches. Calendar tools live in `calendar_tools.py`, which exports its own `TOOLS`/`TOOL_MAP` that `javid.py` splices in; they're wrapped in `_guard`, which turns auth/API errors into sentences the model can speak.
+
+### Web search (`web_tools.py`, Tavily)
+`web_search(query, recency_days, domains)` is a basic-depth search, up to 5 results. News-looking queries (or any `recency_days`) use the news topic with a `days` filter (default 7). `read_page(url)` is Tavily extract, and accepts only the top 3 results of a search made this turn (a result number or a same-site URL also resolves, because models rewrite URLs), with at most 3 reads per turn. The rules are enforced in code, in `think_stream` via `web_tools.check_reply`/`finalize`, not just prompted:
+- Rates and prices in the answer (currency or % figures, plus any bare number a source gives as one) must appear on an official domain (`is_official`: gov/gob/gouv/mil/int, or `OFFICIAL_DOMAINS`) or on two sites. If figures for the same thing differ between sites (`_rivals`), the answer must say the sources disagree. A failing answer gets one rewrite. That draft and its note go into requests only, never `messages`. If the rewrite still fails, `finalize` replaces the answer with "couldn't confirm" or prefixes "The sources disagree on this."
+- `finalize` keeps a web answer to `MAX_SENTENCES` (3, counted with the same boundary rule as `feedSpeech`) and appends "Source: <name>, <date>." if the answer doesn't already name a source and give a date. Results without a published date use "retrieved <today>".
+- The same normalized query within 15 minutes is served from `_cache` (no credit). `DAILY_CREDIT_CAP` (40/day, local midnight) is checked before each paid call. Credits are logged to `tavily_usage.jsonl` (from Tavily's `usage.credits`, else 1) and shown in the Models panel.
+- Links travel in the `sources` NDJSON event and are stored on the chat_log entry, so history shows them too. They're never spoken. `esc()` in `index.html` escapes quotes because URLs go into `href`.
 
 ### Calendar edit tools (`move_event`, `delete_event`)
 Events are found by title words in Python (`_find_events`/`_pick`), never by model-supplied IDs; zero or several matches are reported back, not guessed. The model often fills optional `day`/`time` with an invented "today", so a hint that matches nothing falls back to a title-only search. `delete_event` is two-step **and enforced in code**: the first call only describes the event; deletion is accepted only if `confirm=true` arrives on the *next* user message (`calendar_tools._turn`, bumped by `think_stream` via `new_turn()`). Don't weaken this to a prompt instruction — the model ignores those.
@@ -68,7 +75,7 @@ Events are found by title words in Python (`_find_events`/`_pick`), never by mod
 - **Models panel & key management:** `llm_status()` (served at `GET /llm`) merges the chain, cooldowns, `llm_usage.jsonl` (Groq's token counts per request, counted only since logging began), per-minute/per-day headroom from `x-ratelimit-*` headers, and the daily cap — which Groq only reveals inside a 429 message (parsed into `llm_quota.json`; `KNOWN_TPD_LIMITS` seeds it). A model under `LLM_MIN_REQUEST_TOKENS` remaining shows as `low` even though a tiny "Test all now" ping (`POST /llm/ping`) succeeds — a successful ping is not capacity. The dialog can reorder/add/remove models (`PUT /llm/chain`) and paste keys (`PUT/DELETE /llm/key/{provider}` → `set_provider_key`: verified with a token-free `models.list()`, written by `_write_env` which preserves other lines; the key is never returned, only a 4-char hint; `.env` is always rewritten mode 0600, and provider error text passes through `_redact` before it is stored, logged or shown, since a provider may echo part of a key). Every mutating `/llm/*` route goes through `_local_page_only` (Host must be localhost:8000 and Origin must match). The Groq key is read-only there.
 
 ### `server.py` routes
-- `/type` and `/talk` stream **NDJSON events** — `transcript`, `tool`, `delta`, `error`, `ignored`, `done` (with fresh `tasks`/`memory`) — consumed by `streamReply()` in `index.html`.
+- `/type` and `/talk` stream **NDJSON events** — `transcript`, `tool`, `say`, `sources`, `delta`, `error`, `ignored`, `done` (with fresh `tasks`/`memory`) — consumed by `streamReply()` in `index.html`.
 - `/talk` takes `mode`: `push` (always answer), `wake` (hands-free; only if the transcript starts with the wake word, via `strip_wake_word`), `followup` (hands-free window right after a reply; no wake word needed).
 - `/speak` returns neural TTS audio for one sentence; 503 on failure. Sidebar REST routes (`/tasks`, `/memory`, `/calendar`, `/history`, `/reset`) edit data directly without the LLM. Startup threads warm TTS and ping every model.
 
@@ -78,12 +85,12 @@ Events are found by title words in Python (`_find_events`/`_pick`), never by mod
 - **Models dialog:** the cards re-render every second (countdowns) but are skipped when unchanged; the key/add controls re-render only when their data changes and never while an input is focused — keep it that way or typed keys get wiped.
 
 ### Persistent data (all gitignored, repo root)
-`tasks.txt` (one per line; `✓ ` prefix = done; `[YYYY-MM-DD HH:MM] ` timestamp prefix), `memory.json` (`{"facts": [...]}`), `chat_log.jsonl` (`user`/`assistant`/`divider`; on startup `_restore_context()` reloads the last `CONTEXT_TURNS` messages after the latest divider), `credentials.json` + `token.json` (Google OAuth, Desktop client, scope `calendar.events`; kept mode 0600 by `_save`/`_lock_down`), `llm_usage.jsonl`, `llm_turns.jsonl`, `llm_quota.json`, `llm_chain.json`, `.env`.
+`tasks.txt` (one per line; `✓ ` prefix = done; `[YYYY-MM-DD HH:MM] ` timestamp prefix), `memory.json` (`{"facts": [...]}`), `chat_log.jsonl` (`user`/`assistant`/`divider`; on startup `_restore_context()` reloads the last `CONTEXT_TURNS` messages after the latest divider), `credentials.json` + `token.json` (Google OAuth, Desktop client, scope `calendar.events`; kept mode 0600 by `_save`/`_lock_down`), `llm_usage.jsonl`, `llm_turns.jsonl`, `tavily_usage.jsonl`, `llm_quota.json`, `llm_chain.json`, `.env`.
 
 ## Conventions driven by model quirks (gpt-oss-20b on Groq)
 
 - **It miscounts and gets weekdays wrong.** Do counting and date math in Python and put the answer in the tool result: `list_tasks` leads with "N pending, M done"; calendar tools accept the user's words (`"friday"`, `"3pm"`) and resolve them in `_parse_day`/`_parse_time`; `list_holidays` computes long breaks itself.
-- **It guesses when data is thin** (`web_search` returns ~150-char snippets). Holidays come from Google's public holiday calendars (`en.<code>#holiday@group.v.calendar.google.com`), not web search. Home country is Bangladesh (`HOME_COUNTRY`, Friday–Saturday weekend `HOME_WEEKEND`).
+- **It guesses when data is thin** (and invents figures, e.g. an inflation rate no source gave, which is why `check_reply` exists). Holidays come from Google's public holiday calendars (`en.<code>#holiday@group.v.calendar.google.com`), not web search. Home country is Bangladesh (`HOME_COUNTRY`, Friday–Saturday weekend `HOME_WEEKEND`).
 - Replies are spoken: the prompt demands 1–3 short sentences, no markdown or lists.
 
 ## Speech (voice is locked — see top)
@@ -91,7 +98,7 @@ Events are found by title words in Python (`_find_events`/`_pick`), never by mod
 - `TTS_ENGINE`: `"edge"` (default; free Microsoft neural voice `EDGE_VOICE`), `"groq"` (Orpheus; needs terms accepted in the Groq console), `"local"` (macOS `say`, `LOCAL_VOICE`, instant).
 - edge-tts is an unofficial endpoint and erratic (normally ~1 s, but 3–5 s stalls and `NoAudioReceived` streaks; roughly half of calls failed during one test). `synthesize` abandons a try after `EDGE_ATTEMPT_SEC` and retries up to `EDGE_ATTEMPTS` times. The user prefers the natural voice over speed, so `LOCAL_FALLBACK` (speak with macOS `say`, plus a cooldown breaker) is **off**. Parallel/hedged edge-tts requests made it slower — don't add them back.
 - The page drops to the browser voice after 3 consecutive `/speak` failures (`ttsFails` in `index.html`) — this is why the voice can suddenly change mid-session. Changing that is a voice-behaviour change: ask first.
-- Short phrases like the "Yes?" ack are cached and pre-warmed at startup.
+- Short phrases like the "Yes?" ack and "Searching…" are cached and pre-warmed at startup.
 - **Wake word:** variants and Whisper noise phrases are `_WAKE`/`_NOISE`; `_WAKE` is deliberately phonetic (`_NAME`) because without a hint Whisper spells the name many ways. Hands-free clips are transcribed with `bias_name=False`: the `prompt="Javid"` hint makes Whisper answer silence/noise with "Javid", which the matcher accepts (spurious "Yes?"). Keep the hint for push-to-talk only.
 
 ## Testing safely

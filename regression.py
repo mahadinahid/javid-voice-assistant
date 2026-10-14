@@ -8,7 +8,7 @@ Regression check for Javid's agent behaviour: 20 prompts through the real LLM + 
 
 Safe to run: tasks, memory and chat history go to a temp dir, the Google Calendar is a
 fake in-memory service, and web search is stubbed. Your real data is never touched.
-Needs GROQ_API_KEY. A full run makes ~40-50 LLM requests (~100k tokens): on Groq's free tier
+Needs GROQ_API_KEY. A full run makes ~40-50 LLM requests (~40-45k tokens): on Groq's free tier
 (200k tokens/day for this model) that is half the day's budget, so don't loop it. Exit code: 0 all passed, 1 a check failed, 3 only API/network errors (inconclusive).
 """
 import argparse
@@ -41,7 +41,7 @@ class InfraError(Exception):
     """The Groq API (network, timeout, 5xx) failed — says nothing about Javid's behaviour."""
 
 
-# Count LLM requests, and turn a 429 into a hard stop (each request costs ~2.3k+ tokens of the daily cap).
+# Count LLM requests, and turn a 429 into a hard stop (each request costs ~1k tokens of the daily cap).
 LLM_REQUESTS = 0
 QUOTA_HIT: list[str] = []
 _orig_stream_completion = javid._stream_completion
@@ -50,14 +50,14 @@ _orig_stream_completion = javid._stream_completion
 PER_MINUTE_WAIT_MAX = 90   # a 429 that clears within this is a per-minute limit: wait it out
 
 
-def _counted_stream_completion(tool_calls):
+def _counted_stream_completion(tool_calls, *args):
     """Count requests; ride out per-minute 429s (Gemini's free tier allows 5/min per model) and
     treat a longer wait (daily cap) as 'out of quota' so the suite stops instead of lying."""
     global LLM_REQUESTS
     for attempt in range(6):
         LLM_REQUESTS += 1
         try:
-            yield from _orig_stream_completion(tool_calls)
+            yield from _orig_stream_completion(tool_calls, *args)
             return
         except javid.RATE_LIMITED as e:
             wait = javid._retry_after(e)
@@ -82,6 +82,8 @@ SCRATCH = tempfile.mkdtemp(prefix="javid-regression-")
 javid.TASKS_FILE = os.path.join(SCRATCH, "tasks.txt")
 javid.MEMORY_FILE = os.path.join(SCRATCH, "memory.json")
 javid.HISTORY_FILE = os.path.join(SCRATCH, "chat_log.jsonl")
+javid.LLM_TURNS_FILE = os.path.join(SCRATCH, "llm_turns.jsonl")   # the Models panel averages real turns only
+TURN_TOKENS: list[tuple[str, dict]] = []   # (case name, javid.last_turn_usage) for every turn run
 
 
 # ---------- fake Google Calendar ----------
@@ -215,12 +217,17 @@ def not_called(*names):
     return lambda r: next((f"must not call {n}" for n in names if n in r.tool_names), None)
 
 
+def _plain(text):
+    """gpt-oss-120b writes narrow no-break spaces ("Victory\u202fDay", "3\u202fPM"): compare as spaces."""
+    return re.sub(r"[\u00a0\u202f\u2009]", " ", text)
+
+
 def reply_has(pattern, label=None):
-    return lambda r: None if re.search(pattern, r.last, re.I) else f"reply should match /{label or pattern}/"
+    return lambda r: None if re.search(pattern, _plain(r.last), re.I) else f"reply should match /{label or pattern}/"
 
 
 def reply_lacks(pattern):
-    return lambda r: f"reply must not match /{pattern}/" if re.search(pattern, r.last, re.I) else None
+    return lambda r: f"reply must not match /{pattern}/" if re.search(pattern, _plain(r.last), re.I) else None
 
 
 def tasks_are(*texts):
@@ -346,6 +353,21 @@ CASES = [
 assert len(CASES) == 20, len(CASES)
 
 
+def print_token_summary() -> None:
+    """Average tokens per user turn (a turn = every request it took: tool rounds and retries)."""
+    if not TURN_TOKENS:
+        return
+    def avg(rows):
+        n = len(rows)
+        a = {k: sum(r[k] for r in rows) / n for k in ("prompt", "cached", "completion", "total", "requests")}
+        return (f"in {a['prompt']:,.0f} (cached {a['cached']:,.0f}) · out {a['completion']:,.0f} · "
+                f"total {a['total']:,.0f} · {a['requests']:.1f} requests  [{n} turns]")
+    rows = [u for _, u in TURN_TOKENS]
+    print(f"\nTokens per turn: {avg(rows)}")
+    for model in sorted({r["model"] for r in rows}):
+        print(f"  {model}: {avg([r for r in rows if r['model'] == model])}")
+
+
 # ---------- runner ----------
 def run_case(case: Case) -> Result:
     # Fresh world for every run.
@@ -380,6 +402,8 @@ def run_case(case: Case) -> Result:
             turn["i"] = i
             with contextlib.redirect_stdout(io.StringIO()):   # silence the [tool] debug prints
                 reply = javid.think(text)
+            if javid.last_turn_usage:
+                TURN_TOKENS.append((case.name, javid.last_turn_usage))
             if reply.startswith(API_FAILED_REPLY):
                 raise InfraError(f"API error on turn {i + 1}")
             replies.append(reply)
@@ -397,6 +421,7 @@ def main() -> int:
     ap.add_argument("-n", "--repeat", type=int, default=1, help="runs per case")
     ap.add_argument("-k", "--filter", default="", help="only cases whose name contains this")
     ap.add_argument("-v", "--verbose", action="store_true", help="show replies for passing runs too")
+    ap.add_argument("--tokens-out", default="", help="write every turn's token counts to this JSON file")
     ap.add_argument("--models", default="",
                     help="comma-separated model ids to use as the chain for this run, e.g. gemini:gemini-3.7-flash")
     args = ap.parse_args()
@@ -473,10 +498,14 @@ def main() -> int:
             break
 
     served = ", ".join(f"{m}: {n}" for m, n in javid.llm_usage.items()) or "none"
-    print(f"\n{LLM_REQUESTS} LLM requests this run (each is 2.3k+ tokens against Groq's daily limit); served by {served}")
+    print(f"\n{LLM_REQUESTS} LLM requests this run (~1k tokens each against Groq's daily limit); served by {served}")
     if len(javid.llm_usage) > 1:
         print("note: the primary model hit its limit mid-run, so results mix models — "
               "rerun later for a clean single-model baseline")
+    print_token_summary()
+    if args.tokens_out:
+        with open(args.tokens_out, "w") as f:
+            json.dump([{"case": c, **u} for c, u in TURN_TOKENS], f, indent=1)
     not_run = len(cases) * args.repeat - passed_runs - failed_runs - errored_runs
     print(f"{passed_runs} passed, {failed_runs} failed, {errored_runs} errored (API/network)"
           + (f", {not_run} not run" if not_run else "")

@@ -482,22 +482,23 @@ def briefing_line() -> str | None:
 
 
 # ---------- tool schemas ----------
-_DAY_HELP = ("Pass the user's words, don't compute dates: 'today', 'tomorrow', a weekday "
-             "like 'friday' or 'next tuesday', or an explicit date YYYY-MM-DD.")
+_DAY_HELP = "The user's words ('tomorrow', 'friday', 'next tuesday') or YYYY-MM-DD; don't compute dates."
 
 TOOLS = [
     {
         "type": "function",
         "function": {
             "name": "list_holidays",
-            "description": "Official public holidays for a country from Google's holiday calendar. "
-                           "Always use this (not web_search) for questions about holidays or days off.",
+            "description": "Official public holidays (Google's data). Always use this, never web_search or "
+                           "memory, for holidays or days off. Name the next upcoming public holiday with its "
+                           "weekday and date even if it isn't on a weekend, and say when holidays join the "
+                           "weekend into a longer break.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "country": {"type": "string", "description": f"Country name; default '{HOME_COUNTRY}'."},
                     "days": {"type": "integer", "description": "How far ahead to look, in days (default 60).", "default": 60},
-                    "include_observances": {"type": "boolean", "description": "Also list non-holiday observances.", "default": False},
+                    "include_observances": {"type": "boolean", "default": False},
                 },
                 "required": [],
             },
@@ -507,7 +508,8 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "list_events",
-            "description": "List Google Calendar events for a day (and optionally the following days).",
+            "description": "List calendar events for a day or several. When you answer, repeat days and "
+                           "dates as the result states them.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -522,7 +524,8 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "add_event",
-            "description": "Create a Google Calendar event. Ask first if the day or time is unclear.",
+            "description": "Create a calendar event. Ask first if the day or time is unclear. Confirm with "
+                           "the day and date as the result states them.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -540,17 +543,16 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "move_event",
-            "description": "Reschedule an existing calendar event to another day and/or time (keeps its "
-                           "length). Identify it by title, plus its current day or time if there could "
-                           "be several.",
+            "description": "Move an event to another day and/or time (keeps its length). If several "
+                           "match, ask which.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Part of the event's title, as the user said it."},
-                    "day": {"type": "string", "description": "Its CURRENT day. Leave out unless the user said it. " + _DAY_HELP},
-                    "time": {"type": "string", "description": "Its CURRENT start time. Leave out unless the user said it."},
-                    "new_day": {"type": "string", "description": "The day to move it to. " + _DAY_HELP},
-                    "new_time": {"type": "string", "description": "The new start time as the user said it, e.g. '4pm'."},
+                    "day": {"type": "string", "description": "Its CURRENT day, only if the user said it."},
+                    "time": {"type": "string", "description": "Its CURRENT start time, only if the user said it."},
+                    "new_day": {"type": "string", "description": _DAY_HELP},
+                    "new_time": {"type": "string", "description": "As the user said it, e.g. '4pm'."},
                 },
                 "required": ["title"],
             },
@@ -560,15 +562,16 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "delete_event",
-            "description": "Delete a calendar event. The first call only finds it; the user must confirm "
-                           "(their next message), then call again with confirm=true and the same arguments.",
+            "description": "Delete a calendar event. The first call never deletes: tell Mahadi what it "
+                           "found and ask yes or no. Only after they say yes (their next message) call "
+                           "again with confirm=true and the same title.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Part of the event's title, as the user said it."},
-                    "day": {"type": "string", "description": "The event's day. Leave out unless the user said it. " + _DAY_HELP},
-                    "time": {"type": "string", "description": "Its start time. Leave out unless the user said it."},
-                    "confirm": {"type": "boolean", "description": "true only after the user said yes.", "default": False},
+                    "day": {"type": "string", "description": "Only if the user said it."},
+                    "time": {"type": "string", "description": "Only if the user said it."},
+                    "confirm": {"type": "boolean", "default": False},
                 },
                 "required": ["title"],
             },

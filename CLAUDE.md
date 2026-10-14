@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **The voice is locked.** `TTS_ENGINE="edge"`, `EDGE_VOICE="en-US-AndrewNeural"`, `LOCAL_FALLBACK=False` is the voice the user approved as "perfect". Never change the voice, engine or fallback behaviour — not even to fix latency or flakiness — unless the user explicitly tells you to. (Details under *Speech* below.)
 - **The app runs on real data**: `tasks.txt`, `memory.json`, `chat_log.jsonl`, a connected Google Calendar, and the user's API keys in `.env`. See *Testing safely*.
-- **Quota is scarce.** Groq's free tier caps each model at 200k tokens/day (a turn is ~2–3 requests of ~2.3k tokens); Gemini's free tier is 20 requests/day. Don't loop LLM tests.
+- **Quota is scarce.** Groq's free tier caps each model at 200k tokens/day (a turn is ~2 requests, ~1.9k tokens in all); Gemini's free tier is 20 requests/day. Don't loop LLM tests.
 
 ## Running and checking
 
@@ -14,7 +14,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 source .venv/bin/activate
 python server.py                 # web UI at http://localhost:8000 — the main way the app is used
 python javid.py                  # original terminal push-to-talk loop (Enter to record/stop)
-lsof -ti :8000 | xargs kill      # stop a server left running in the background
+lsof -ti tcp:8000 -sTCP:LISTEN | xargs kill   # stop the server (only the listener; plain :8000 also kills browser tabs' connections)
 PYTHONUNBUFFERED=1 python server.py   # when debugging: [tool]/[retry]/[llm]/[tts]/[hands-free] lines are plain prints
 ```
 
@@ -33,7 +33,7 @@ python regression.py -n 3                                   # repeat each case (
 python regression.py --models gemini:gemini-3-flash-preview # that chain only, no Groq fallback masking failures
 ```
 
-A full run is ~40–50 LLM requests (~100k tokens). Exit code 0 = all passed, 1 = a check failed, 3 = inconclusive (429/network — never reported as a pass or fail). Per-minute 429s are waited out; a longer wait stops the suite.
+A full run is ~40–50 LLM requests (~40–45k tokens) and ends with average tokens per turn (`--tokens-out FILE` saves every turn's counts, for before/after comparisons). Exit code 0 = all passed, 1 = a check failed, 3 = inconclusive (429/network — never reported as a pass or fail). Per-minute 429s are waited out; a longer wait stops the suite.
 
 Setup needs `GROQ_API_KEY` in `.env` (also used for speech recognition). `GEMINI_API_KEY` / `DEEPSEEK_API_KEY` are optional. `README.md` describes only the original CLI version (10 tools, macOS `say`); the web UI, calendar, hands-free and model chain are documented here.
 
@@ -43,14 +43,18 @@ Setup needs `GROQ_API_KEY` in `.env` (also used for speech recognition). `GEMINI
 
 ### Agent loop — `think_stream(user_text)`
 A generator yielding `("tool", name)` and `("delta", text)`; `think()` joins the deltas (CLI). Behaviours that aren't obvious:
-- Up to `MAX_TOOL_ROUNDS` tool rounds per turn (`add_task` is followed by `list_tasks`).
+- Up to `MAX_TOOL_ROUNDS` tool rounds per turn. Tool results do the follow-up work so the model needn't spend a round on it: `add_task` reports the new number, the pending count and likely duplicates; `complete_task`/`delete_task` accept words from the task as well as its number.
 - Each round's text is **buffered** and emitted only if that round made no tool calls — text alongside a tool call is the model guessing before it saw results.
 - One retry each for an empty reply, for an `APIError` (malformed tool-call JSON), and for a **garbled** reply (`_is_garbled`: mostly dots/ellipses or one repeated word — seen from gpt-oss-120b); a second garbled reply becomes a short apology. Garbled assistant messages are also skipped by `_restore_context()`.
 - `finally` appends the reply to `messages` and `chat_log.jsonl`, so aborted streams still record what was said.
-- The **system prompt is rebuilt every turn** (`build_system_prompt()` overwrites `messages[0]`): current time, a 14-day weekday table, and `memory.json` facts — so sidebar edits to memory apply immediately.
+- **Token budget per request** (measured 2026-10-14 with `regression.py`: 3,859 → 1,873 tokens per turn):
+  - `SYSTEM_PROMPT` is **static** so the provider's prefix cache hits; keep anything that changes out of it. Today's date, the 14-day weekday table, `memory.json` facts and the older-chat summary go in `context_block()`, prepended to the newest user message only (so sidebar edits to memory still apply immediately). The clock time is deliberately left out: time questions must go through `get_datetime`.
+  - `select_tools()` sends only the `TOOL_GROUPS` whose regex matches the message, plus groups used in the previous turn (follow-ups like "yes"); nothing matched = every tool, small talk = none. If the model calls a tool it wasn't sent (Groq: "not in request"), the round is retried with every tool. Rules for one tool belong in its description, which only travels with it — but the calendar rules stayed in the system prompt: in their descriptions alone, gpt-oss-120b listed events instead of calling `delete_event` and asked before adding.
+  - `_request_messages()` builds each request: the last `HISTORY_TURNS` (6) turns as plain user/reply pairs (earlier turns' tool calls and results are dropped), plus a one-line Python summary of older turns (`_summarize`, no LLM call). `messages` itself still holds the full session.
+  - Per-turn totals go to `llm_turns.jsonl` (`_finish_turn_usage`); the Models panel shows each model's average over its last `TURN_AVG_WINDOW` turns. `regression.py` redirects that file to scratch so the panel reflects real use only.
 
 ### Adding a tool
-Implement it, add a schema to `TOOLS`, add a lambda to `TOOL_MAP`, mention it in the system prompt. Calendar tools live in `calendar_tools.py`, which exports its own `TOOLS`/`TOOL_MAP` that `javid.py` splices in; they're wrapped in `_guard`, which turns auth/API errors into sentences the model can speak.
+Implement it, add a schema to `TOOLS` (put its usage rules in the description), add a lambda to `TOOL_MAP`, and add it to a `TOOL_GROUPS` entry with words that should trigger it — otherwise it's only sent when no group matches. Calendar tools live in `calendar_tools.py`, which exports its own `TOOLS`/`TOOL_MAP` that `javid.py` splices in; they're wrapped in `_guard`, which turns auth/API errors into sentences the model can speak.
 
 ### Calendar edit tools (`move_event`, `delete_event`)
 Events are found by title words in Python (`_find_events`/`_pick`), never by model-supplied IDs; zero or several matches are reported back, not guessed. The model often fills optional `day`/`time` with an invented "today", so a hint that matches nothing falls back to a title-only search. `delete_event` is two-step **and enforced in code**: the first call only describes the event; deletion is accepted only if `confirm=true` arrives on the *next* user message (`calendar_tools._turn`, bumped by `think_stream` via `new_turn()`). Don't weaken this to a prompt instruction — the model ignores those.
@@ -74,7 +78,7 @@ Events are found by title words in Python (`_find_events`/`_pick`), never by mod
 - **Models dialog:** the cards re-render every second (countdowns) but are skipped when unchanged; the key/add controls re-render only when their data changes and never while an input is focused — keep it that way or typed keys get wiped.
 
 ### Persistent data (all gitignored, repo root)
-`tasks.txt` (one per line; `✓ ` prefix = done; `[YYYY-MM-DD HH:MM] ` timestamp prefix), `memory.json` (`{"facts": [...]}`), `chat_log.jsonl` (`user`/`assistant`/`divider`; on startup `_restore_context()` reloads the last `CONTEXT_TURNS` messages after the latest divider), `credentials.json` + `token.json` (Google OAuth, Desktop client, scope `calendar.events`; kept mode 0600 by `_save`/`_lock_down`), `llm_usage.jsonl`, `llm_quota.json`, `llm_chain.json`, `.env`.
+`tasks.txt` (one per line; `✓ ` prefix = done; `[YYYY-MM-DD HH:MM] ` timestamp prefix), `memory.json` (`{"facts": [...]}`), `chat_log.jsonl` (`user`/`assistant`/`divider`; on startup `_restore_context()` reloads the last `CONTEXT_TURNS` messages after the latest divider), `credentials.json` + `token.json` (Google OAuth, Desktop client, scope `calendar.events`; kept mode 0600 by `_save`/`_lock_down`), `llm_usage.jsonl`, `llm_turns.jsonl`, `llm_quota.json`, `llm_chain.json`, `.env`.
 
 ## Conventions driven by model quirks (gpt-oss-20b on Groq)
 

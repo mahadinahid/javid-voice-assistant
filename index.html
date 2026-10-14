@@ -1721,6 +1721,7 @@ function renderModelsModal() {
             ${m.provider !== 'groq' ? `<div class="mc-line">Requests go to <b>${esc(m.provider_label)}</b>, not Groq, when this model answers.</div>` : ''}
             ${m.state === 'nokey' ? '' : daily}
             ${m.state === 'nokey' ? '' : `<div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>`}
+            ${m.per_turn ? `<div class="mc-line">Per turn (avg of last ${m.per_turn.turns}): in <b>${fmtN(m.per_turn.prompt)}</b>${m.per_turn.cached ? ` (${fmtN(m.per_turn.cached)} cached)` : ''} · out <b>${fmtN(m.per_turn.completion)}</b> · <b>${fmtN(m.per_turn.total)}</b> total · ${m.per_turn.requests} req</div>` : ''}
             ${lim ? meter('Tokens this minute', `${fmtN(lim.tpm_remaining)} left of ${fmtN(lim.tpm_limit)}`,
                           (lim.tpm_limit || 0) - (lim.tpm_remaining || 0), lim.tpm_limit) : ''}
             ${lim && lim.rpd_limit ? meter('Requests today', `${fmtN(lim.rpd_remaining)} left of ${fmtN(lim.rpd_limit)}`,

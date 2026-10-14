@@ -55,7 +55,7 @@ LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b",
                  f"gemini:{GEMINI_MODEL}", f"deepseek:{DEEPSEEK_MODEL}"]
 # Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
 KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
-LLM_MIN_REQUEST_TOKENS = 2500   # one turn's request is ~2-3k tokens (prompt + tool schemas)
+LLM_MIN_REQUEST_TOKENS = 1500   # one request is ~0.6-1.7k tokens (prompt + the tools sent); a turn ~2 requests
 VOICE = "Aman"                                  # macOS `say` voice (CLI)
 # LOCKED by the user (2026-10-13): this engine + voice is the one they approved ("perfect").
 # Don't change TTS_ENGINE, EDGE_VOICE or LOCAL_FALLBACK unless they explicitly ask.
@@ -67,10 +67,12 @@ TASKS_FILE = "tasks.txt"
 MEMORY_FILE = "memory.json"
 HISTORY_FILE = "chat_log.jsonl"
 LLM_USAGE_FILE = "llm_usage.jsonl"   # one line per LLM request: tokens by model (for the Models panel)
+LLM_TURNS_FILE = "llm_turns.jsonl"   # one line per conversation turn: tokens summed over its requests
 LLM_QUOTA_FILE = "llm_quota.json"    # daily token limits Groq has told us about
 LLM_CHAIN_FILE = "llm_chain.json"    # model order chosen in the Models panel (absent = defaults below)
 ENV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env")
 CONTEXT_TURNS = 20      # past messages Javid reloads into context on restart
+HISTORY_TURNS = 6       # past turns sent in full with each request; older ones only as a short summary
 
 load_dotenv()
 client = Groq()
@@ -84,50 +86,45 @@ def load_memory() -> dict:
         return json.load(f)
 
 
-def build_system_prompt() -> str:
-    base = (
-        "You are Javid, Mahadi's sharp and reliable personal voice assistant. "
-        "Speak like a calm, confident friend — not a corporate bot. "
-        "Use Mahadi's name occasionally but not every sentence. "
-        "Your replies are spoken aloud: 1-3 short sentences, no markdown, no lists, no emojis. "
-        "Tool use: add_task / list_tasks / delete_task / complete_task for the task list; "
-        "web_search for current events; remember / recall / clear_memory for long-term facts; "
-        "get_datetime when the user asks about time or date; "
-        "morning_briefing whenever greeted with 'good morning', 'good afternoon', or 'good evening', "
-        "whatever the actual time. "
-        "After adding a task, call list_tasks and flag any duplicates. "
-        "Tool results are never shown to Mahadi, so say what matters from them in your reply. "
-        "For any question about tasks (counts, what's open, what's done), always call list_tasks first "
-        "and use its counts; never answer from memory or guess. "
-        "Never state task counts or calendar contents unless a tool returned them in this turn. "
-        "Holidays and days off: use list_holidays (official Google data), never web_search or memory, "
-        "and always name the next upcoming public holiday with its weekday and date, even if it "
-        "doesn't fall on a weekend; mention when holidays join up with the weekend into a longer break. "
-        "Don't say you checked or double-checked unless you called a tool in this turn; if a "
-        "search didn't give a clear answer, say you're not sure instead of guessing. "
-        "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
-        "Calendar: list_events / add_event / move_event / delete_event / find_free_time. Pass days "
-        "as the user said them ('friday', 'tomorrow') and let the tool work out the date; when you "
-        "confirm, repeat the day and date exactly as the tool result states. Say times like '3 PM', "
-        "not '15:00'. To move or delete an event, pass part of its title; if the tool says several "
-        "match, ask which. delete_event never deletes on the first call: tell the user what it "
-        "found, ask yes or no, and only after they say yes call it again with confirm=true. "
-        "Never say an event was moved or deleted unless the tool result says so."
-    )
-    # Rebuilt every turn, so this is always current. The day table lets the
-    # model look weekdays up instead of computing them (it gets that wrong).
+# Static on purpose: identical bytes on every request let the provider cache this prefix.
+# Anything that changes (time, facts, older-chat summary) goes in context_block(), which rides on
+# the newest user message; rules for one tool live in that tool's description, which is only sent
+# when the tool is (see select_tools).
+SYSTEM_PROMPT = (
+    "You are Javid, Mahadi's personal voice assistant: a calm, confident friend, not a corporate bot. "
+    "Your replies are spoken aloud: 1-3 short sentences, no markdown, lists or emojis. "
+    "Use Mahadi's name occasionally. Say times like '3 PM', not '15:00'. "
+    "For the current time, always call get_datetime. "
+    "Tool results are never shown to Mahadi, so say what matters from them. "
+    "Never state task counts, calendar contents, or that something was added, saved, remembered, "
+    "moved or deleted unless a tool result in this turn says so (to keep a fact, call remember), "
+    "and don't say you checked unless you called a tool. "
+    "If you're not sure, say so instead of guessing. "
+    "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
+    "Calendar: when the day and time are given, add the event straight away. To move or delete one, "
+    "call move_event or delete_event with part of its title; the tool finds it, so don't ask for its "
+    "current day or list events first. delete_event never deletes on the first call: tell Mahadi what "
+    "it found and ask yes or no; after a yes, call it again with confirm=true. "
+    "The newest message starts with a [Context] note: today's date, a table of the next days "
+    "(look weekdays up there, don't compute them), what you know about Mahadi, and older chat."
+)
+
+
+def context_block(older_summary: str = "") -> str:
+    """The per-turn facts the model needs, kept out of the cached system prompt."""
     now = datetime.now()
     days = ", ".join((now + timedelta(days=i)).strftime("%a %b %d") for i in range(14))
-    base += (f"\n\nRight now it is {now.strftime('%A, %Y-%m-%d, %H:%M')}."
-             f"\nThe next 14 days: {days}.")
+    # Date only: the clock comes from get_datetime, and a date changes once a day, not every minute.
+    parts = [f"Today: {now.strftime('%A, %Y-%m-%d')}.", f"Next 14 days: {days}."]
     facts = load_memory()["facts"]
     if facts:
-        fact_lines = "\n".join(f"- {f}" for f in facts)
-        base += f"\n\nWhat you already know about Mahadi:\n{fact_lines}"
-    return base
+        parts.append("Known about Mahadi: " + "; ".join(facts) + ".")
+    if older_summary:
+        parts.append(older_summary)
+    return "[Context] " + " ".join(parts) + "\n\n"
 
 
-messages = [{"role": "system", "content": build_system_prompt()}]
+messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
 
 # ---------- chat history (persists across restarts) ----------
@@ -183,117 +180,33 @@ _restore_context()
 
 
 # ---------- tool schemas ----------
+def _tool(name: str, description: str, properties: dict | None = None, required: tuple = ()) -> dict:
+    return {"type": "function", "function": {
+        "name": name, "description": description,
+        "parameters": {"type": "object", "properties": properties or {}, "required": list(required)}}}
+
+
+_TASK_REF = {"number": {"type": "integer", "description": "The task's number in the list."},
+             "text": {"type": "string", "description": "Or words from the task, as the user said them."}}
+
 TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "add_task",
-            "description": "Add a task or reminder to Mahadi's task list.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "task": {"type": "string", "description": "The task to add."}
-                },
-                "required": ["task"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_tasks",
-            "description": "Return all tasks as a numbered list.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "delete_task",
-            "description": "Delete a task by its number in the list.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "number": {"type": "integer", "description": "The task number to delete."}
-                },
-                "required": ["number"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "complete_task",
-            "description": "Mark a task as done by its number in the list.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "number": {"type": "integer", "description": "The task number to mark complete."}
-                },
-                "required": ["number"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "web_search",
-            "description": "Search the web for current news, events, or facts.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "The search query."}
-                },
-                "required": ["query"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "remember",
-            "description": "Save an important fact about Mahadi to long-term memory.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "fact": {"type": "string", "description": "The fact to remember."}
-                },
-                "required": ["fact"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "recall",
-            "description": "Read all facts stored in long-term memory about Mahadi.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "clear_memory",
-            "description": "Wipe all facts from long-term memory.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_datetime",
-            "description": "Return the current date, time, and day of the week.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "morning_briefing",
-            "description": "Return a morning briefing: current time, today's calendar, and a summary of pending and completed tasks.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
+    _tool("add_task", "Add a task or reminder to Mahadi's task list. The result says if a similar task "
+          "already exists; if so, tell Mahadi.",
+          {"task": {"type": "string", "description": "The task to add."}}, ("task",)),
+    _tool("list_tasks", "All tasks with pending/done counts. Call it for any question about tasks and use "
+          "its counts; never answer from memory."),
+    _tool("delete_task", "Delete a task, by number or by words from it.", _TASK_REF),
+    _tool("complete_task", "Mark a task done, by number or by words from it.", _TASK_REF),
+    _tool("web_search", "Search the web for current news, events or facts.",
+          {"query": {"type": "string", "description": "The search query."}}, ("query",)),
+    _tool("remember", "Save a fact about Mahadi to long-term memory.",
+          {"fact": {"type": "string", "description": "The fact to remember."}}, ("fact",)),
+    _tool("recall", "Read all facts stored about Mahadi."),
+    _tool("clear_memory", "Wipe all facts from long-term memory."),
+    _tool("get_datetime", "Current date, time and weekday. Call it whenever asked the time or date."),
+    _tool("morning_briefing", "Time, today's calendar and a task summary. Call it whenever greeted with "
+          "good morning, good afternoon or good evening, whatever the actual time; always say how many "
+          "tasks are pending and what's on today."),
     *calendar_tools.TOOLS,
 ]
 
@@ -312,11 +225,45 @@ def _write_lines(lines: list[str]) -> None:
 
 
 # ---------- tool implementations ----------
+_FILLER = {"a", "an", "the", "to", "my", "for", "some", "task", "please"}
+
+
+def _task_words(text: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9']+", text.lower())) - _FILLER
+
+
 def add_task(task: str) -> str:
+    # Duplicate check and numbering happen here, not in a follow-up list_tasks round.
+    lines = _read_lines()
+    new = _task_words(task)
+    similar = [f"#{i + 1} '{_task_parts(l)[2]}'" + (" (done)" if l.startswith("✓") else "")
+               for i, l in enumerate(lines)
+               if new and (old := _task_words(_task_parts(l)[2]))
+               and len(new & old) / len(new | old) >= 0.5]
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
     with open(TASKS_FILE, "a") as f:
         f.write(f"[{timestamp}] {task}\n")
-    return f"Added: {task}"
+    pending = sum(not l.startswith("✓") for l in lines) + 1
+    if similar:
+        return (f"Added as task #{len(lines) + 1}: {task}, but the list already had {', '.join(similar)}. "
+                f"Say you added it and that it may be a duplicate. {pending} pending now.")
+    return f"Added as task #{len(lines) + 1}: {task}. {pending} pending now."
+
+
+def _find_task(lines: list[str], number: int | None, text: str | None) -> int | str:
+    """Index of the task meant by number or words, else a sentence for the model."""
+    if number is not None:
+        if 1 <= number <= len(lines):
+            return number - 1
+        return f"No task number {number}. You have {len(lines)} task(s)."
+    words = _task_words(text or "")
+    hits = [i for i, l in enumerate(lines) if words and words <= _task_words(_task_parts(l)[2])]
+    if len(hits) == 1:
+        return hits[0]
+    if hits:
+        return "Several tasks match; ask which: " + "; ".join(f"#{i + 1} {_task_parts(lines[i])[2]}" for i in hits)
+    return f"No task matches '{text}'. Tasks: " + "; ".join(
+        f"#{i + 1} {_task_parts(l)[2]}" for i, l in enumerate(lines))
 
 
 def list_tasks() -> str:
@@ -334,28 +281,30 @@ def list_tasks() -> str:
     return summary + "\n" + "\n".join(rows)
 
 
-def delete_task(number: int) -> str:
+def delete_task(number: int | None = None, text: str | None = None) -> str:
     lines = _read_lines()
     if not lines:
         return "No tasks to delete."
-    if number < 1 or number > len(lines):
-        return f"No task number {number}. You have {len(lines)} task(s)."
-    removed = lines.pop(number - 1)
+    i = _find_task(lines, number, text)
+    if isinstance(i, str):
+        return i
+    removed = lines.pop(i)
     _write_lines(lines)
-    return f"Deleted: {removed}"
+    return f"Deleted task #{i + 1}: {_task_parts(removed)[2]}. {len(lines)} task(s) left."
 
 
-def complete_task(number: int) -> str:
+def complete_task(number: int | None = None, text: str | None = None) -> str:
     lines = _read_lines()
     if not lines:
         return "No tasks to complete."
-    if number < 1 or number > len(lines):
-        return f"No task number {number}. You have {len(lines)} task(s)."
-    if lines[number - 1].startswith("✓"):
-        return f"Task {number} is already marked complete."
-    lines[number - 1] = "✓ " + lines[number - 1]
+    i = _find_task(lines, number, text)
+    if isinstance(i, str):
+        return i
+    if lines[i].startswith("✓"):
+        return f"Task #{i + 1} is already marked complete."
+    lines[i] = "✓ " + lines[i]
     _write_lines(lines)
-    return f"Completed: {lines[number - 1]}"
+    return f"Completed task #{i + 1}: {_task_parts(lines[i])[2]}."
 
 
 def web_search(query: str) -> str:
@@ -510,6 +459,41 @@ TOOL_MAP = {
 }
 
 
+# ---------- which tools a request gets ----------
+# Every schema costs prompt tokens on every request, so a turn only gets the groups its words
+# point at (plus whatever the previous turn used, for follow-ups like "yes" or "that one").
+# Erring wide is cheap; a message that matches nothing gets every tool.
+_DAYS = r"today|tonight|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|weekend"
+TOOL_GROUPS = [
+    (["add_task", "list_tasks", "delete_task", "complete_task"],
+     r"tasks?\b|to-?dos?|remind|\blist|\bdone\b|complet|finish|\bmark|pending|\badd|delete|remove|"
+     r"cancel|\bdrop|tick|check (it )?off|that one"),
+    (["remember", "recall", "clear_memory"],
+     r"remember|forget|memor|recall|what do you know|about me|what'?s my|what is my|\bmy \w+ called"),
+    (["web_search"], r"search|look (it )?up|google|news|headline|latest|weather|forecast|price|stock|"
+     r"score|\bwho (is|was|won)|capital of|population"),
+    (["get_datetime"], r"\btime\b|\bdate\b|what day|which day|today|clock|o'?clock"),
+    (["morning_briefing"], r"good (morning|afternoon|evening)|briefing"),
+    (["list_events", "add_event", "move_event", "delete_event", "find_free_time"],
+     r"calendar|schedul|event|meeting|appointment|\bfree\b|busy|availab|\bmove|postpone|push|"
+     r"cancel|delete|remove|\bplans?\b|anything on|lunch|dinner|class|\d\s*(am|pm)\b|" + _DAYS),
+    (["list_holidays"], r"holiday|day off|days off|vacation|long weekend|\bbreak\b|\beid\b|puja|festival"),
+]
+_SMALL_TALK = re.compile(r"^(hi|hey|hello|yo|thanks|thank you|thx|ok(ay)?|cool|great|nice|got it|bye|"
+                         r"good ?night|see you)\b[\w\s,.!']{0,20}$", re.I)
+
+
+def select_tools(user_text: str, previous_tools: set[str] = frozenset()) -> list[dict]:
+    text = user_text.lower()
+    names = set()
+    for group, pattern in TOOL_GROUPS:
+        if re.search(pattern, text) or previous_tools & set(group):
+            names.update(group)
+    if not names:
+        return [] if _SMALL_TALK.match(user_text.strip()) else TOOLS
+    return [t for t in TOOLS if t["function"]["name"] in names]
+
+
 # ---------- 1. EARS: record from the microphone ----------
 def record() -> bytes:
     chunks = []
@@ -598,10 +582,27 @@ def _save_quota() -> None:
         pass
 
 
+def _cached_tokens(usage) -> int:
+    details = getattr(usage, "prompt_tokens_details", None)
+    if isinstance(details, dict):
+        return details.get("cached_tokens") or 0
+    return getattr(details, "cached_tokens", None) or 0
+
+
+_turn_usage: dict[str, dict] | None = None   # model -> token sums for the turn in progress
+last_turn_usage: dict | None = None          # the finished turn's record (regression reads it)
+
+
 def _record_usage(model: str, usage) -> None:
-    """Append one request's token counts (Groq's own numbers) to the usage log."""
+    """Append one request's token counts (the provider's own numbers) to the usage log."""
     entry = {"ts": round(time.time(), 1), "model": model, "prompt": usage.prompt_tokens or 0,
-             "completion": usage.completion_tokens or 0, "total": usage.total_tokens or 0}
+             "completion": usage.completion_tokens or 0, "total": usage.total_tokens or 0,
+             "cached": _cached_tokens(usage)}
+    if _turn_usage is not None:
+        t = _turn_usage.setdefault(model, {"requests": 0, "prompt": 0, "completion": 0, "total": 0, "cached": 0})
+        t["requests"] += 1
+        for k in ("prompt", "completion", "total", "cached"):
+            t[k] += entry[k]
     try:
         with open(LLM_USAGE_FILE, "a") as f:
             f.write(json.dumps(entry) + "\n")
@@ -609,10 +610,36 @@ def _record_usage(model: str, usage) -> None:
         pass
 
 
-def _read_usage(since: float) -> list[dict]:
+def _start_turn_usage() -> None:
+    global _turn_usage
+    _turn_usage = {}
+
+
+def _finish_turn_usage() -> None:
+    """Log the turn's tokens, credited to the model that served most of its requests."""
+    global _turn_usage, last_turn_usage
+    per_model, _turn_usage = _turn_usage, None
+    if not per_model:
+        last_turn_usage = None
+        return
+    entry = {"ts": round(time.time(), 1), "model": max(per_model, key=lambda m: per_model[m]["requests"])}
+    for k in ("requests", "prompt", "completion", "total", "cached"):
+        entry[k] = sum(t[k] for t in per_model.values())
+    last_turn_usage = entry
+    try:
+        with open(LLM_TURNS_FILE, "a") as f:
+            f.write(json.dumps(entry) + "\n")
+    except OSError:
+        pass
+
+
+TURN_AVG_WINDOW = 20     # the Models panel averages each model's last N turns
+
+
+def _read_usage(since: float, path: str | None = None) -> list[dict]:
     out = []
     try:
-        with open(LLM_USAGE_FILE) as f:
+        with open(path or LLM_USAGE_FILE) as f:
             for line in f:
                 try:
                     e = json.loads(line)
@@ -846,12 +873,17 @@ def llm_status() -> dict:
     recent = [e for e in everything if e.get("ts", 0) >= now - 86400]
     # Our tally only starts when logging began; before that, usage is simply unknown to us.
     tracking_since = min((e["ts"] for e in everything), default=now)
+    turns = _read_usage(now - 7 * 86400, LLM_TURNS_FILE)
     on_key_by_provider = {p: _models_on_provider(p) for p in PROVIDERS}
     models = []
     for order, model in enumerate(chain):
         mine = [e for e in recent if e.get("model") == model]
         day = {"requests": len(mine), "prompt": sum(e["prompt"] for e in mine),
                "completion": sum(e["completion"] for e in mine), "total": sum(e["total"] for e in mine)}
+        my_turns = [t for t in turns if t.get("model") == model][-TURN_AVG_WINDOW:]
+        per_turn = ({k: round(sum(t.get(k, 0) for t in my_turns) / len(my_turns), 1 if k == "requests" else 0)
+                     for k in ("requests", "prompt", "completion", "total", "cached")}
+                    | {"turns": len(my_turns)}) if my_turns else None
         info = _model_info.get(model, {})
         quota = info.get("quota")
         if not quota and model in KNOWN_TPD_LIMITS:
@@ -882,7 +914,7 @@ def llm_status() -> dict:
             "provider": provider, "provider_label": PROVIDERS[provider]["label"],
             "key_env": PROVIDERS[provider].get("key_env"),
             "role": "primary" if order == 0 else "fallback", "state": state,
-            "retry_in_s": round(cooling_for), "tokens_24h": day,
+            "retry_in_s": round(cooling_for), "tokens_24h": day, "per_turn": per_turn,
             "session_requests": llm_usage.get(model, 0),
             "last_used": max((e["ts"] for e in mine), default=None),
             "limits": info.get("limits"),
@@ -1005,13 +1037,13 @@ def ping_models(only_provider: str | None = None) -> list[dict]:
         return list(pool.map(ping, chain))
 
 
-def _open_stream():
+def _open_stream(msgs: list, tools: list):
     """Start a streaming completion on the first model in the chain that accepts it.
     Returns (model, stream)."""
     last_error = None
     for model in _models_to_try():
         try:
-            raw = _create(model, messages, tools=TOOLS, stream=True)
+            raw = _create(model, msgs, tools=tools, stream=True)
         except API_ERRORS as e:
             if not _is_unavailable(e):
                 raise       # e.g. malformed tool call: think_stream retries those
@@ -1030,9 +1062,9 @@ def _open_stream():
     raise last_error
 
 
-def _stream_completion(tool_calls: dict):
+def _stream_completion(tool_calls: dict, msgs: list, tools: list):
     """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`."""
-    model, stream = _open_stream()
+    model, stream = _open_stream(msgs, tools)
     counted = False
     for chunk in stream:
         if not counted:
@@ -1065,6 +1097,58 @@ def _stream_completion(tool_calls: dict):
 MAX_TOOL_ROUNDS = 4
 
 
+def _past_turns(msgs: list) -> list[tuple[str, str]]:
+    """(user text, final reply) per earlier turn. Their tool calls and results are left out:
+    the reply already says what mattered, and old tool output is the bulk of a long chat."""
+    turns = []
+    for m in msgs:
+        if m["role"] == "user":
+            turns.append([m["content"], ""])
+        elif m["role"] == "assistant" and m.get("content") and not m.get("tool_calls"):
+            if not turns:
+                turns.append(["", ""])
+            turns[-1][1] = m["content"]
+    return [tuple(t) for t in turns]
+
+
+def _clip(text: str, n: int) -> str:
+    text = " ".join(text.split())
+    return text if len(text) <= n else text[: n - 1].rstrip() + "…"
+
+
+def _summarize(older: list[tuple[str, str]]) -> str:
+    """A few words per older turn, built in Python: no extra LLM request."""
+    if not older:
+        return ""
+    asks = "; ".join(_clip(u, 50) for u, _ in older[-8:] if u)
+    return f"Earlier in this chat ({len(older)} older turns), Mahadi asked: {asks}."
+
+
+def _request_messages(turn_start: int) -> list:
+    """What one request sends: static system prompt, the last HISTORY_TURNS turns, then this
+    turn (its user message prefixed with the context block, and any tool rounds so far)."""
+    past = _past_turns(messages[1:turn_start])
+    recent, older = past[-HISTORY_TURNS:], past[:-HISTORY_TURNS]
+    out = [messages[0]]
+    for user, reply in recent:
+        if user:
+            out.append({"role": "user", "content": user})
+        if reply:
+            out.append({"role": "assistant", "content": reply})
+    current = messages[turn_start:]
+    out.append({**current[0], "content": context_block(_summarize(older)) + current[0]["content"]})
+    return out + current[1:]
+
+
+def _tools_used_in_previous_turn(turn_start: int) -> set[str]:
+    names = set()
+    for m in reversed(messages[1:turn_start]):
+        if m["role"] == "user":
+            break
+        names.update(c["function"]["name"] for c in m.get("tool_calls") or [])
+    return names
+
+
 def think_stream(user_text: str):
     """Yield ("tool", name) and ("delta", text) events as the reply is produced.
 
@@ -1072,8 +1156,10 @@ def think_stream(user_text: str):
     tools, that text was a guess made before seeing the results (e.g. a made-up
     time before get_datetime), so it is dropped instead of spoken.
     """
-    messages[0]["content"] = build_system_prompt()
+    _start_turn_usage()
     calendar_tools.new_turn()   # lets delete_event tell "next message" from "same turn"
+    turn_start = len(messages)
+    tools = select_tools(user_text, _tools_used_in_previous_turn(turn_start))
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
     reply = ""
@@ -1084,8 +1170,14 @@ def think_stream(user_text: str):
         for _ in range(MAX_TOOL_ROUNDS + 1):
             tool_calls = {}
             try:
-                text = "".join(_stream_completion(tool_calls))
+                text = "".join(_stream_completion(tool_calls, _request_messages(turn_start), tools))
             except API_ERRORS as e:
+                # The model reached for a tool select_tools didn't send (Groq rejects the call):
+                # widen to every tool and ask again.
+                if tools is not TOOLS and "not in request" in str(e):
+                    print(f"[retry] needed a tool outside {[t['function']['name'] for t in tools]}")
+                    tools = TOOLS
+                    continue
                 # e.g. "Failed to parse tool call arguments as JSON" — the model
                 # occasionally emits a malformed tool call; one retry usually fixes it.
                 if retried_error or isinstance(e, BAD_REQUEST):
@@ -1146,6 +1238,7 @@ def think_stream(user_text: str):
         messages.append({"role": "assistant", "content": reply.strip()})
         if reply.strip():
             log_message("assistant", reply.strip())
+        _finish_turn_usage()
 
 
 def think(user_text: str) -> str:

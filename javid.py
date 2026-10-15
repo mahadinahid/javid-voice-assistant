@@ -711,10 +711,15 @@ REQUIRED_TOOLS = [
     (_PAST_ASK, "search_history", "Mahadi is asking about an earlier chat, which you can't see: call search_history "
                                   "with the key words, then answer from what it finds."),
 ]
-if skills.trigger_pattern(required_only=True):
-    REQUIRED_TOOLS.append((re.compile(skills.trigger_pattern(required_only=True), re.I), "use_skill",
+# A required skill's request also goes without the web tools: with them, gpt-oss-120b ran three searches
+# and a page read (~4 Tavily credits) before the retry note sent it to the skill.
+_REQUIRED_SKILL = (re.compile(skills.trigger_pattern(required_only=True), re.I)
+                   if skills.trigger_pattern(required_only=True) else None)
+WEB_TOOLS = {"web_search", "read_page", "news_headlines"}
+if _REQUIRED_SKILL:
+    REQUIRED_TOOLS.append((_REQUIRED_SKILL, "use_skill",
                            "One of your skills covers this request: call use_skill with it now and follow its "
-                           "steps, instead of answering from web searches."))
+                           "steps."))
 
 
 def _propose_memory(text: str, file: str = "user") -> str:
@@ -1604,6 +1609,10 @@ def think_stream(user_text: str):
     global _turn_heavy
     turn_start = len(messages)
     tools = select_tools(user_text, _tools_used_in_previous_turn(turn_start))
+    skill_first = bool(_REQUIRED_SKILL and _REQUIRED_SKILL.search(user_text))
+    if skill_first:
+        tools = [t for t in tools if t["function"]["name"] not in WEB_TOOLS]
+    widened = False
     _turn_heavy = is_heavy_turn(user_text, tools)
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
@@ -1664,9 +1673,10 @@ def think_stream(user_text: str):
             except API_ERRORS as e:
                 # The model reached for a tool select_tools didn't send (Groq rejects the call):
                 # widen to every tool and ask again.
-                if tools is not TOOLS and "not in request" in str(e):
+                if not widened and "not in request" in str(e):
                     print(f"[retry] needed a tool outside {[t['function']['name'] for t in tools]}")
-                    tools = TOOLS
+                    widened = True
+                    tools = [t for t in TOOLS if not (skill_first and t["function"]["name"] in WEB_TOOLS)]
                     continue
                 # e.g. "Failed to parse tool call arguments as JSON" — the model
                 # occasionally emits a malformed tool call; one retry usually fixes it.

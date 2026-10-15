@@ -672,7 +672,8 @@ CASES = [
     Case("skill: exchange rates unavailable gives no figures", ["What's the yuan rate in taka?"],
          [skill_ran("exchange-rates"), called("exchange_rates"),
           reply_lacks(r"\d+\.\d+"), screen_lacks(r"\d+\.\d+"),
-          reply_has(r"unavailable|couldn.?t|can.?t|n.?t available|unable|down", "says it couldn't")], rates_up=False),
+          reply_has(r"unavailable|couldn.?t|can.?t|n.?t available|unable|down", "says it couldn't"),
+          reply_lacks(r"\b(source|checked):")], rates_up=False),
 ]
 assert len(CASES) == 43, len(CASES)
 

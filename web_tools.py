@@ -518,6 +518,13 @@ _HAS_DATE = re.compile(rf"\b({_MONTHS})\.?\s+\d{{1,2}}\b|\b\d{{1,2}}\s+({_MONTHS
                        r"\b(today|yesterday)\b", re.I)
 
 
+# "The rates aren't available right now" took nothing from a source, so crediting one ("Source: Bangladesh
+# Bank, retrieved…") would claim a check that found nothing.
+_NOTHING_FOUND = re.compile(r"\b(?:couldn.?t|can.?t|didn.?t|unable to) (?:find|confirm|get|retrieve|load|check|access)\b|"
+                            r"n.?t (?:available|listed|published)\b|\bunavailable\b|\bno (?:results|information|data|"
+                            r"details|figures?|notice)\b", re.I)
+
+
 def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SENTENCES) -> str:
     """The spoken web answer: unresolved problems replaced, at most max_sentences sentences (None: no cap,
     for skills, which have their own spoken budget), ending with a source name and date if the model left
@@ -532,7 +539,7 @@ def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SE
     cited = next((s for s in _turn["sources"] if s["name"].lower() in low or s["domain"] in low), None)
     body = lead + sentences(reply)
     cap = max_sentences or len(body) + 1
-    if cited and _HAS_DATE.search(reply):
+    if (cited and _HAS_DATE.search(reply)) or (not problems and not figures(reply) and _NOTHING_FOUND.search(reply)):
         return " ".join(body[:cap])
     src = cited or _turn["sources"][0]
     return " ".join(body[:cap - 1] + [f"{label}: {src['name']}, {src['date_text']}."])

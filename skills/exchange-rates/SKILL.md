@@ -4,6 +4,7 @@ description: Use for the rates board (US dollar, taka, yuan and Czech koruna tog
 allowed-tools: exchange_rates
 metadata:
   spoken-seconds: "25"
+  required: "true"
   triggers: "exchange rates|currency rates|rates board|currencies|\byuan\b|\bcny\b|\brmb\b|renminbi|koruna|\bczk\b"
 ---
 # Exchange rates

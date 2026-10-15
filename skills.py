@@ -74,8 +74,12 @@ def prompt_index() -> str:
             f"what it returns. {listed}")
 
 
-def trigger_pattern() -> str:
-    return "|".join(f"(?:{s['metadata']['triggers']})" for s in _skills.values() if s["metadata"].get("triggers"))
+def trigger_pattern(required_only: bool = False) -> str:
+    """Every skill's triggers as one regex; required_only: just the skills marked `required: "true"`,
+    whose requests must go through use_skill (gpt-oss-120b answered "yuan rate in taka" from four web
+    searches instead of the exchange-rates skill)."""
+    return "|".join(f"(?:{s['metadata']['triggers']})" for s in _skills.values() if s["metadata"].get("triggers")
+                    and (not required_only or s["metadata"].get("required") == "true"))
 
 
 # ---------- per turn ----------

@@ -711,6 +711,10 @@ REQUIRED_TOOLS = [
     (_PAST_ASK, "search_history", "Mahadi is asking about an earlier chat, which you can't see: call search_history "
                                   "with the key words, then answer from what it finds."),
 ]
+if skills.trigger_pattern(required_only=True):
+    REQUIRED_TOOLS.append((re.compile(skills.trigger_pattern(required_only=True), re.I), "use_skill",
+                           "One of your skills covers this request: call use_skill with it now and follow its "
+                           "steps, instead of answering from web searches."))
 
 
 def _propose_memory(text: str, file: str = "user") -> str:

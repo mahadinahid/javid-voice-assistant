@@ -20,3 +20,4 @@ sessions.json
 chat_log.jsonl.bak-*
 .DS_Store
 .claude/settings.local.json
+data/

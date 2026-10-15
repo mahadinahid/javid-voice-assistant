@@ -15,6 +15,7 @@ from pydantic import BaseModel
 import calendar_tools
 import memory_store
 import skills
+import tracing
 import web_tools
 from javid import (
     _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
@@ -52,6 +53,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_warm_tts, daemon=True).start()
     threading.Thread(target=_check_models, daemon=True).start()
     yield
+    tracing.flush_all()     # traces still waiting for the page's stages
 
 
 app = FastAPI(lifespan=lifespan)
@@ -142,6 +144,20 @@ def _ndjson(gen) -> StreamingResponse:
     return StreamingResponse(gen, media_type="application/x-ndjson")
 
 
+def _traced(trace: tracing.Trace, gen):
+    """The reply stream, passed through unchanged apart from a first "trace" event (its id, so the
+    page can add its own stages); javid.py marks the stages in between on this, the current trace."""
+    tracing.activate(trace)
+    try:
+        yield _event(type="trace", id=trace.id)
+        for line in gen:
+            if line.startswith('{"type": "delta"'):
+                trace.mark("reply_out")
+            yield line
+    finally:
+        tracing.finish(trace)
+
+
 @app.get("/greeting")
 def greeting():
     return {"text": startup_greeting()}
@@ -155,6 +171,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
            "followup" hands-free, right after Javid spoke: no wake word needed
     """
     _use_session(session)
+    trace = tracing.start("voice", mode)
     audio_bytes = audio.file.read()
 
     content_type = audio.content_type or "audio/webm"
@@ -164,6 +181,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 
     # Hands-free clips are often just noise; the name hint would make Whisper say "Javid" for them.
     transcript = transcribe_turn(audio_bytes, f"audio.{ext}", bias_name=(mode == "push"))
+    trace.mark("stt_done")
+    trace.label = transcript[:60]
     request = transcript
 
     def ignored():
@@ -182,7 +201,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
                 yield _event(type="transcript", text=transcript)
                 yield _event(type="delta", text=phrase("ack"))
                 yield _event(type="done", tasks=None, memory=None, lang=get_language())
-            return _ndjson(ack())
+            return _ndjson(_traced(trace, ack()))
 
     if mode == "push" and strip_wake_word(request) == "":
         # Just "Javid": acknowledge, as in hands-free.
@@ -190,7 +209,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             yield _event(type="transcript", text=transcript)
             yield _event(type="delta", text=phrase("ack"))
             yield _event(type="done", tasks=None, memory=None, lang=get_language())
-        return _ndjson(ack_push())
+        return _ndjson(_traced(trace, ack_push()))
 
     def events():
         yield _event(type="transcript", text=transcript)
@@ -205,13 +224,13 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             return
         yield from _reply_stream(request)
 
-    return _ndjson(events())
+    return _ndjson(_traced(trace, events()))
 
 
 @app.post("/type")
 def type_message(body: ChatBody):
     _use_session(body.session)
-    return _ndjson(_reply_stream(body.text))
+    return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text)))
 
 
 @app.get("/history")
@@ -319,6 +338,27 @@ async def bargein_log(request: Request):
     if entry.get("outcome") == "false":
         print(f"[barge-in] false trigger: mic {entry.get('micRms')}, playback {entry.get('playRms')}, threshold {entry.get('thr')}")
     return {"ok": True}
+
+
+# ---------- latency traces (Latency panel) ----------
+class TraceBody(BaseModel):
+    stages: dict[str, float] = {}
+    outcome: str = "done"
+
+
+@app.post("/latency/{trace_id}")
+def latency_report(trace_id: str, body: TraceBody, request: Request):
+    """The page's stages for one request (end of speech, first audio, audio done…), epoch ms."""
+    _local_page_only(request)
+    outcome = body.outcome if body.outcome in ("done", "interrupted", "stopped", "superseded") else "done"
+    return {"ok": tracing.add_client(trace_id[:32], body.stages, outcome)}
+
+
+@app.get("/latency")
+def latency(limit: int = 20):
+    traces = tracing.read(tracing.STATS_WINDOW)
+    return {"recent": traces[-max(1, min(limit, 100)):], "stats": tracing.stats(traces),
+            "segments": [name for name, _, _ in tracing.SEGMENTS], "window": tracing.STATS_WINDOW}
 
 
 # ---------- skills (sidebar list) ----------

@@ -352,6 +352,29 @@ header h1 {
 .key-msg.ok { color: #86efac; } .key-msg.bad { color: #fca5a5; }
 .modal-foot { margin-top: 14px; font-size: 11px; color: #475569; line-height: 1.55; }
 
+/* ── Latency panel + dialog ── */
+.lat-table { width: 100%; border-collapse: collapse; margin: 12px 0 18px; font-size: 12px; font-variant-numeric: tabular-nums; }
+.lat-table th { text-align: left; font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #475569; font-weight: 700; padding: 0 10px 8px 0; }
+.lat-table td { padding: 6px 10px 6px 0; color: #94a3b8; border-top: 1px solid #181828; }
+.lat-table td b { color: #e2e8f0; font-weight: 600; }
+.lat-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 11px; color: #64748b; margin-bottom: 12px; }
+.lat-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.lat-legend i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+.lat-row { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 56px; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid #141422; }
+.lat-label { font-size: 11.5px; color: #94a3b8; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.lat-label small { color: #475569; margin-right: 6px; font-variant-numeric: tabular-nums; }
+.lat-track { position: relative; height: 14px; background: #10101a; border-radius: 3px; overflow: hidden; }
+.lat-seg { position: absolute; top: 0; bottom: 0; min-width: 1px; }
+.lat-seg.thin { top: 4px; bottom: 4px; }
+.lat-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #f8fafc; }
+.lat-ttfa { font-size: 11.5px; color: #e2e8f0; text-align: right; font-variant-numeric: tabular-nums; }
+.lat-ttfa.none { color: #475569; }
+.lat-flag { font-size: 10px; color: #f59e0b; margin-left: 4px; }
+@media (max-width: 640px) {
+    .lat-row { grid-template-columns: minmax(0, 1fr) 56px; }
+    .lat-row .lat-track { grid-column: 1 / -1; grid-row: 2; }
+}
+
 /* ── Main ── */
 .main {
     flex: 1;
@@ -784,6 +807,11 @@ header h1 {
             <div id="models-summary" class="models-summary">Checking…</div>
             <div id="models-list"></div>
         </div>
+        <div class="panel" id="latency-panel">
+            <div class="panel-title">Latency <button id="latency-open" class="link-btn" title="Stage timings of recent requests">Details</button></div>
+            <div id="latency-summary" class="models-summary">No requests timed yet.</div>
+            <div id="latency-list"></div>
+        </div>
     </aside>
 
     <!-- ── Main ── -->
@@ -847,6 +875,26 @@ header h1 {
     </div>
 </div>
 
+<div id="latency-modal" class="modal" hidden>
+    <div class="modal-card" role="dialog" aria-label="Latency">
+        <div class="modal-head">
+            <h2>Latency</h2>
+            <button id="latency-close" class="btn-ghost" aria-label="Close">✕</button>
+        </div>
+        <table class="lat-table">
+            <thead><tr><th>Request type</th><th>Requests</th><th>First audio · median</th><th>p90</th><th>Answer audio · median</th><th>p90</th></tr></thead>
+            <tbody id="latency-stats"></tbody>
+        </table>
+        <div id="latency-legend" class="lat-legend"></div>
+        <div id="latency-bars"></div>
+        <p class="modal-foot">Each bar starts at the end of speech (or when Send was pressed) and is drawn to the same
+        scale; the white tick is the first audio (which can be “Searching…” on a web request), the right-hand number the
+        time to it. <b>Command</b>: a tool other than web search ran, or the reply was decided in code; <b>web</b>: web
+        search ran; <b>chat</b>: the model answered without tools. Medians cover the latest <span id="latency-window">200</span>
+        traces in <code>data/traces.jsonl</code>.</p>
+    </div>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script>
@@ -876,6 +924,35 @@ function setOrb(state) {
     label.textContent = s.label;
 }
 
+// ── Latency tracing (observation only) ────────────────────────────────────
+// Each request's stages that only the page sees — end of speech, first text, first audio, audio
+// done — go to /latency/<id> once Javid has finished speaking (or was stopped/interrupted); the
+// server records its own stages under the same id (the stream's first "trace" event) and writes
+// the line to data/traces.jsonl. Times are epoch ms: page and server share the clock on localhost.
+let reqTrace = null;     // the request being traced: { id, stages, done }
+let pushMarks = null;    // push-to-talk end of speech, measured on release
+
+function traceNew(marks) {
+    reqTrace = { id: null, stages: { ...(marks || {}), request_sent: Date.now() }, done: false };
+}
+
+function traceMark(t, name) {
+    if (t && !t.done && t.stages[name] == null) t.stages[name] = Date.now();
+}
+
+function traceEnd(outcome) {
+    const t = reqTrace;
+    if (!t || t.done) return;
+    t.done = true;
+    reqTrace = null;
+    if (t.stages.first_audio != null) t.stages.tts_done ??= Date.now();
+    if (!t.id) return;       // the server didn't trace it (hands-free clip it ignored, or the request failed)
+    fetch(`/latency/${t.id}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stages: t.stages, outcome }),
+    }).then(() => refreshLatency()).catch(() => {});
+}
+
 // ── Recording ─────────────────────────────────────────────────────────────
 async function startRecording() {
     if (isRecording) return;
@@ -902,6 +979,7 @@ async function startRecording() {
 
 function stopRecording() {
     if (!isRecording || !mediaRecorder) return;
+    pushMarks = { speech_end: Date.now(), capture_end: Date.now() };   // released: end of speech
     isRecording = false;
     mediaRecorder.stop();
     micStream.getTracks().forEach(t => t.stop());
@@ -916,7 +994,7 @@ async function onStop() {
     const mime = mediaRecorder.mimeType || 'audio/webm';
     const blob = new Blob(audioChunks, { type: mime });
     const ext  = mime.split('/')[1]?.split(';')[0] || 'webm';
-    await submitAudio(blob, ext);
+    await submitAudio(blob, ext, 'push', null, pushMarks);
 }
 
 // ── Hands-free ────────────────────────────────────────────────────────────
@@ -1075,6 +1153,7 @@ function bargeStep(st, micRms, playRms, frameSec, noise, sinceStartMs) {
 
 const bargeLog = [];   // every trigger this session (also POSTed to /bargein/log)
 function bargeIn(level) {
+    traceEnd('interrupted');
     const msgEl = speechMsg;
     stopAll();                                   // current + queued sentences, and the reply stream
     if (msgEl && !msgEl.querySelector('.interrupted-note')) {
@@ -1160,6 +1239,7 @@ function onFrame(frame) {
 
     const total = hf.frames.length * hf.frameSec;
     if (hf.quietSec >= VAD.endSilenceSec || total >= VAD.maxSec) {
+        const marks = { speech_end: Date.now() - hf.quietSec * 1000, capture_end: Date.now() };   // for the latency trace
         const frames = hf.frames, voiced = hf.voicedSec, rate = hf.ctx.sampleRate, mode = hf.mode;
         const barge = hf.bargeEntry;
         hf.bargeEntry = null;
@@ -1172,7 +1252,7 @@ function onFrame(frame) {
         // The follow-up window is left to expire on its own: a clip the server
         // ignores (cough, side chatter) shouldn't force the user to say "Javid" again.
         setOrb('thinking');
-        submitAudio(encodeWav(frames, rate), 'wav', mode, barge);
+        submitAudio(encodeWav(frames, rate), 'wav', mode, barge, marks);
     }
 }
 
@@ -1256,13 +1336,14 @@ async function fetchAudio(text) {
     return URL.createObjectURL(await res.blob());
 }
 
-function speakChunk(text) {
+function speakChunk(text, kind = 'reply') {
     text = text.trim();
     if (!text || !/[a-z0-9\u0980-\u09ff]/i.test(text)) return;   // Bengali letters count as words too
     utterancesLeft++;
+    traceMark(reqTrace, 'tts_first_request');
     const audio = fetchAudio(text);
     audio.catch(() => {});   // handled in playNext
-    speechQueue.push({ text, audio, msg: speechMsg });
+    speechQueue.push({ text, audio, msg: speechMsg, trace: reqTrace, kind });
     if (!playing) playNext();
 }
 
@@ -1295,6 +1376,10 @@ async function playNext() {
         const a = currentAudio = new Audio(url);
         tapPlayback(a);
         a.onplay = () => setOrb('speaking');
+        a.addEventListener('playing', () => {
+            traceMark(item.trace, 'first_audio');
+            if (item.kind === 'reply') traceMark(item.trace, 'first_answer_audio');
+        }, { once: true });
         a.onended = a.onerror = done;
         a.play().catch(done);
     } else {
@@ -1349,6 +1434,7 @@ function javidIsBusy() {
 
 function maybeIdle() {
     if (streamDone && utterancesLeft <= 0 && !isRecording) {
+        traceEnd('done');           // reply shown and fully spoken
         utterancesLeft = 0;
         if (followupPending) {  // Javid just answered: listen without wake word for a bit
             followupPending = false;
@@ -1367,6 +1453,7 @@ function setStopVisible(on) {
 }
 
 function stopAll() {
+    traceEnd('stopped');
     abortCtrl?.abort();
     stopSpeech();
     streamDone = true;
@@ -1378,8 +1465,9 @@ function stopAll() {
 
 // POST and consume the newline-delimited JSON event stream.
 // quiet: hands-free capture — show nothing until we know it was meant for Javid.
-async function streamReply(url, init, { onTranscript, onIgnored, quiet = false } = {}) {
+async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, marks = null } = {}) {
     stopAll();
+    traceNew(marks);
     isBusy = true;
     streamDone = false;
     speechMsg = null;
@@ -1414,7 +1502,9 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false }
                 if (!line) continue;
                 const ev = JSON.parse(line);
 
-                if (ev.type === 'transcript') {
+                if (ev.type === 'trace') {
+                    if (ctrl === abortCtrl && reqTrace) reqTrace.id = ev.id;
+                } else if (ev.type === 'transcript') {
                     if (quiet) { setOrb('thinking'); setStopVisible(true); }
                     onTranscript?.(ev.text);
                 } else if (ev.type === 'ignored') {
@@ -1424,7 +1514,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false }
                 } else if (ev.type === 'tool') {
                     showToolNote(ev.name);
                 } else if (ev.type === 'say') {
-                    speakChunk(ev.text);    // e.g. "Searching…" while a web search runs
+                    speakChunk(ev.text, 'say');    // e.g. "Searching…" while a web search runs
                 } else if (ev.type === 'sources') {
                     sources = ev.items;
                 } else if (ev.type === 'skill') {
@@ -1443,6 +1533,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false }
                     setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
                     reply += ev.text;
+                    traceMark(reqTrace, 'first_text');
                     if (handsFree) followupPending = true;
                     ensureBubble().textContent = reply;
                     scrollChat();
@@ -1479,13 +1570,14 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false }
     }
 }
 
-async function submitAudio(blob, ext, mode = 'push', barge = null) {
+async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null) {
     const fd = new FormData();
     fd.append('audio', blob, `audio.${ext}`);
     fd.append('mode', mode);
     if (activeChat) fd.append('session', activeChat);
     await streamReply('/talk', { method: 'POST', body: fd }, {
         quiet: mode !== 'push',
+        marks,
         onIgnored: text => { if (barge) logBarge(barge, 'false', text); },
         onTranscript: text => {
             if (barge) logBarge(barge, text ? 'speech' : 'false', text);
@@ -2412,6 +2504,98 @@ document.addEventListener('keydown', e => { if (e.key === 'Escape' && !modelsMod
 setInterval(() => { renderModelsPanel(); if (!modelsModal.hidden) renderModelsModal(); }, 1000);   // countdowns
 setInterval(() => refreshModels(), 10000);
 refreshModels();
+
+// ── Latency panel ─────────────────────────────────────────────────────────
+// GET /latency: the last 20 traces plus per-type medians (tracing.py). Bars share one scale and
+// start at the end of speech (or Send); the speaking segment is clipped at the right edge.
+let latencyData = null;
+const LAT_TYPES = ['command', 'chat', 'web'];
+const LAT_SEGMENTS = [   // the same spans as tracing.SEGMENTS (LLM + tools is drawn per request/tool)
+    { name: 'end-of-speech wait', from: ['speech_end'], to: 'capture_end', color: '#475569' },
+    { name: 'upload', from: ['capture_end', 'request_sent'], to: 'request_received', color: '#64748b' },
+    { name: 'speech-to-text', from: ['request_received'], to: 'stt_done', color: '#a78bfa' },
+    { name: 'routing', from: ['stt_done', 'request_received'], to: 'routing_done', color: '#2dd4bf' },
+    { name: 'checks', from: ['llm_done'], to: 'reply_out', color: '#f472b6' },
+    { name: 'reply to audio', from: ['reply_out'], to: 'first_answer_audio', color: '#38bdf8' },
+    { name: 'speaking', from: ['first_answer_audio'], to: 'tts_done', color: 'rgba(34,197,94,0.35)' },
+];
+const LAT_LLM = '#6366f1', LAT_TOOL = '#f59e0b';
+
+function fmtMs(ms) {
+    if (ms == null) return '—';
+    return ms < 1000 ? `${Math.round(ms)} ms` : `${(ms / 1000).toFixed(ms < 10000 ? 1 : 0)} s`;
+}
+
+function latSegments(t) {
+    const st = t.stages, out = [];
+    for (const g of LAT_SEGMENTS) {
+        const a = g.from.map(k => st[k]).find(v => v != null), b = st[g.to];
+        if (a != null && b != null && b >= a) out.push({ a, b, color: g.color, name: g.name });
+    }
+    for (const l of t.llm || []) if (l.start != null && l.end != null)
+        out.push({ a: l.start, b: l.end, color: LAT_LLM, name: `LLM ${l.model || ''}`.trim(), first: l.first });
+    for (const x of t.tools || []) if (x.start != null && x.end != null)
+        out.push({ a: x.start, b: x.end, color: LAT_TOOL, name: x.name });
+    return out;
+}
+
+function renderLatencyPanel() {
+    const sum = document.getElementById('latency-summary'), list = document.getElementById('latency-list');
+    const stats = latencyData?.stats;
+    const any = stats && LAT_TYPES.some(k => stats[k].n_audio);
+    sum.textContent = !latencyData ? 'Unavailable' : any ? 'Time to first audio · median / p90' : 'No requests timed yet.';
+    list.innerHTML = !any ? '' : LAT_TYPES.filter(k => stats[k].n_audio).map(k => `
+        <div class="model-row" title="${stats[k].n_audio} ${k} request${stats[k].n_audio === 1 ? '' : 's'} with audio">
+            <span class="m-name">${k}</span>
+            <span class="m-meta">${fmtMs(stats[k].ttfa_median)} / ${fmtMs(stats[k].ttfa_p90)}</span>
+        </div>`).join('');
+}
+
+function renderLatencyModal() {
+    if (!latencyData) return;
+    const { stats, recent, window: win } = latencyData;
+    document.getElementById('latency-window').textContent = win;
+    document.getElementById('latency-stats').innerHTML = LAT_TYPES.map(k => `
+        <tr><td><b>${k}</b></td><td>${stats[k].n}</td>
+            <td><b>${fmtMs(stats[k].ttfa_median)}</b></td><td>${fmtMs(stats[k].ttfa_p90)}</td>
+            <td>${fmtMs(stats[k].answer_median)}</td><td>${fmtMs(stats[k].answer_p90)}</td></tr>`).join('');
+    document.getElementById('latency-legend').innerHTML =
+        [...LAT_SEGMENTS.slice(0, 4), { name: 'LLM request', color: LAT_LLM }, { name: 'tool call', color: LAT_TOOL },
+         ...LAT_SEGMENTS.slice(4)].map(g => `<span><i style="background:${g.color}"></i>${g.name}</span>`).join('')
+        + '<span><i style="background:#f8fafc;width:2px"></i>first audio</span>';
+    const rows = recent.slice().reverse();
+    const reach = t => { const s = t.stages; return s.first_answer_audio ?? s.first_audio ?? s.reply_out ?? s.server_done ?? 0; };
+    const scale = Math.max(1000, ...rows.map(reach)) * 1.1;
+    const pct = v => `${Math.max(0, Math.min(100, v / scale * 100)).toFixed(2)}%`;
+    const FLAGS = { interrupted: '⏸ interrupted', stopped: '■ stopped', superseded: '↻ replaced', no_client: 'no page timing' };
+    document.getElementById('latency-bars').innerHTML = !rows.length ? '<p class="empty">No requests timed yet.</p>' : rows.map(t => {
+        const segs = latSegments(t).map(g =>
+            `<i class="lat-seg" style="left:${pct(g.a)};width:calc(${pct(g.b)} - ${pct(g.a)});background:${g.color}" title="${esc(g.name)} · ${fmtMs(g.b - g.a)}"></i>`).join('');
+        const tick = t.ttfa != null ? `<i class="lat-tick" style="left:${pct(t.ttfa)}" title="first audio · ${fmtMs(t.ttfa)}"></i>` : '';
+        const time = (t.ts || '').slice(11, 16);
+        const flag = t.outcome !== 'done' ? `<span class="lat-flag">${FLAGS[t.outcome] || esc(t.outcome)}</span>` : '';
+        return `<div class="lat-row">
+            <div class="lat-label" title="${esc(t.label || '')}"><small>${time} · ${t.type}${t.source === 'voice' ? ' · 🎙' : ''}</small>${esc(t.label || '')}${flag}</div>
+            <div class="lat-track">${segs}${tick}</div>
+            <div class="lat-ttfa ${t.ttfa == null ? 'none' : ''}">${t.ttfa == null ? 'no audio' : fmtMs(t.ttfa)}</div>
+        </div>`;
+    }).join('');
+}
+
+async function refreshLatency() {
+    try { latencyData = await (await fetch('/latency')).json(); } catch { latencyData = null; }
+    renderLatencyPanel();
+    if (!latencyModal.hidden) renderLatencyModal();
+}
+
+const latencyModal = document.getElementById('latency-modal');
+function openLatency() { latencyModal.hidden = false; renderLatencyModal(); refreshLatency(); }
+function closeLatency() { latencyModal.hidden = true; }
+document.getElementById('latency-open').addEventListener('click', openLatency);
+document.getElementById('latency-close').addEventListener('click', closeLatency);
+latencyModal.addEventListener('click', e => { if (e.target === latencyModal) closeLatency(); });
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !latencyModal.hidden) closeLatency(); });
+refreshLatency();
 
 // ── Reply language: English / Bangla ──────────────────────────────────────
 // The server owns the setting (language.json), so it survives reloads and restarts and applies to

@@ -28,6 +28,7 @@ import calendar_tools
 import memory_store
 import rates
 import skills
+import tracing
 import web_tools
 
 # Groq and OpenAI-compatible providers (Gemini) raise different exception classes for the same thing.
@@ -1455,9 +1456,19 @@ def _open_stream(msgs: list, tools: list):
 
 def _stream_completion(tool_calls: dict, msgs: list, tools: list):
     """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`."""
-    model, stream = _open_stream(msgs, tools)
+    span = tracing.llm_start()
+    model = None
+    try:
+        model, stream = _open_stream(msgs, tools)
+        yield from _read_stream(model, stream, tool_calls, span)
+    finally:
+        tracing.llm_end(span, model)
+
+
+def _read_stream(model: str, stream, tool_calls: dict, span):
     counted = False
     for chunk in stream:
+        tracing.llm_first(span)
         if not counted:
             usage = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None)
             if usage:   # arrives on the final chunk
@@ -1626,6 +1637,7 @@ def think_stream(user_text: str):
         decided = memory_store.answer_from_reply(user_text)
         if decided:
             outcome, proposal = decided
+            tracing.mark("routing_done")
             yield ("memory", {"outcome": outcome, **proposal})
             reply = phrase("mem_saved" if outcome == "approved" else "mem_dropped", lang)
             yield ("delta", reply)
@@ -1637,9 +1649,11 @@ def think_stream(user_text: str):
             set_language(lang)
             yield ("lang", lang)
             if only_switch:      # nothing else asked: confirm in the new language, no LLM request
+                tracing.mark("routing_done")
                 reply = phrase("switched", lang)
                 yield ("delta", reply)
                 return
+        tracing.mark("routing_done")    # tools chosen; the next step is the first LLM request
         retried_empty = False
         retried_error = False
         retried_garbled = False
@@ -1772,10 +1786,13 @@ def think_stream(user_text: str):
                 yield ("tool", call["name"])
                 fn = TOOL_MAP.get(call["name"])
                 args = json.loads(call["arguments"] or "{}")
+                span = tracing.tool_start(call["name"])
                 try:
                     result = fn(args) if fn else f"Unknown tool: {call['name']}"
                 except TypeError as e:   # a made-up argument name (propose_memory(user=...)): let it retry
                     result = f"Wrong arguments for {call['name']}: {e}. Use only the parameters in its schema."
+                finally:
+                    tracing.tool_end(span)
                 print(f"[tool] {call['name']}({args}) → {result[:80]}")
                 if skills.active() and call["name"] in skills.active()["tools"]:
                     skill_results.append(result)
@@ -1871,17 +1888,24 @@ def synthesize(text: str, lang: str | None = None) -> tuple[bytes, str]:
     return result
 
 
-def speak(text: str) -> None:
+def speak(text: str, trace: tracing.Trace | None = None) -> None:
     """CLI: the same voices as the web UI, played with macOS afplay."""
+    if trace:
+        trace.mark("tts_first_request")
     try:
         audio, _ = synthesize(text)
     except RuntimeError:
         print("(voice unavailable right now; reply shown as text only)")
         return
+    if trace:
+        trace.mark("first_audio")
+        trace.mark("first_answer_audio")
     with tempfile.NamedTemporaryFile(suffix=".mp3") as f:
         f.write(audio)
         f.flush()
         subprocess.run(["afplay", f.name])
+    if trace:
+        trace.mark("tts_done")
 
 
 # ---------- main loop ----------
@@ -1899,15 +1923,23 @@ def main() -> None:
                 print("(too short, try again)")
                 continue
 
+            trace = tracing.start("cli", "push")       # Enter pressed: end of speech
+            trace.mark("speech_end", trace.stages["request_received"])
             text = transcribe_turn(wav)
+            trace.mark("stt_done")
             if not text or len(text.split()) < 2:
                 print("(didn't catch that, try again)")
                 continue
             print(f"You:   {text}")
+            trace.label = text[:60]
 
+            tracing.activate(trace)
             reply = think(text)
+            trace.mark("reply_out")
             print(f"Javid: {reply}")
-            speak(reply)
+            trace.mark("first_text")
+            speak(reply, trace)
+            tracing.finish_local(trace)
 
             if "goodbye" in text.lower():
                 break

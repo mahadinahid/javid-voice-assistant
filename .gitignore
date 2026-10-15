@@ -12,3 +12,11 @@ llm_turns.jsonl
 tavily_usage.jsonl
 llm_quota.json
 llm_chain.json
+language.json
+memory/
+chat_index.db
+bargein_log.jsonl
+sessions.json
+chat_log.jsonl.bak-*
+.DS_Store
+.claude/settings.local.json

@@ -95,6 +95,11 @@ def _tz():
 
 
 _WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+# Bangla mode: the model is told to pass the user's day words as they are. কাল means yesterday or
+# tomorrow; asked about plans it means tomorrow.
+_BN_WEEKDAYS = ["সোমবার", "মঙ্গলবার", "বুধবার", "বৃহস্পতিবার", "শুক্রবার", "শনিবার", "রবিবার"]
+_BN_DAYS = {"আজ": 0, "আজকে": 0, "আজকের": 0, "কাল": 1, "কালকে": 1, "কালকের": 1, "আগামীকাল": 1,
+            "আগামী কাল": 1, "আগামীকালের": 1, "পরশু": 2, "পরশুদিন": 2}
 
 
 def _parse_day(day: str) -> date:
@@ -104,9 +109,14 @@ def _parse_day(day: str) -> date:
     A weekday means its next occurrence; said on that same weekday, a week ahead.
     """
     text = (day or "today").strip().lower()
-    for filler in ("on ", "this ", "next ", "coming "):
+    for filler in ("on ", "this ", "next ", "coming ", "এই ", "আগামী ", "সামনের "):
         text = text.removeprefix(filler)
     today = date.today()
+    if text in _BN_DAYS:
+        return today + timedelta(days=_BN_DAYS[text])
+    for i, name in enumerate(_BN_WEEKDAYS):
+        if text in (name, name.removesuffix("বার")):
+            text = _WEEKDAYS[i]
     if text == "today":
         return today
     if text == "tomorrow":
@@ -453,6 +463,85 @@ def list_holidays(country: str = HOME_COUNTRY, days: int = 60, include_observanc
     return text
 
 
+# ---------- holiday answer check ----------
+# The model got the dates wrong even with list_holidays' result in front of it ("holidays run from
+# Sunday, October 18" when the list started on the 20th, then "closed on Sunday" a turn later). So a
+# reply's holiday claims are checked in Python: a date in the same clause as a holiday/closed word
+# must appear in the tool result. "Open on Sunday Oct 18" is fine; "closed on Sunday Oct 18" isn't.
+_MONTHS = ["january", "february", "march", "april", "may", "june", "july", "august", "september",
+           "october", "november", "december"]
+_MONTHS_BN = ["জানুয়ারি", "ফেব্রুয়ারি", "মার্চ", "এপ্রিল", "মে", "জুন", "জুলাই", "আগস্ট", "সেপ্টেম্বর",
+              "অক্টোবর", "নভেম্বর", "ডিসেম্বর"]
+_MONTH_RE = (r"(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|"
+             r"sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|" + "|".join(_MONTHS_BN) + r")\.?")
+_MONTH_DAY = re.compile(_MONTH_RE + r"\s+(\d{1,2})(?:st|nd|rd|th)?\b", re.I)
+_DAY_MONTH = re.compile(r"\b(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?" + _MONTH_RE, re.I)
+_HOLIDAY_WORD = re.compile(r"holiday|closed|day off|days off|\boff\b|break|puja|eid|festival|observ|shut|"
+                           r"ছুটি|বন্ধ|পূজা|ঈদ", re.I)
+_NOT_HOLIDAY = re.compile(r"\bnot\b|n't\b|\bno\b|\bopen\b|\bworking day|\bback\b|resum|\breturn|reopen|\bwork\b|খোলা|(?<![\u0980-\u09ff])না(?![\u0980-\u09ff])", re.I)
+_ANSWER_WORD = re.compile(r"^\W*(?:no|nope|yes|yeah|yep)\b\W*", re.I)
+_ISO_DATE = re.compile(r"\b20\d\d-(\d\d)-(\d\d)\b")
+_CLAUSE_SPLIT = re.compile(r"[;.!?।]\s|,\s+(?=so\b|but\b|while\b|whereas\b|and\s+(?:the|it|so)\b)|"
+                           r"\b(?:so|but|while|whereas)\b", re.I)
+
+
+def _month_no(word: str) -> int:
+    word = word.lower().rstrip(".")
+    if word in _MONTHS_BN:
+        return _MONTHS_BN.index(word) + 1
+    return next(i + 1 for i, m in enumerate(_MONTHS) if m.startswith(word[:3]))
+
+
+def _dates_in(text: str) -> list[tuple[int, int]]:
+    text = text.translate(str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789"))
+    found = [(_month_no(m.group(1)), int(m.group(2))) for m in _MONTH_DAY.finditer(text)]
+    found += [(_month_no(m.group(2)), int(m.group(1))) for m in _DAY_MONTH.finditer(text)]
+    found += [(int(m.group(1)), int(m.group(2))) for m in _ISO_DATE.finditer(text)]
+    return [(mo, d) for mo, d in found if 1 <= d <= 31]
+
+
+def check_holiday_reply(reply: str, results: list[str], other: list[str] = (), about_holidays: bool = False) -> list[str]:
+    """Dates the reply ties to a holiday or closure that no list_holidays result gives, e.g. ["October 18"].
+    `other` is other evidence from this turn (an office's own notice from web_search may list more days).
+    about_holidays: the turn is about holidays, so "They run from October 18" counts without the word."""
+    if not results:
+        return []
+    allowed = set()
+    for line in (l for r in [*results, *other] for l in r.splitlines()):
+        found = _dates_in(line)
+        allowed.update(found)
+        if " to " in line and len(found) >= 2:   # a long break: every day in it, weekend included
+            (m1, d1), (m2, d2) = found[:2]
+            y = date.today().year
+            day, end = date(y, m1, d1), date(y + (m2 < m1), m2, d2)
+            while day <= end and (end - day).days < 40:
+                allowed.add((day.month, day.day))
+                day += timedelta(days=1)
+    # "Sunday, October 18, 2026" would otherwise be cut at its commas.
+    text = re.sub(r"(day),\s+", r"\1 ", reply)
+    text = re.sub(r"(\d{1,2}),\s+\d{4}", r"\1", text)
+    bad = []
+    for clause in _CLAUSE_SPLIT.split(text):
+        clause = _ANSWER_WORD.sub("", clause or "")   # "No, it's closed on…" isn't a negation
+        if clause and (about_holidays or _HOLIDAY_WORD.search(clause)) and not _NOT_HOLIDAY.search(clause):
+            bad += [f"{_MONTHS[mo - 1].title()} {d}" for mo, d in _dates_in(clause) if (mo, d) not in allowed]
+    return list(dict.fromkeys(bad))
+
+
+def holiday_correction(bad: list[str]) -> str:
+    return (f"Check your dates: {', '.join(bad)} isn't in the list_holidays result. Use only the dates it gives "
+            "(holidays, and long breaks with the weekend), don't add days before or after them, and give the "
+            "corrected answer. If you said something wrong earlier in this chat, say so plainly.")
+
+
+def holiday_fallback(results: list[str]) -> str:
+    """The tool's own holiday list as a spoken sentence, when the model can't get the dates right."""
+    rows = [re.sub(r", \d{4}:", ":", l[2:]).replace(" (public holiday)", "")
+            for r in results for l in r.splitlines() if l.startswith("- ") and "(public holiday)" in l]
+    rows = list(dict.fromkeys(rows))[:4]
+    return ("The official holiday calendar lists " + "; ".join(rows) + ".") if rows else ""
+
+
 # ---------- web UI ----------
 def agenda(day: str = "today") -> dict:
     st = status()
@@ -482,7 +571,8 @@ def briefing_line() -> str | None:
 
 
 # ---------- tool schemas ----------
-_DAY_HELP = "The user's words ('tomorrow', 'friday', 'next tuesday') or YYYY-MM-DD; don't compute dates."
+_DAY_HELP = ("The user's words ('tomorrow', 'friday', 'next tuesday'; Bangla words like 'কাল' as they are) "
+             "or YYYY-MM-DD; don't compute dates.")
 
 TOOLS = [
     {
@@ -492,7 +582,10 @@ TOOLS = [
             "description": "Official public holidays (Google's data). Always use this, never web_search or "
                            "memory, for holidays or days off. Name the next upcoming public holiday with its "
                            "weekday and date even if it isn't on a weekend, and say when holidays join the "
-                           "weekend into a longer break.",
+                           "weekend into a longer break. Give only the dates this returns; never add days "
+                           "around them. It's the national list: whether a particular office, bank, embassy "
+                           "or visa centre (e.g. IVAC) is open is that office's own notice, so search for "
+                           "it with web_search, or say you couldn't confirm it.",
             "parameters": {
                 "type": "object",
                 "properties": {

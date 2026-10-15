@@ -264,6 +264,34 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     return "\n".join(lines)
 
 
+def news_headlines(topics: list[str], days: int = 2) -> str:
+    """The top news story per topic, in one tool call (a morning brief needs three searches, and one
+    round each would use up the turn's tool rounds). Sources and texts are registered like web_search's."""
+    topics = [" ".join(str(t).split()) for t in topics or [] if str(t).strip()][:4]
+    if not topics:
+        return "No topics given."
+    days = max(1, min(int(days or 2), 7))
+    lines = []
+    for topic in topics:
+        query = f"{topic} news"
+        kw = {"search_depth": "basic", "max_results": 3, "include_usage": True, "topic": "news", "days": days}
+        key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, ())
+        resp = _call("search", key, query, lambda c, q=query, k=kw: c.search(q, **k))
+        if isinstance(resp, str):
+            lines.append(f"{topic}: {resp}")
+            continue
+        results = [r for r in resp.get("results", []) if r.get("url")]
+        if not results:
+            lines.append(f"{topic}: no news found in the last {days} days.")
+            continue
+        r = results[0]
+        s = _add_source(r)
+        _remember_text(s["domain"], f"{r.get('title', '')}\n{r.get('content', '')}")
+        snippet = " ".join((r.get("content") or "").split())[:SNIPPET_CHARS]
+        lines.append(f"{topic}: [{s['n']}] {s['title']} ({s['name']}, {s['date_text']}) - {snippet}")
+    return "Top headline per topic:\n" + "\n".join(lines)
+
+
 def _resolve_top(url: str) -> str | None:
     """The top result meant by `url`: exact, its result number, or the one top result on that site
     (models rewrite URLs from memory)."""
@@ -337,9 +365,26 @@ TOOLS = [
     },
 ]
 
+TOOLS.append({
+    "type": "function",
+    "function": {
+        "name": "news_headlines",
+        "description": "The top news story for each topic (one search per topic), with source and date.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "topics": {"type": "array", "items": {"type": "string"}, "description": "e.g. ['Bangladesh', 'China', 'AI']"},
+                "days": {"type": "integer", "description": "How recent, in days (default 2)."},
+            },
+            "required": ["topics"],
+        },
+    },
+})
+
 TOOL_MAP = {
     "web_search": lambda args: web_search(**args),
     "read_page":  lambda args: read_page(**args),
+    "news_headlines": lambda args: news_headlines(**args),
 }
 
 
@@ -455,7 +500,7 @@ def correction(problems: list[str]) -> str:
             + f". Rewrite it in at most {MAX_SENTENCES} sentences, naming the source and its date.")
 
 
-_BOUNDARY = re.compile(r"[.!?]+[\"')\]]*\s+")   # the same rule index.html uses to split speech
+_BOUNDARY = re.compile(r"[.!?\u0964]+[\"')\]]*\s+")   # the same rule index.html uses to split speech (। = Bangla full stop)
 
 
 def sentences(text: str) -> list[str]:
@@ -473,9 +518,10 @@ _HAS_DATE = re.compile(rf"\b({_MONTHS})\.?\s+\d{{1,2}}\b|\b\d{{1,2}}\s+({_MONTHS
                        r"\b(today|yesterday)\b", re.I)
 
 
-def finalize(reply: str, problems: list[str]) -> str:
-    """The spoken web answer: unresolved problems replaced, at most MAX_SENTENCES sentences,
-    ending with a source name and date if the model left them out."""
+def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SENTENCES) -> str:
+    """The spoken web answer: unresolved problems replaced, at most max_sentences sentences (None: no cap,
+    for skills, which have their own spoken budget), ending with a source name and date if the model left
+    them out."""
     lead, label = [], "Source"
     if any("isn't in any source" in p or "couldn't confirm" in p for p in problems):
         reply = "I couldn't confirm that figure from an official source or two sources that agree, so I won't guess."
@@ -485,10 +531,11 @@ def finalize(reply: str, problems: list[str]) -> str:
     low = reply.lower()
     cited = next((s for s in _turn["sources"] if s["name"].lower() in low or s["domain"] in low), None)
     body = lead + sentences(reply)
+    cap = max_sentences or len(body) + 1
     if cited and _HAS_DATE.search(reply):
-        return " ".join(body[:MAX_SENTENCES])
+        return " ".join(body[:cap])
     src = cited or _turn["sources"][0]
-    return " ".join(body[:MAX_SENTENCES - 1] + [f"{label}: {src['name']}, {src['date_text']}."])
+    return " ".join(body[:cap - 1] + [f"{label}: {src['name']}, {src['date_text']}."])
 
 
 # ---------- Models panel ----------

@@ -41,6 +41,58 @@ header h1 {
     color: #cbd5e1;
 }
 
+/* ── Chats (right panel): one conversation per chat, like Claude's sidebar ── */
+.chats {
+    width: 250px;
+    flex-shrink: 0;
+    background: #0c0c16;
+    border-left: 1px solid #1a1a28;
+    display: flex;
+    flex-direction: column;
+    padding: 14px 10px;
+    gap: 8px;
+    overflow: hidden;
+}
+.layout.chats-hidden .chats { display: none; }
+.chats-new {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 10px; border-radius: 8px; border: none; background: transparent;
+    color: #cbd5e1; font-size: 13px; cursor: pointer; text-align: left;
+}
+.chats-new span.plus { width: 22px; height: 22px; border-radius: 50%; background: #1e1e30; display: grid; place-items: center; }
+.chats-new:hover { background: #151524; }
+.chats-search {
+    width: 100%; padding: 7px 10px 7px 30px; border-radius: 8px; border: 1px solid #1a1a28;
+    background: #11111c url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 9px center;
+    color: #e2e8f0; font-size: 12.5px; outline: none;
+}
+.chats-search:focus { border-color: #2d3748; }
+.chats-list { flex: 1; overflow-y: auto; scrollbar-width: thin; scrollbar-color: #1e1e30 transparent; margin: 0 -4px; padding: 0 4px; }
+.chats-group { font-size: 11px; color: #475569; padding: 12px 10px 4px; }
+.chat-item {
+    display: flex; align-items: center; gap: 4px;
+    padding: 7px 10px; border-radius: 8px; cursor: pointer;
+    font-size: 13px; color: #94a3b8;
+}
+.chat-item:hover { background: #131322; }
+.chat-item.active { background: #1a1a2c; color: #e2e8f0; }
+.chat-item .chat-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
+.chat-item .chat-title.untitled { font-style: italic; color: #64748b; }
+.chat-item button {
+    flex-shrink: 0; border: none; background: transparent; color: #475569; cursor: pointer;
+    font-size: 12px; padding: 2px 4px; border-radius: 4px; opacity: 0;
+}
+.chat-item:hover button, .chat-item button:focus-visible, .chat-item .pin-btn.pinned { opacity: 1; }
+.chat-item button:hover { color: #cbd5e1; background: #1e1e30; }
+.chat-item .del-chat.confirm { opacity: 1; color: #f87171; font-size: 10.5px; font-weight: 600; }
+@media (hover: none) { .chat-item button { opacity: 1; } }
+.chats-empty { font-size: 12px; color: #334155; font-style: italic; padding: 10px; }
+.chats-toggle {
+    padding: 6px 10px; border-radius: 16px; border: 1px solid #1e2d3d; background: transparent;
+    color: #64748b; font-size: 12px; cursor: pointer; transition: all 0.2s;
+}
+.chats-toggle:hover { color: #60a5fa; border-color: #3b82f6; }
+
 /* ── Layout ── */
 .layout {
     display: flex;
@@ -163,6 +215,36 @@ header h1 {
     line-height: 1.45;
 }
 .memory-item:last-child { border-bottom: none; }
+.mem-section { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: #334155; margin: 8px 0 2px; }
+.mem-section:first-child { margin-top: 0; }
+
+/* Memory proposals: nothing is saved until Mahadi approves */
+.mem-card { margin-top: 6px; padding: 9px 11px; border: 1px solid #4c1d95; background: rgba(124,58,237,0.08);
+            border-radius: 8px; font-size: 12.5px; color: #cbd5e1; max-width: 100%; }
+.mem-card .mc-label { font-size: 10.5px; color: #a78bfa; margin-bottom: 4px; }
+.mem-card .mc-text { white-space: pre-wrap; overflow-wrap: anywhere; outline: none; padding: 2px 4px; border-radius: 4px; }
+.mem-card .mc-text[contenteditable="true"] { background: #11111c; box-shadow: inset 0 0 0 1px #6d28d9; }
+.mem-card .mc-actions { display: flex; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.mem-card button { padding: 4px 11px; border-radius: 12px; border: 1px solid #334155; background: transparent;
+                   color: #94a3b8; font-size: 11.5px; cursor: pointer; }
+.mem-card button.approve { background: #6d28d9; border-color: #6d28d9; color: #fff; }
+.mem-card button:hover { filter: brightness(1.2); }
+.mem-card.done { opacity: 0.7; }
+.mem-card.done .mc-actions { display: none; }
+
+/* Skills: listed in the sidebar, highlighted while one runs */
+.skill-item { padding: 6px 8px; margin: 0 -8px; border-radius: 7px; font-size: 12.5px; color: #94a3b8; transition: background 0.3s; }
+.skill-item .skill-name { color: #cbd5e1; font-weight: 600; }
+.skill-item .skill-name::before { content: '⚡ '; color: #475569; }
+.skill-item .skill-desc { font-size: 11px; color: #475569; line-height: 1.4; }
+.skill-item.running { background: rgba(124,58,237,0.16); box-shadow: inset 0 0 0 1px #6d28d9; }
+.skill-item.running .skill-name::before { color: #a78bfa; }
+.skill-item.running .skill-name::after { content: ' · running'; color: #a78bfa; font-weight: 400; font-size: 11px; }
+
+/* A skill's full version: shown under the spoken reply, never read aloud */
+.msg-screen { margin-top: 6px; padding: 8px 12px; border-left: 2px solid #6d28d9; background: #0f0f1a; border-radius: 6px;
+              font-size: 12.5px; color: #cbd5e1; white-space: pre-wrap; line-height: 1.5; max-width: 100%; overflow-wrap: anywhere; }
+.msg-skill { font-size: 10.5px; color: #a78bfa; padding: 2px 4px 0; }
 .mem-dot { color: #7c3aed; flex-shrink: 0; }
 
 .event-item {
@@ -211,6 +293,7 @@ header h1 {
 .m-dot.cooling { background: #f59e0b; }
 .m-dot.missing { background: #475569; }
 .m-dot.low     { background: #f97316; }
+.m-dot.reserved { background: #a78bfa; }
 .m-dot.nokey   { background: #334155; }
 
 .modal { position: fixed; inset: 0; z-index: 50; background: rgba(5,5,10,0.72); display: flex; align-items: center; justify-content: center; padding: 20px; }
@@ -233,6 +316,7 @@ header h1 {
 .pill { font-size: 10px; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; border: 1px solid #2a2a3e; color: #94a3b8; white-space: nowrap; }
 .pill.serving { color: #86efac; border-color: #166534; background: rgba(34,197,94,0.08); }
 .pill.ready   { color: #7dd3fc; border-color: #0c4a6e; background: rgba(56,189,248,0.08); }
+.pill.reserved { color: #c4b5fd; border-color: #4c1d95; background: rgba(139,92,246,0.08); }
 .pill.cooling, .pill.low { color: #fcd34d; border-color: #78350f; background: rgba(245,158,11,0.08); }
 .mc-state { font-size: 12.5px; color: #cbd5e1; }
 .meter-label { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: #64748b; margin-bottom: 4px; font-variant-numeric: tabular-nums; }
@@ -560,6 +644,32 @@ header h1 {
 }
 .new-chat-btn:hover { color: #60a5fa; border-color: #3b82f6; }
 
+/* Reply language: English / Bangla */
+.lang-toggle {
+    margin-left: auto;
+    display: flex;
+    border: 1px solid #1e2d3d;
+    border-radius: 16px;
+    overflow: hidden;
+}
+.lang-toggle button {
+    padding: 6px 12px;
+    border: none;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.lang-toggle button:hover { color: #60a5fa; }
+.lang-toggle button.on { background: #1d4ed8; color: #fff; }
+.lang-toggle + .new-chat-btn { margin-left: 0; }
+
+/* Shown on a reply whose voice couldn't be produced (it is never spoken by another voice) */
+.voice-note { padding: 2px 4px 0; font-size: 11.5px; color: #fca5a5; }
+.message.interrupted .msg-bubble { opacity: 0.75; border-style: dashed; }
+.interrupted-note { padding: 2px 4px 0; font-size: 11px; color: #fbbf24; }
+
 /* Typing indicator */
 .typing { display: flex; align-items: center; gap: 5px; padding: 12px 14px; }
 .typing span {
@@ -639,7 +749,12 @@ header h1 {
 <header>
     <div class="status-dot"></div>
     <h1>JAVID</h1>
-    <button id="new-chat-btn" class="new-chat-btn" title="Start a fresh conversation (history is kept)">+ New chat</button>
+    <div class="lang-toggle" role="group" aria-label="Reply language" title="Reply language (or say “speak Bangla” / “speak English”)">
+        <button data-lang="en">EN</button>
+        <button data-lang="bn" lang="bn">বাংলা</button>
+    </div>
+    <button id="new-chat-btn" class="new-chat-btn" title="Start a new chat (your other chats stay in the Chats panel)">+ New chat</button>
+    <button id="chats-toggle" class="chats-toggle" title="Show or hide your chats">☰ Chats</button>
 </header>
 
 <div class="layout">
@@ -656,7 +771,12 @@ header h1 {
             <div id="tasks-list"><p class="empty">No tasks yet.</p></div>
         </div>
         <div class="panel">
+            <div class="panel-title">Skills</div>
+            <div id="skills-list"><p class="empty">No skills installed.</p></div>
+        </div>
+        <div class="panel">
             <div class="panel-title">Memory</div>
+            <div id="memory-pending"></div>
             <div id="memory-list"><p class="empty">Nothing stored yet.</p></div>
         </div>
         <div class="panel" id="models-panel">
@@ -702,6 +822,13 @@ header h1 {
         </div>
 
     </main>
+
+    <!-- ── Chats ── -->
+    <aside class="chats" aria-label="Chats">
+        <button id="chats-new" class="chats-new"><span class="plus">+</span> New chat</button>
+        <input id="chats-search" class="chats-search" type="search" placeholder="Search chats  (⌘K)" autocomplete="off">
+        <div id="chats-list" class="chats-list"></div>
+    </aside>
 </div>
 
 <div id="models-modal" class="modal" hidden>
@@ -754,7 +881,9 @@ async function startRecording() {
     if (isRecording) return;
     stopAll();  // talking over Javid cuts him off
     try {
-        micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        micStream = await navigator.mediaDevices.getUserMedia({
+            audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+        });
     } catch {
         showToast('Microphone blocked — allow access in browser settings.');
         return;
@@ -803,6 +932,18 @@ const VAD = {
     minSpeechSec: 0.35, // shorter blips are ignored
     maxSec: 20,
     cooldownSec: 0.5,   // stay deaf this long after Javid stops, so his speaker tail isn't "heard"
+};
+
+// Barge-in: while Javid speaks (hands-free on), speech louder than his own echo for BARGE.holdMs
+// stops him and starts listening. His echo is learned as a ratio of mic level to playback level.
+const BARGE = {
+    holdMs: 250,        // continuous speech needed: a cough or his own voice must not cut him off
+    graceMs: 300,       // ignore the start of each sentence while echo cancellation settles
+    minRms: 0.02,       // absolute floor
+    noiseMult: 4,       // ...and this many times the background noise
+    echoMargin: 3,      // ...and this many times the expected echo (echoK × playback level)
+    echoK0: 0.25,       // starting echo ratio (cautious); learned down/up while Javid talks
+    gapFrames: 3,       // quiet frames (~21 ms each) allowed inside the 250 ms of speech
 };
 
 let handsFree = false;
@@ -861,6 +1002,7 @@ async function startHandsFree() {
             preRoll: [], frames: [], loudRun: 0, quietSec: 0, voicedSec: 0, capturing: false,
             mode: 'wake',       // fixed when speech starts (the follow-up window may lapse mid-sentence)
             deafUntil: 0,       // ms timestamp; frames before this are ignored
+            barge: { run: 0, gap: 0, echoK: BARGE.echoK0, pre: [] },   // barge-in detector state
         };
         node.port.onmessage = e => onFrame(e.data);
         return true;
@@ -889,9 +1031,97 @@ function resetCapture() {
     hf.capturing = false;
 }
 
+// Playback level of the sentence Javid is saying (for the echo estimate), via captureStream.
+let playTap = null;   // { analyser, source, buf, startedAt }
+function tapPlayback(audioEl) {
+    try { playTap?.source.disconnect(); } catch {}
+    playTap = null;
+    if (!hf || !audioEl.captureStream) return;
+    const attach = () => {
+        try {
+            const analyser = hf.ctx.createAnalyser();
+            analyser.fftSize = 1024;
+            const source = hf.ctx.createMediaStreamSource(audioEl.captureStream());
+            source.connect(analyser);   // only to the analyser, not to the speakers
+            playTap = { analyser, source, buf: new Float32Array(analyser.fftSize), startedAt: Date.now() };
+        } catch (e) { console.warn('[barge-in] no playback tap', e); }
+    };
+    audioEl.addEventListener('playing', attach, { once: true });
+}
+
+function playbackRms() {
+    if (!playTap) return 0;
+    playTap.analyser.getFloatTimeDomainData(playTap.buf);
+    let s = 0;
+    for (const v of playTap.buf) s += v * v;
+    return Math.sqrt(s / playTap.buf.length);
+}
+
+// One detector step. Pure apart from `st`, so it can be exercised with recorded levels.
+function bargeStep(st, micRms, playRms, frameSec, noise, sinceStartMs) {
+    const thr = Math.max(BARGE.minRms, noise * BARGE.noiseMult, st.echoK * playRms * BARGE.echoMargin);
+    const loud = sinceStartMs >= BARGE.graceMs && micRms > thr;
+    if (!loud && playRms > 0.03) {
+        // Echo-only frame with Javid clearly audible (quiet frames are mostly room noise and would
+        // inflate the ratio): track mic/playback slowly, capped so a speech frame can't blow it up.
+        st.echoK = Math.min(1, st.echoK * 0.95 + Math.min(micRms / playRms, 2 * st.echoK + 0.01) * 0.05);
+    }
+    // Speech has short dips between syllables: up to BARGE.gapFrames quiet frames don't break the run.
+    if (loud) { st.run = (st.run || 0) + 1; st.gap = 0; }
+    else if ((st.gap = (st.gap || 0) + 1) > BARGE.gapFrames) st.run = 0;
+    st.last = { micRms, playRms, thr, echoK: st.echoK };
+    return st.run * frameSec * 1000 >= BARGE.holdMs;
+}
+
+const bargeLog = [];   // every trigger this session (also POSTed to /bargein/log)
+function bargeIn(level) {
+    const msgEl = speechMsg;
+    stopAll();                                   // current + queued sentences, and the reply stream
+    if (msgEl && !msgEl.querySelector('.interrupted-note')) {
+        msgEl.classList.add('interrupted');
+        const note = document.createElement('div');
+        note.className = 'interrupted-note';
+        note.textContent = '⏸ interrupted';
+        msgEl.appendChild(note);
+    }
+    const entry = { at: new Date().toISOString(), ...level, outcome: 'pending' };
+    bargeLog.push(entry);
+    console.log('[barge-in] triggered', entry);
+    // Keep listening: the speech that triggered it is the start of Mahadi's next message.
+    hf.capturing = true;
+    hf.mode = 'followup';
+    hf.frames = hf.barge.pre.slice();
+    hf.voicedSec = hf.barge.run * hf.frameSec;
+    hf.quietSec = 0;
+    hf.bargeEntry = entry;
+    hf.deafUntil = 0;
+    hf.barge.run = 0;
+    hf.barge.pre = [];
+    setOrb('listening');
+}
+
+function logBarge(entry, outcome, transcript) {
+    entry.outcome = outcome;
+    entry.transcript = transcript || '';
+    if (outcome === 'false') console.warn('[barge-in] FALSE TRIGGER (nothing was said)', entry);
+    fetch('/bargein/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry) }).catch(() => {});
+}
+
 function onFrame(frame) {
     if (!hf) return;
-    if (isRecording || javidIsBusy()) {           // push-to-talk or Javid talking
+    if (!isRecording && handsFree && playing && currentAudio && !hf.capturing) {   // Javid is speaking
+        let sum = 0;
+        for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
+        const rms = Math.sqrt(sum / frame.length);
+        hf.barge.pre.push(frame);
+        if (hf.barge.pre.length * hf.frameSec > VAD.preRollSec) hf.barge.pre.shift();
+        hf.deafUntil = Date.now() + VAD.cooldownSec * 1000;   // his speaker tail after he stops
+        const since = playTap ? Date.now() - playTap.startedAt : 0;
+        if (bargeStep(hf.barge, rms, playbackRms(), hf.frameSec, hf.noise, since)) bargeIn(hf.barge.last);
+        return;
+    }
+    // (a capture started by barge-in survives the moment the cut-off reply stream takes to close)
+    if (isRecording || (javidIsBusy() && !hf.bargeEntry)) {           // push-to-talk or Javid talking
         if (hf.capturing) { resetCapture(); setOrb(restingState()); }
         hf.preRoll = [];
         hf.deafUntil = Date.now() + VAD.cooldownSec * 1000;
@@ -931,12 +1161,18 @@ function onFrame(frame) {
     const total = hf.frames.length * hf.frameSec;
     if (hf.quietSec >= VAD.endSilenceSec || total >= VAD.maxSec) {
         const frames = hf.frames, voiced = hf.voicedSec, rate = hf.ctx.sampleRate, mode = hf.mode;
+        const barge = hf.bargeEntry;
+        hf.bargeEntry = null;
         resetCapture();
-        if (voiced < VAD.minSpeechSec) { setOrb(restingState()); return; }
+        if (voiced < VAD.minSpeechSec) {
+            if (barge) logBarge(barge, 'false', '');   // too short to be speech
+            setOrb(restingState());
+            return;
+        }
         // The follow-up window is left to expire on its own: a clip the server
         // ignores (cough, side chatter) shouldn't force the user to say "Javid" again.
         setOrb('thinking');
-        submitAudio(encodeWav(frames, rate), 'wav', mode);
+        submitAudio(encodeWav(frames, rate), 'wav', mode, barge);
     }
 }
 
@@ -993,11 +1229,13 @@ setInterval(() => {
 }, 500);
 
 // ── Voice ─────────────────────────────────────────────────────────────────
-// Each sentence is synthesized by the server's voice (/speak, en-US-AndrewNeural)
-// as soon as it arrives, then played in order. That is the ONLY voice: the user
-// made it permanent, so there is no browser-speech fallback. A sentence /speak
-// can't voice (after one more try) is skipped; the text stays on screen.
+// Each sentence is synthesized by the server's voice for the reply language (/speak:
+// en-US-AndrewNeural, or bn-BD-PradeepNeural in Bangla mode) as soon as it arrives, then
+// played in order. Those are the ONLY voices: the user made them permanent, so there is no
+// browser-speech fallback. A sentence /speak can't voice (the server has already tried 3
+// times) is skipped; the text stays on screen with a "voice unavailable" notice under it.
 let voiceNoticeAt = 0;       // last "voice unavailable" toast, so it isn't shown per sentence
+let speechMsg = null;        // the message element sentences being queued now belong to
 let pendingSpeech = '';      // text received but not yet spoken (no sentence end yet)
 let utterancesLeft = 0;      // queued chunks still to finish
 let streamDone = true;
@@ -1011,7 +1249,7 @@ async function fetchAudio(text) {
     const res = await fetch('/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, lang: replyLang }),
         signal: speechCtrl.signal,
     });
     if (!res.ok) throw new Error('tts ' + res.status);
@@ -1020,11 +1258,11 @@ async function fetchAudio(text) {
 
 function speakChunk(text) {
     text = text.trim();
-    if (!text || !/[a-z0-9]/i.test(text)) return;
+    if (!text || !/[a-z0-9\u0980-\u09ff]/i.test(text)) return;   // Bengali letters count as words too
     utterancesLeft++;
     const audio = fetchAudio(text);
     audio.catch(() => {});   // handled in playNext
-    speechQueue.push({ text, audio });
+    speechQueue.push({ text, audio, msg: speechMsg });
     if (!playing) playNext();
 }
 
@@ -1035,17 +1273,9 @@ async function playNext() {
     playing = true;
 
     let url = null;
-    try { url = await item.audio; }
-    catch {
-        if (gen === speechGen) {
-            try { url = await fetchAudio(item.text); } catch {}   // one more try, same voice
-        }
-    }
+    try { url = await item.audio; } catch {}   // the server already made 3 tries
     if (gen !== speechGen) { if (url) URL.revokeObjectURL(url); return; }
-    if (!url && Date.now() - voiceNoticeAt > 60000) {
-        voiceNoticeAt = Date.now();
-        showToast('Voice unavailable right now — the reply is shown as text.');
-    }
+    if (!url) voiceUnavailable(item.msg);
 
     let finished = false;
     const done = () => {
@@ -1063,11 +1293,27 @@ async function playNext() {
 
     if (url) {
         const a = currentAudio = new Audio(url);
+        tapPlayback(a);
         a.onplay = () => setOrb('speaking');
         a.onended = a.onerror = done;
         a.play().catch(done);
     } else {
         done();     // never a substitute voice: skip this sentence
+    }
+}
+
+// Never fail silently: mark the reply that went unspoken, and toast (at most once a minute).
+function voiceUnavailable(msgEl) {
+    if (msgEl && !msgEl.querySelector('.voice-note')) {
+        const note = document.createElement('div');
+        note.className = 'voice-note';
+        note.textContent = '🔇 Voice unavailable — reply shown as text.';
+        msgEl.appendChild(note);
+        scrollChat();
+    }
+    if (Date.now() - voiceNoticeAt > 60000) {
+        voiceNoticeAt = Date.now();
+        showToast('Voice unavailable right now — the reply is shown as text.');
     }
 }
 
@@ -1084,10 +1330,10 @@ function stopSpeech() {
 }
 
 // Speak every complete sentence in the buffer; keep the unfinished tail.
-// A boundary is .!? followed by whitespace, so "27.3" or "3.5" never split.
+// A boundary is .!? (or the Bangla full stop ।) followed by whitespace, so "27.3" never splits.
 function feedSpeech(text, flush = false) {
     pendingSpeech += text;
-    const boundary = /[.!?]+["')\]]*\s+/g;
+    const boundary = /[.!?\u0964]+["')\]]*\s+/g;
     let m, last = 0;
     while ((m = boundary.exec(pendingSpeech))) {
         speakChunk(pendingSpeech.slice(last, boundary.lastIndex));
@@ -1132,10 +1378,11 @@ function stopAll() {
 
 // POST and consume the newline-delimited JSON event stream.
 // quiet: hands-free capture — show nothing until we know it was meant for Javid.
-async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
+async function streamReply(url, init, { onTranscript, onIgnored, quiet = false } = {}) {
     stopAll();
     isBusy = true;
     streamDone = false;
+    speechMsg = null;
     const ctrl = abortCtrl = new AbortController();
     if (!quiet) {
         setOrb('thinking');
@@ -1143,9 +1390,9 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
         showTyping();
     }
 
-    let bubble = null, reply = '', sources = null;
+    let bubble = null, reply = '', sources = null, screen = null, skill = null, proposals = [];
     const ensureBubble = () => {
-        if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); }
+        if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); speechMsg = bubble.closest('.message'); }
         return bubble;
     };
 
@@ -1173,12 +1420,27 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
                 } else if (ev.type === 'ignored') {
                     // overheard speech without the wake word — no UI, but log it for debugging
                     console.log('[hands-free] ignored:', ev.text);
+                    onIgnored?.(ev.text);
                 } else if (ev.type === 'tool') {
                     showToolNote(ev.name);
                 } else if (ev.type === 'say') {
                     speakChunk(ev.text);    // e.g. "Searching…" while a web search runs
                 } else if (ev.type === 'sources') {
                     sources = ev.items;
+                } else if (ev.type === 'skill') {
+                    skill = ev.name;
+                    markSkill(ev.name);
+                } else if (ev.type === 'screen') {
+                    screen = ev.text;
+                } else if (ev.type === 'memory_proposal') {
+                    proposals.push(ev);
+                } else if (ev.type === 'memory') {
+                    document.querySelectorAll(`.mem-card[data-pid="${ev.id}"]`).forEach(c => {
+                        c.classList.add('done');
+                        c.querySelector('.mc-label').textContent = ev.outcome === 'approved' ? '✓ Saved' : '✕ Not saved';
+                    });
+                } else if (ev.type === 'lang') {
+                    setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
                     reply += ev.text;
                     if (handsFree) followupPending = true;
@@ -1188,9 +1450,11 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
                 } else if (ev.type === 'error') {
                     showToast(ev.message);
                 } else if (ev.type === 'done') {
+                    if (ev.lang) setLang(ev.lang);
                     refreshSidebar(ev.tasks, ev.memory);
                     refreshCalendar();  // a reply may have added an event
                     refreshModels();    // tokens were just spent
+                    refreshChats();     // a first message names the chat; the order changes
                 }
             }
         }
@@ -1198,8 +1462,14 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
     } catch (e) {
         if (e.name !== 'AbortError') showToast('Server error — is it running?');
     } finally {
+        markSkill(null);
         if (bubble && !reply.trim()) bubble.closest('.message').remove();
-        else if (bubble && sources?.length) { addSources(bubble.closest('.message'), sources); scrollChat(); }
+        else if (bubble) {
+            if (screen) addScreen(bubble.closest('.message'), screen, skill);
+            for (const p of proposals) bubble.closest('.message').appendChild(memoryCard(p));
+            if (sources?.length) addSources(bubble.closest('.message'), sources);
+            scrollChat();
+        }
         if (ctrl !== abortCtrl) return;  // a newer request has taken over
         hideTyping();
         streamDone = true;
@@ -1209,13 +1479,16 @@ async function streamReply(url, init, { onTranscript, quiet = false } = {}) {
     }
 }
 
-async function submitAudio(blob, ext, mode = 'push') {
+async function submitAudio(blob, ext, mode = 'push', barge = null) {
     const fd = new FormData();
     fd.append('audio', blob, `audio.${ext}`);
     fd.append('mode', mode);
+    if (activeChat) fd.append('session', activeChat);
     await streamReply('/talk', { method: 'POST', body: fd }, {
         quiet: mode !== 'push',
+        onIgnored: text => { if (barge) logBarge(barge, 'false', text); },
         onTranscript: text => {
+            if (barge) logBarge(barge, text ? 'speech' : 'false', text);
             if (!text) return;
             hideTyping();
             addMsg('user', text);
@@ -1230,7 +1503,7 @@ async function submitText(text) {
     await streamReply('/type', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text }),
+        body: JSON.stringify({ text, session: activeChat }),
     });
 }
 
@@ -1239,11 +1512,12 @@ const TOOL_LABELS = {
     web_search: 'Searching the web…', read_page: 'Reading the page…',
     add_task: 'Adding task…', list_tasks: 'Checking tasks…',
     delete_task: 'Deleting task…', complete_task: 'Completing task…',
-    remember: 'Saving to memory…', recall: 'Checking memory…', clear_memory: 'Clearing memory…',
+    propose_memory: 'Proposing a memory…', search_history: 'Searching past chats…',
     get_datetime: 'Checking the time…', morning_briefing: 'Preparing your briefing…',
     list_events: 'Checking your calendar…', add_event: 'Adding event…',
     move_event: 'Moving event…', delete_event: 'Looking up event…',
     find_free_time: 'Finding free time…', list_holidays: 'Checking holidays…',
+    use_skill: 'Loading skill…', news_headlines: 'Checking the headlines…', exchange_rates: 'Fetching exchange rates…',
 };
 
 function showToolNote(name) {
@@ -1263,14 +1537,29 @@ function scrollChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-function makeMsg(role, text, sources) {
+function makeMsg(role, text, sources, screen, skill) {
     const el = document.createElement('div');
     el.className = `message ${role}`;
     el.innerHTML = `
         <span class="msg-who">${role === 'user' ? 'You' : 'Javid'}</span>
         <div class="msg-bubble">${esc(text)}</div>`;
+    if (screen) addScreen(el, screen, skill);
     if (sources?.length) addSources(el, sources);
     return el;
+}
+
+// A skill's full version (on screen only; the bubble above holds what was spoken).
+function addScreen(msgEl, text, skill) {
+    const box = document.createElement('div');
+    box.className = 'msg-screen';
+    box.textContent = text;
+    msgEl.querySelector('.msg-bubble').after(box);
+    if (skill) {
+        const tag = document.createElement('div');
+        tag.className = 'msg-skill';
+        tag.textContent = `⚡ ${skill}`;
+        box.after(tag);
+    }
 }
 
 // Web answers: the links Javid found, under the bubble (they're never spoken).
@@ -1318,13 +1607,16 @@ function historyNodes(entries) {
             continue;
         }
         if (day !== lastDay) { nodes.push(makeDivider(fmtDay(d))); lastDay = day; }
-        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources));
+        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources, e.screen, e.skill));
     }
     return nodes;
 }
 
 async function loadHistory(before = null) {
-    const res = await fetch('/history' + (before === null ? '' : `?before=${before}`));
+    const params = new URLSearchParams();
+    if (activeChat) params.set('session', activeChat);
+    if (before !== null) params.set('before', before);
+    const res = await fetch('/history?' + params);
     const { messages, has_more } = await res.json();
     const chat = document.getElementById('chat');
     document.getElementById('load-earlier')?.remove();
@@ -1347,18 +1639,150 @@ async function loadHistory(before = null) {
     chat.scrollTop = before === null ? chat.scrollHeight : chat.scrollHeight - prevHeight;
 }
 
-async function newChat() {
+// ── Chats ─────────────────────────────────────────────────────────────────
+// Each chat is its own conversation on the server (its own context for Javid); the page sends the
+// open chat's id with every message, so a second tab can't mix them up.
+let activeChat = null;
+let chatsCache = [];
+let chatsQuery = '';
+
+function chatGroup(iso) {
+    const d = new Date(iso), today = new Date();
+    const day = x => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+    const diff = Math.round((day(today) - day(d)) / 86400000);
+    if (diff <= 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    return d.toLocaleDateString([], { month: 'short', day: 'numeric', ...(d.getFullYear() !== today.getFullYear() ? { year: 'numeric' } : {}) });
+}
+
+function renderChats() {
+    const list = document.getElementById('chats-list');
+    if (list.querySelector('.item-edit')) return;      // a rename is being typed: don't wipe it
+    const rows = chatsCache;
+    if (!rows.length) {
+        list.innerHTML = `<p class="chats-empty">${chatsQuery ? 'No chats match.' : 'No chats yet.'}</p>`;
+        return;
+    }
+    const item = c => `<div class="chat-item${c.id === activeChat ? ' active' : ''}" data-id="${esc(c.id)}" title="${esc(c.title || 'New chat')}">
+        <span class="chat-title${c.title ? '' : ' untitled'}">${esc(c.title || 'New chat')}</span>
+        <button class="pin-btn${c.pinned ? ' pinned' : ''}" title="${c.pinned ? 'Unpin' : 'Pin'}">${c.pinned ? '📌' : '⚲'}</button>
+        <button class="del-chat" title="Delete chat">✕</button></div>`;
+    let html = '';
+    const pinned = rows.filter(c => c.pinned);
+    if (pinned.length) html += '<div class="chats-group">Pinned</div>' + pinned.map(item).join('');
+    let last = null;
+    for (const c of rows.filter(c => !c.pinned)) {
+        const g = chatGroup(c.updated);
+        if (g !== last) { html += `<div class="chats-group">${esc(g)}</div>`; last = g; }
+        html += item(c);
+    }
+    list.innerHTML = html;
+}
+
+async function refreshChats() {
+    try {
+        const d = await (await fetch('/sessions' + (chatsQuery ? `?q=${encodeURIComponent(chatsQuery)}` : ''))).json();
+        if (!activeChat) activeChat = d.active;
+        chatsCache = d.sessions;
+        renderChats();
+    } catch { /* server not ready */ }
+}
+
+function clearChatView() {
+    document.getElementById('chat').innerHTML = '';
+    oldestIndex = null;
+}
+
+async function openChat(id) {
+    if (id === activeChat) return;
     stopAll();
     try {
-        await fetch('/reset', { method: 'POST' });
+        const res = await fetch(`/sessions/${encodeURIComponent(id)}/open`, { method: 'POST' });
+        if (!res.ok) throw new Error(res.status);
+    } catch { showToast('Could not open that chat.'); refreshChats(); return; }
+    activeChat = id;
+    clearChatView();
+    renderChats();
+    await loadHistory();
+}
+
+async function newChat() {
+    stopAll();
+    let chat;
+    try {
+        const res = await fetch('/sessions', { method: 'POST' });
+        if (!res.ok) throw new Error(res.status);
+        chat = await res.json();
     } catch {
         showToast('Server error — is it running?');
         return;
     }
-    const chat = document.getElementById('chat');
-    chat.appendChild(makeDivider(`New conversation · ${fmtTime(new Date())}`));
-    chat.scrollTop = chat.scrollHeight;
+    activeChat = chat.id;
+    clearChatView();
+    chatsQuery = '';
+    document.getElementById('chats-search').value = '';
+    await refreshChats();
     document.getElementById('text-input').focus();
+}
+
+document.getElementById('chats-new').addEventListener('click', newChat);
+document.getElementById('chats-list').addEventListener('click', async e => {
+    const row = e.target.closest('.chat-item');
+    if (!row) return;
+    const id = row.dataset.id;
+    if (e.target.closest('.pin-btn')) {
+        const c = chatsCache.find(x => x.id === id);
+        await chatsApi('PATCH', `/sessions/${encodeURIComponent(id)}`, { pinned: !c?.pinned });
+        refreshChats();
+    } else if (e.target.closest('.del-chat')) {
+        armDelete(e.target.closest('.del-chat'), async () => {
+            const r = await chatsApi('DELETE', `/sessions/${encodeURIComponent(id)}`);
+            if (!r) return;
+            if (id === activeChat) { activeChat = r.active; clearChatView(); await loadHistory(); }
+            refreshChats();
+        });
+    } else if (!row.querySelector('.item-edit')) {     // not while renaming it
+        openChat(id);
+    }
+});
+// Double-click a title to rename the chat.
+document.getElementById('chats-list').addEventListener('dblclick', e => {
+    const title = e.target.closest('.chat-title');
+    if (!title) return;
+    const id = title.closest('.chat-item').dataset.id;
+    if (title.classList.contains('untitled')) title.textContent = '';
+    startEdit(title, async text => {
+        await chatsApi('PATCH', `/sessions/${encodeURIComponent(id)}`, { title: text });
+        refreshChats();
+    });
+});
+let chatsSearchTimer = null;
+document.getElementById('chats-search').addEventListener('input', e => {
+    clearTimeout(chatsSearchTimer);
+    chatsSearchTimer = setTimeout(() => { chatsQuery = e.target.value.trim(); refreshChats(); }, 200);
+});
+document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setChatsVisible(true);
+        document.getElementById('chats-search').focus();
+    }
+});
+function setChatsVisible(on) {
+    document.querySelector('.layout').classList.toggle('chats-hidden', !on);
+    try { localStorage.setItem('javid-chats-hidden', on ? '0' : '1'); } catch {}
+}
+document.getElementById('chats-toggle').addEventListener('click', () =>
+    setChatsVisible(document.querySelector('.layout').classList.contains('chats-hidden')));
+try { if (localStorage.getItem('javid-chats-hidden') === '1') setChatsVisible(false); } catch {}
+
+async function chatsApi(method, url, body) {
+    try {
+        const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {},
+                                       body: body ? JSON.stringify(body) : undefined });
+        if (!res.ok) throw new Error(res.status);
+        return await res.json();
+    } catch { showToast('Could not update the chat.'); return null; }
 }
 document.getElementById('new-chat-btn').addEventListener('click', newChat);
 
@@ -1440,16 +1864,81 @@ function renderTasks(tasks) {
         : '<p class="empty">No tasks yet.</p>';
 }
 
+// ── Skills ────────────────────────────────────────────────────────────────
+function renderSkills(list) {
+    const el = document.getElementById('skills-list');
+    el.innerHTML = list.length
+        ? list.map(s => `<div class="skill-item" data-skill="${esc(s.name)}" title="${esc(s.description)}">
+                <div class="skill-name">${esc(s.name)}</div><div class="skill-desc">${esc(s.description)}</div></div>`).join('')
+        : '<p class="empty">No skills installed.</p>';
+}
+function markSkill(name) {
+    document.querySelectorAll('.skill-item').forEach(r => r.classList.toggle('running', r.dataset.skill === name));
+}
+fetch('/skills').then(r => r.json()).then(renderSkills).catch(() => {});
+
+// Memory v2: memory/USER.md (about Mahadi) and memory/MEMORY.md (how he likes things done).
+const MEM_TITLES = { user: 'About you · USER.md', memory: 'How you like things · MEMORY.md' };
+const MEM_FILE_LABEL = { user: 'About you (USER.md)', memory: 'How you like things (MEMORY.md)' };
 function renderMemory(memory) {
+    if (Array.isArray(memory)) memory = { user: memory, memory: [], pending: [] };   // old server
     const ml = document.getElementById('memory-list');
-    ml.innerHTML = memory.length
-        ? memory.map((f, i) => `
-            <div class="memory-item" data-i="${i}">
+    const sections = Object.keys(MEM_TITLES).filter(f => memory[f]?.length);
+    ml.innerHTML = sections.length
+        ? sections.map(f => `<div class="mem-section">${MEM_TITLES[f]}</div>` + memory[f].map((t, i) => `
+            <div class="memory-item" data-file="${f}" data-i="${i}">
                 <span class="mem-dot">•</span>
-                <span class="item-text" title="Click to edit">${esc(f)}</span>
+                <span class="item-text" title="Click to edit">${esc(t)}</span>
                 <button class="del-btn" title="Delete">✕</button>
-            </div>`).join('')
+            </div>`).join('')).join('')
         : '<p class="empty">Nothing stored yet.</p>';
+    const pend = document.getElementById('memory-pending');
+    pend.innerHTML = '';
+    for (const p of memory.pending || []) pend.appendChild(memoryCard(p));
+}
+
+// An approve / edit / reject card for a proposed memory line (in the chat and in the sidebar).
+function memoryCard(p) {
+    const card = document.createElement('div');
+    card.className = 'mem-card';
+    card.dataset.pid = p.id;
+    card.innerHTML = `<div class="mc-label">💾 Save to ${MEM_FILE_LABEL[p.file] || p.file}? Not saved until you approve.</div>
+        <div class="mc-text">${esc(p.text)}</div>
+        <div class="mc-actions"><button class="approve">Approve</button><button class="edit">Edit</button><button class="reject">Reject</button></div>`;
+    const text = card.querySelector('.mc-text');
+    card.querySelector('.edit').addEventListener('click', () => {
+        text.contentEditable = 'true'; text.focus();
+        card.querySelector('.approve').textContent = 'Save edited';
+    });
+    const settle = (label) => document.querySelectorAll(`.mem-card[data-pid="${p.id}"]`).forEach(c => {
+        c.classList.add('done'); c.querySelector('.mc-label').textContent = label;
+        c.querySelector('.mc-text').contentEditable = 'false';
+    });
+    card.querySelector('.approve').addEventListener('click', async () => {
+        const edited = text.contentEditable === 'true' ? text.textContent.trim() : null;
+        const memory = await memApi('POST', `/memory/proposals/${p.id}/approve`, { text: edited });
+        if (memory) { settle('✓ Saved'); renderMemory(memory); }
+    });
+    card.querySelector('.reject').addEventListener('click', async () => {
+        const memory = await memApi('POST', `/memory/proposals/${p.id}/reject`);
+        if (memory) { settle('✕ Not saved'); renderMemory(memory); }
+    });
+    return card;
+}
+
+// Like api(), but shows the server's reason (e.g. "Not saved: it looks like a password…").
+async function memApi(method, url, body) {
+    try {
+        const res = await fetch(url, { method, headers: body ? { 'Content-Type': 'application/json' } : {},
+                                       body: body ? JSON.stringify(body) : undefined });
+        if (!res.ok) {
+            const detail = (await res.json().catch(() => ({}))).detail;
+            showToast(detail || 'Could not save.');
+            fetch('/memory').then(r => r.json()).then(renderMemory).catch(() => {});
+            return null;
+        }
+        return await res.json();
+    } catch { showToast('Server error — is it running?'); return null; }
 }
 
 async function api(method, url, body) {
@@ -1470,7 +1959,7 @@ async function api(method, url, body) {
 }
 
 const taskUrl = row => `/tasks/${row.dataset.n}`;
-const factUrl = row => `/memory/${row.dataset.i}`;
+const factUrl = row => `/memory/${row.dataset.file}/${row.dataset.i}`;
 
 function startEdit(span, save) {
     const original = span.textContent;
@@ -1536,12 +2025,12 @@ document.getElementById('memory-list').addEventListener('click', e => {
     if (!row) return;
     if (e.target.closest('.del-btn')) {
         armDelete(e.target, async () => {
-            const memory = await api('DELETE', factUrl(row));
+            const memory = await memApi('DELETE', factUrl(row));
             if (memory) renderMemory(memory);
         });
     } else if (e.target.classList.contains('item-text')) {
         startEdit(e.target, async text => {
-            const memory = await api('PATCH', factUrl(row), { text });
+            const memory = await memApi('PATCH', factUrl(row), { text });
             if (memory) renderMemory(memory);
         });
     }
@@ -1642,7 +2131,7 @@ function liveModel(m) {
     if (m.state === 'cooling' && left <= 0) return { ...m, state: 'ready', retry_in_s: 0 };
     return { ...m, retry_in_s: Math.max(0, left) };
 }
-const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', cooling: 'Rate-limited', low: 'Low on daily tokens', missing: 'Not on this key', nokey: 'No API key' };
+const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', cooling: 'Rate-limited', low: 'Low on daily tokens', reserved: 'Reserved for web & reasoning', missing: 'Not on this key', nokey: 'No API key' };
 
 function renderModelsPanel() {
     const sum = document.getElementById('models-summary'), list = document.getElementById('models-list');
@@ -1657,7 +2146,7 @@ function renderModelsPanel() {
         <div class="model-row" title="${esc(m.id)} — ${STATE_TEXT[m.state]}">
             <span class="m-dot ${m.state}"></span>
             <span class="m-name">${esc(m.name)}</span>
-            <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : m.state === 'nokey' ? 'no key' : fmtK(m.tokens_24h.total) + ' tok'}</span>
+            <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : m.state === 'reserved' ? '🛡 ' + fmtK(m.remaining_24h) + ' left' : m.state === 'nokey' ? 'no key' : fmtK(m.tokens_24h.total) + ' tok'}</span>
         </div>`).join('') + webRow(llmStatus.web);
 }
 
@@ -1715,6 +2204,7 @@ function renderModelsModal() {
         const stateLine = m.state === 'cooling'
             ? `Rate-limited · back in <b>${fmtWait(m.retry_in_s)}</b>`
             : m.state === 'low' ? `Almost out of daily tokens · about <b>${fmtN(m.remaining_24h)}</b> left, a reply needs ~${fmtN(llmStatus.min_request_tokens)}`
+            : m.state === 'reserved' ? `Under ${Math.round(m.reserve_below * 100)}% of its daily tokens (about <b>${fmtN(m.remaining_24h)}</b> left, refilling ~${fmtN(Math.round(m.tpd_limit / 24))}/hour) · kept for web and reasoning turns while other models can answer`
             : m.state === 'nokey' ? `No ${esc(m.provider_label)} API key yet — add it under <b>API keys</b> below`
             : m.state === 'missing' ? 'This model isn’t available to your API key' : STATE_TEXT[m.state];
         const role = m.role === 'primary' ? 'Primary' : `Fallback ${m.order}`;
@@ -1923,29 +2413,57 @@ setInterval(() => { renderModelsPanel(); if (!modelsModal.hidden) renderModelsMo
 setInterval(() => refreshModels(), 10000);
 refreshModels();
 
+// ── Reply language: English / Bangla ──────────────────────────────────────
+// The server owns the setting (language.json), so it survives reloads and restarts and applies to
+// voice commands too; localStorage only paints the toggle right before /language answers.
+let replyLang = 'en';
+function setLang(l) {
+    if (l !== 'en' && l !== 'bn') return;
+    replyLang = l;
+    document.querySelectorAll('.lang-toggle button').forEach(b => b.classList.toggle('on', b.dataset.lang === l));
+    document.documentElement.lang = l;
+    textInput.placeholder = l === 'bn' ? 'অথবা লিখুন…' : 'Or type a message…';
+    try { localStorage.setItem('javid-lang', l); } catch {}
+}
+try { setLang(localStorage.getItem('javid-lang') || 'en'); } catch { setLang('en'); }
+fetch('/language').then(r => r.json()).then(d => setLang(d.lang)).catch(() => {});
+document.querySelectorAll('.lang-toggle button').forEach(b => b.addEventListener('click', async () => {
+    const l = b.dataset.lang;
+    if (l === replyLang) return;
+    try {
+        const res = await fetch('/language', {
+            method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lang: l }),
+        });
+        if (!res.ok) throw new Error(res.status);
+        setLang((await res.json()).lang);
+    } catch { showToast('Could not change the language — is the server running?'); }
+}));
+
 // ── Init: load sidebar on page open ───────────────────────────────────────
 (async () => {
     try {
         const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
         refreshSidebar(await tr.json(), await mr.json());
         refreshCalendar();
+        await refreshChats();
         await loadHistory();
         const { text } = await (await fetch('/greeting')).json();
-        addMsg('javid', text);
-        greet(text);
+        const el = addMsg('javid', text);
+        greet(text, el?.closest('.message'));
     } catch { /* server not ready */ }
 })();
 
 // Browsers block speech until the user interacts with the page,
 // so if the greeting can't play now, play it on the first click/key.
-function greet(text) {
+function greet(text, msgEl) {
     streamDone = true;
-    if (navigator.userActivation?.hasBeenActive) { speakChunk(text); return; }
+    const say = () => { speechMsg = msgEl; speakChunk(text); };
+    if (navigator.userActivation?.hasBeenActive) { say(); return; }
     const once = e => {
         removeEventListener('pointerdown', once, true);
         removeEventListener('keydown', once, true);
         if (e.code === 'Space' || e.target.closest?.('#talk-btn') || isBusy) return;  // user is about to talk
-        speakChunk(text);
+        say();
     };
     addEventListener('pointerdown', once, true);
     addEventListener('keydown', once, true);

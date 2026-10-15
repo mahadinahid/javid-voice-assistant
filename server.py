@@ -13,20 +13,24 @@ from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 import calendar_tools
+import memory_store
+import skills
 import web_tools
 from javid import (
-    _read_lines, add_task, delete_fact, delete_task, edit_fact, edit_task,
-    clear_provider_key, is_noise, llm_status, load_memory, ping_models,
-    read_history, reset_conversation, set_chain, set_provider_key, set_task_done,
-    startup_greeting, strip_wake_word, synthesize, think_stream, transcribe,
+    _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
+    LANGUAGES, clear_provider_key, get_language, is_noise, llm_status, phrase,
+    ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
+    _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
+    set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn,
 )
 
 
 # ---------- startup ----------
 def _warm_tts():
     try:
-        synthesize("Yes?")
-        synthesize(web_tools.SEARCHING)
+        for lang in LANGUAGES:
+            synthesize(phrase("ack", lang), lang)
+            synthesize(phrase("searching", lang), lang)
     except Exception as e:
         print(f"[tts] warm-up failed: {str(e)[:80]}")
 
@@ -41,6 +45,7 @@ def _check_models():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _restore_context()      # reopen the chat that was open (and split an old single log into chats, once)
     print("\nJavid is up. Open http://localhost:8000\n")
     # The first TTS call after startup is slow (cold connection); warm it and the
     # cache with the hands-free acknowledgement so the first "Hey Javid" is quick.
@@ -66,11 +71,33 @@ def _tasks_json():
 
 
 def _memory_json():
-    return load_memory()["facts"]
+    """Both memory files plus proposals waiting for approval (the sidebar shows all three)."""
+    return {**memory_store.all_entries(),
+            "pending": [{k: p[k] for k in ("id", "text", "file")} for p in memory_store.pending()]}
 
 
 class TypeBody(BaseModel):
     text: str
+
+
+class ChatBody(BaseModel):
+    text: str
+    session: str | None = None    # the chat this message belongs to (the page's open chat)
+
+
+def _use_session(sid: str | None) -> None:
+    """Messages go to the chat the page has open, even if another tab switched the server's."""
+    if sid and sid != current_session() and not open_session(sid):
+        raise HTTPException(404, "No such chat")
+
+
+class SpeakBody(BaseModel):
+    text: str
+    lang: str | None = None     # the reply's language; None = the current setting
+
+
+class LanguageBody(BaseModel):
+    lang: str
 
 
 # ---------- routes ----------
@@ -93,12 +120,22 @@ def _reply_stream(user_text: str):
                 yield _event(type="say", text=value)
             elif kind == "sources":
                 yield _event(type="sources", items=value)
+            elif kind == "lang":
+                yield _event(type="lang", lang=value)
+            elif kind == "skill":
+                yield _event(type="skill", name=value)
+            elif kind == "screen":
+                yield _event(type="screen", text=value)
+            elif kind == "memory_proposal":
+                yield _event(type="memory_proposal", id=value["id"], text=value["text"], file=value["file"])
+            elif kind == "memory":
+                yield _event(type="memory", outcome=value["outcome"], id=value["id"], text=value["text"])
             else:
                 yield _event(type="delta", text=value)
     except Exception as e:
         print(f"[error] {e!r}")
         yield _event(type="error", message="Something went wrong on my end.")
-    yield _event(type="done", tasks=_tasks_json(), memory=_memory_json())
+    yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
 
 
 def _ndjson(gen) -> StreamingResponse:
@@ -111,12 +148,13 @@ def greeting():
 
 
 @app.post("/talk")
-def talk(audio: UploadFile = File(...), mode: str = Form("push")):
+def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str | None = Form(None)):
     """
     mode = "push"     push-to-talk: always answer
            "wake"     hands-free, idle: only answer if it starts with "Javid"
            "followup" hands-free, right after Javid spoke: no wake word needed
     """
+    _use_session(session)
     audio_bytes = audio.file.read()
 
     content_type = audio.content_type or "audio/webm"
@@ -125,7 +163,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push")):
         ext = "webm"
 
     # Hands-free clips are often just noise; the name hint would make Whisper say "Javid" for them.
-    transcript = transcribe(audio_bytes, f"audio.{ext}", bias_name=(mode == "push"))
+    transcript = transcribe_turn(audio_bytes, f"audio.{ext}", bias_name=(mode == "push"))
     request = transcript
 
     def ignored():
@@ -142,16 +180,28 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push")):
             # Just "Hey Javid" — acknowledge and open a follow-up window.
             def ack():
                 yield _event(type="transcript", text=transcript)
-                yield _event(type="delta", text="Yes?")
-                yield _event(type="done", tasks=None, memory=None)
+                yield _event(type="delta", text=phrase("ack"))
+                yield _event(type="done", tasks=None, memory=None, lang=get_language())
             return _ndjson(ack())
+
+    if mode == "push" and strip_wake_word(request) == "":
+        # Just "Javid": acknowledge, as in hands-free.
+        def ack_push():
+            yield _event(type="transcript", text=transcript)
+            yield _event(type="delta", text=phrase("ack"))
+            yield _event(type="done", tasks=None, memory=None, lang=get_language())
+        return _ndjson(ack_push())
 
     def events():
         yield _event(type="transcript", text=transcript)
-        too_short = len(request.split()) < 2 if mode == "push" else not request
+        # One word is usually a clipped recording, but a plain yes/no (memory approval) or a
+        # greeting ("Hello") is a real message.
+        answer = (memory_store._YES.match(request) or memory_store._NO.match(request)
+                  or _SMALL_TALK.match(request.strip()))
+        too_short = (len(request.split()) < 2 and not answer) if mode == "push" else not request
         if too_short:
-            yield _event(type="delta", text="I didn't catch that clearly. Try again.")
-            yield _event(type="done", tasks=_tasks_json(), memory=_memory_json())
+            yield _event(type="delta", text=phrase("not_caught"))
+            yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
             return
         yield from _reply_stream(request)
 
@@ -159,26 +209,66 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push")):
 
 
 @app.post("/type")
-def type_message(body: TypeBody):
+def type_message(body: ChatBody):
+    _use_session(body.session)
     return _ndjson(_reply_stream(body.text))
 
 
 @app.get("/history")
-def history(before: int | None = None, limit: int = 60):
-    """Chat log, newest last. Page back with ?before=<index of oldest shown>."""
-    entries = read_history()
+def history(session: str | None = None, before: int | None = None, limit: int = 60):
+    """One chat's messages (default: the open one), newest last. Page back with ?before=<index of oldest shown>."""
+    entries = read_history(session)
     end = len(entries) if before is None else max(0, min(before, len(entries)))
     start = max(0, end - limit)
     return {
         "messages": [{"i": i, **entries[i]} for i in range(start, end)],
         "has_more": start > 0,
+        "session": session or current_session(),
     }
 
 
 @app.post("/reset")
 def reset():
     reset_conversation()
-    return {"ok": True}
+    return {"ok": True, "session": current_session()}
+
+
+# ---------- chat sessions (the Chats panel) ----------
+class SessionPatch(BaseModel):
+    title: str | None = None
+    pinned: bool | None = None
+
+
+@app.get("/sessions")
+def sessions(q: str = ""):
+    return {"active": current_session(), "sessions": list_sessions(q)}
+
+
+@app.post("/sessions")
+def sessions_new():
+    return new_session()
+
+
+@app.post("/sessions/{sid}/open")
+def sessions_open(sid: str):
+    _ok_or_404(open_session(sid))
+    return {"ok": True, "session": sid}
+
+
+@app.patch("/sessions/{sid}")
+def sessions_update(sid: str, body: SessionPatch, request: Request):
+    _local_page_only(request)
+    meta = update_session(sid, body.title, body.pinned)
+    _ok_or_404(meta is not None)
+    return meta
+
+
+@app.delete("/sessions/{sid}")
+def sessions_delete(sid: str, request: Request):
+    """Deletes the chat and its messages for good (asked twice in the page)."""
+    _local_page_only(request)
+    _ok_or_404(delete_session(sid))
+    return {"ok": True, "active": current_session()}
 
 
 @app.get("/calendar")
@@ -198,14 +288,59 @@ def calendar_connect():
 
 
 @app.post("/speak")
-def speak_text(body: TypeBody):
-    """Neural voice for one sentence. 503 tells the browser to use its own voice."""
+def speak_text(body: SpeakBody):
+    """The language's locked voice for one sentence. 503 = edge-tts failed every try: the page
+    shows the text with a "voice unavailable" notice (there is no other voice)."""
     try:
-        audio, media_type = synthesize(body.text)
+        audio, media_type = synthesize(body.text, body.lang)
     except Exception as e:
         print(f"[tts] unavailable: {str(e)[:120]}")
         raise HTTPException(503, "TTS unavailable")
     return Response(audio, media_type=media_type)
+
+
+# ---------- barge-in log (index.html posts every trigger and whether speech followed) ----------
+BARGEIN_LOG = "bargein_log.jsonl"
+
+
+@app.post("/bargein/log")
+async def bargein_log(request: Request):
+    """False triggers (Javid cut himself off on his own echo or a cough) are what to look for here."""
+    body = await request.body()
+    if len(body) > 4000:
+        raise HTTPException(413, "Too large")
+    try:
+        entry = json.loads(body)
+    except ValueError:
+        raise HTTPException(400, "Not JSON")
+    with open(BARGEIN_LOG, "a") as f:
+        f.write(json.dumps({k: entry.get(k) for k in ("at", "outcome", "transcript", "micRms", "playRms", "thr", "echoK")},
+                           ensure_ascii=False) + "\n")
+    if entry.get("outcome") == "false":
+        print(f"[barge-in] false trigger: mic {entry.get('micRms')}, playback {entry.get('playRms')}, threshold {entry.get('thr')}")
+    return {"ok": True}
+
+
+# ---------- skills (sidebar list) ----------
+@app.get("/skills")
+def skills_list():
+    return skills.all_skills()
+
+
+# ---------- reply language (English / Bangla) ----------
+@app.get("/language")
+def language():
+    return {"lang": get_language()}
+
+
+@app.put("/language")
+def language_set(body: LanguageBody, request: Request):
+    _local_page_only(request)
+    try:
+        set_language(body.lang)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"lang": get_language()}
 
 
 # ---------- model chain status (Models panel) ----------
@@ -311,16 +446,52 @@ def memory():
     return _memory_json()
 
 
-@app.patch("/memory/{index}")
-def update_fact(index: int, body: TypeBody):
-    if body.text.strip():
-        _ok_or_404(edit_fact(index, body.text.strip()))
+def _memory_error(e: Exception):
+    raise HTTPException(400, str(e))
+
+
+@app.patch("/memory/{file}/{index}")
+def update_memory(file: str, index: int, body: TypeBody, request: Request):
+    """Edit a line by hand. Secrets are refused here too (400)."""
+    _local_page_only(request)   # only this page may change memory (no cross-site approvals)
+    try:
+        if body.text.strip():
+            _ok_or_404(memory_store.edit(file, index, body.text))
+    except ValueError as e:
+        _memory_error(e)
     return _memory_json()
 
 
-@app.delete("/memory/{index}")
-def remove_fact(index: int):
-    _ok_or_404(delete_fact(index))
+@app.delete("/memory/{file}/{index}")
+def remove_memory(file: str, index: int, request: Request):
+    _local_page_only(request)   # only this page may change memory (no cross-site approvals)
+    try:
+        _ok_or_404(memory_store.delete(file, index))
+    except ValueError as e:
+        _memory_error(e)
+    return _memory_json()
+
+
+class ApproveBody(BaseModel):
+    text: str | None = None     # edited text; None = as proposed
+
+
+@app.post("/memory/proposals/{pid}/approve")
+def approve_memory(pid: str, body: ApproveBody, request: Request):
+    _local_page_only(request)   # only this page may change memory (no cross-site approvals)
+    try:
+        memory_store.approve(pid, body.text)
+    except KeyError:
+        raise HTTPException(404, "No such proposal")
+    except ValueError as e:
+        _memory_error(e)
+    return _memory_json()
+
+
+@app.post("/memory/proposals/{pid}/reject")
+def reject_memory(pid: str, request: Request):
+    _local_page_only(request)   # only this page may change memory (no cross-site approvals)
+    _ok_or_404(memory_store.reject(pid))
     return _memory_json()
 
 

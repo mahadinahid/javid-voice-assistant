@@ -1,10 +1,14 @@
 """
-Regression check for Javid's agent behaviour: 28 prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 43 prompts through the real LLM + tool loop.
 
     python regression.py              # run everything once
     python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
     python regression.py -k delete    # only cases whose name contains "delete"
     python regression.py -v           # print every reply, not just failures
+    python regression.py --use-120b   # on gpt-oss-120b instead of the default gpt-oss-20b
+
+Runs on gpt-oss-20b alone by default (no fallback: a model change mid-run would mix results, and the live
+chain's 120b is the user's backup, so it is only used with --use-120b).
 
 Safe to run: tasks, memory and chat history go to a temp dir, the Google Calendar is a
 fake in-memory service, and Tavily is a fake with fixed results (no credits spent, no key
@@ -23,12 +27,16 @@ import signal
 import sys
 import time
 import tempfile
+import traceback
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import calendar_tools as ct  # noqa: E402
 import javid  # noqa: E402
+import memory_store  # noqa: E402
+import rates  # noqa: E402
+import skills  # noqa: E402
 import web_tools  # noqa: E402
 from groq import Groq  # noqa: E402
 
@@ -36,7 +44,7 @@ from groq import Groq  # noqa: E402
 javid.client = Groq(timeout=30.0, max_retries=2)
 RUN_TIMEOUT_SEC = 150      # hard cap for one case run
 INFRA_RETRIES = 2          # re-runs when the API itself failed (not the assistant)
-API_FAILED_REPLY = "I couldn't complete that request"   # think_stream's canned reply on APIError
+API_FAILED_REPLY = tuple(javid.PHRASES["api_failed"].values())   # think_stream's canned reply on APIError
 
 
 class InfraError(Exception):
@@ -71,6 +79,22 @@ def _counted_stream_completion(tool_calls, *args):
 
 javid._stream_completion = _counted_stream_completion
 
+RUN_TOKENS = {"requests": 0, "prompt": 0, "cached": 0, "completion": 0, "total": 0}   # every request, pings too
+_orig_record_usage = javid._record_usage
+
+
+def _tallied_record_usage(model, usage):
+    _orig_record_usage(model, usage)
+    RUN_TOKENS["requests"] += 1
+    RUN_TOKENS["prompt"] += usage.prompt_tokens or 0
+    RUN_TOKENS["cached"] += javid._cached_tokens(usage)
+    RUN_TOKENS["completion"] += usage.completion_tokens or 0
+    RUN_TOKENS["total"] += usage.total_tokens or 0
+
+
+javid._record_usage = _tallied_record_usage
+DEFAULT_MODEL, BIG_MODEL = "openai/gpt-oss-20b", "openai/gpt-oss-120b"
+
 
 def preflight() -> str | None:
     """Tiny pings down the model chain; returns an error message only if no model answers."""
@@ -82,9 +106,14 @@ def preflight() -> str | None:
 # ---------- isolation: nothing below may touch the real files or calendar ----------
 SCRATCH = tempfile.mkdtemp(prefix="javid-regression-")
 javid.TASKS_FILE = os.path.join(SCRATCH, "tasks.txt")
-javid.MEMORY_FILE = os.path.join(SCRATCH, "memory.json")
+memory_store.MEMORY_DIR = os.path.join(SCRATCH, "memory")
+memory_store.LEGACY_FILE = os.path.join(SCRATCH, "memory.json")
+memory_store.INDEX_FILE = os.path.join(SCRATCH, "chat_index.db")
 javid.HISTORY_FILE = os.path.join(SCRATCH, "chat_log.jsonl")
+memory_store.HISTORY_FILE = javid.HISTORY_FILE   # search_history indexes the scratch log, never the real one
+javid.SESSIONS_FILE = os.path.join(SCRATCH, "sessions.json")      # chats made by the suite stay in scratch
 javid.LLM_TURNS_FILE = os.path.join(SCRATCH, "llm_turns.jsonl")   # the Models panel averages real turns only
+javid.LANGUAGE_FILE = os.path.join(SCRATCH, "language.json")      # never flips the real reply language
 web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
 TURN_TOKENS: list[tuple[str, dict]] = []   # (case name, javid.last_turn_usage) for every turn run
 
@@ -213,6 +242,27 @@ WEB_FIXTURES = [
         hit("https://en.wikipedia.org/wiki/Canberra", "Canberra - Wikipedia", "Canberra is the capital city of Australia."),
         hit("https://www.britannica.com/place/Canberra", "Canberra | Britannica", "Canberra, the capital of Australia, located in the ACT.")]),
 ]
+WEB_FIXTURES += [   # morning-brief headlines (news_headlines searches "<topic> news")
+    (r"^bangladesh news$", [hit("https://www.thedailystar.net/padma-rail-freight", "Padma rail link opens to freight trains",
+                                "Freight trains began running on the Padma rail link on Tuesday, Bangladesh Railway said.", TODAY)]),
+    (r"^china news$", [hit("https://www.reuters.com/world/china/exports-september", "China's exports beat forecasts in September",
+                           "China's exports grew faster than expected in September, customs data showed.", TODAY)]),
+    (r"^ai news$", [hit("https://www.bbc.com/news/technology-ai-rules", "EU agrees new rules for AI chatbots",
+                        "European lawmakers agreed new transparency rules for AI chatbots on Monday.", YESTERDAY)]),
+]
+FAKE_ECB = {"amount": 1.0, "base": "USD", "date": YESTERDAY.isoformat(), "rates": {"CNY": 6.6938, "CZK": 21.78}}
+FAKE_AGG = {"result": "success", "time_last_update_unix": int(datetime.combine(TODAY, datetime.min.time()).timestamp()),
+            "rates": {"USD": 1, "BDT": 123.18, "CNY": 6.705, "CZK": 21.76}}
+
+
+def fake_rates(up: bool):
+    def get(url):
+        if not up:
+            raise OSError("network down (fake)")
+        return copy.deepcopy(FAKE_ECB if "frankfurter" in url else FAKE_AGG)
+    return get
+
+
 WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 percent, down from 8.91 percent in August."}
 
 
@@ -249,6 +299,19 @@ EVENTS = [
     timed("hike", "Hiking trip", SATURDAY, 8, mins=120),
 ]
 HOLIDAYS = [allday("h1", HOLIDAY_NAME, HOLIDAY_DATE)]
+# A Durga Puja-like run, Tuesday to Thursday, with the Sunday before it a working day: the shape of
+# the 2026-10-15 chat where Javid said the holidays started on that Sunday.
+PUJA_TUE = next_weekday(1) if (next_weekday(1) - TODAY).days >= 3 else next_weekday(1) + timedelta(days=7)
+PUJA_MON, PUJA_WED, PUJA_THU = (PUJA_TUE + timedelta(days=n) for n in (-1, 1, 2))
+PUJA_SUN = PUJA_TUE - timedelta(days=2)
+PUJA_HOLIDAYS = [allday("p1", "Mahanabami", PUJA_TUE), allday("p2", "Durga Puja", PUJA_WED),
+                 allday("p3", "Durga Puja Holiday", PUJA_THU)]
+WEB_FIXTURES += [   # a visa centre's own notice, which closes one day more than the national list
+    (r"ivac|visa", [hit("https://www.ivacbd.com/notice/durga-puja", "IVAC holiday notice: Durga Puja",
+                        f"All IVACs in Bangladesh, including Jamuna Future Park, will remain closed on "
+                        f"{PUJA_MON:%A %d %B}, {PUJA_TUE:%A %d %B}, {PUJA_WED:%A %d %B} and {PUJA_THU:%A %d %B} "
+                        f"for Durga Puja.", YESTERDAY)]),
+]
 
 
 # ---------- case plumbing ----------
@@ -258,12 +321,16 @@ class Result:
     replies: list          # Javid's reply per turn
     tools: list            # [(turn_index, name, args)]
     tasks: list            # lines of tasks.txt after the run
-    facts: list            # memory facts after the run
+    facts: list            # memory lines (USER.md + MEMORY.md) after the run
     cal_log: list          # fake-calendar writes after the run
     cal_log_by_turn: list  # cumulative len(cal_log) after each turn
     sources: list = field(default_factory=list)  # links shown on screen (last turn that had any)
     said: list = field(default_factory=list)     # "say" events (spoken, not part of the reply)
     web: object = None                           # the FakeTavily used
+    screen: str = ""                             # a skill's screen-only part (last turn that had one)
+    skills_run: list = field(default_factory=list)  # "skill" events
+    facts_by_turn: list = field(default_factory=list)  # memory lines after each turn
+    langs: list = field(default_factory=list)    # the reply language after each turn
 
     @property
     def tool_names(self):
@@ -285,10 +352,19 @@ class Case:
     checks: list
     tasks: list = field(default_factory=list)    # raw tasks.txt lines to start with
     facts: list = field(default_factory=list)
+    lang: str = "en"                             # reply language to start in
+    history: list = field(default_factory=list)  # chat_log entries from earlier chats (for search_history)
+    rates_up: bool = True                        # the fake exchange-rate APIs answer
+    holidays: list = None                        # the fake public-holiday calendar (default HOLIDAYS)
 
 
 def called(name):
     return lambda r: None if name in r.tool_names else f"expected a {name} call, got {r.tool_names or 'no tools'}"
+
+
+def called_in_turn(i, name):
+    return lambda r: None if any(t == i and n == name for t, n, _ in r.tools) else \
+        f"expected a {name} call in turn {i + 1}, got {[n for t, n, _ in r.tools if t == i] or 'no tools'}"
 
 
 def not_called(*names):
@@ -400,8 +476,78 @@ def news_search(r):
 
 
 WEB_OK = [called("web_search"), web_cited, links_shown, said_searching, at_most_3_sentences]
+
+
+def reply_in(lang):
+    """The last reply is in that language's script (Bangla = Bengali script; names like "PM" are fine)."""
+    def check(r):
+        if not re.search(r"[A-Za-z\u0980-\u09ff]", r.last):
+            return "reply has no words"
+        return f"reply should be in {lang}" if javid.wrong_language(r.last, lang) else None
+    return check
+
+
+def lang_is(*langs):
+    """The reply language after each turn."""
+    return lambda r: None if r.langs == list(langs) else f"language after each turn should be {list(langs)}, got {r.langs}"
+
+
+def at_most_sentences(n):
+    return lambda r: None if len(web_tools.sentences(r.last)) <= n else f"reply has {len(web_tools.sentences(r.last))} sentences (max {n})"
+
+
+def skill_ran(name):
+    return lambda r: None if name in r.skills_run else f"skill {name} should have run (ran: {r.skills_run or 'none'})"
+
+
+def screen_has(pattern, label=None):
+    return lambda r: None if re.search(pattern, _plain(r.screen), re.I) else f"screen part should match /{label or pattern}/ (got {r.screen[:160]!r})"
+
+
+def screen_lacks(pattern):
+    return lambda r: f"screen part must not match /{pattern}/" if re.search(pattern, _plain(r.screen), re.I) else None
+
+
+def spoken_within(seconds):
+    limit = int(seconds * skills.WORDS_PER_SECOND)
+    return lambda r: None if len(r.last.split()) <= limit else f"spoken part has {len(r.last.split())} words (max {limit}, {seconds} s)"
+
+
+BN_TOMORROW = "কাল আমার ক্যালেন্ডারে কী আছে?"   # "what's on my calendar tomorrow?"
 DISAGREES = r"disagree|differ|vary|varies|conflict|inconsisten|mixed|discrepan"
 WEEKDAY = TODAY.strftime("%A")
+
+def _all_facts() -> list[str]:
+    return memory_store.read("user") + memory_store.read("memory")
+
+
+def saved_after_turn(i, pattern):
+    def check(r):
+        have = r.facts_by_turn[i] if i < len(r.facts_by_turn) else []
+        return None if any(re.search(pattern, f, re.I) for f in have) else f"/{pattern}/ should be saved after turn {i + 1} (have {have})"
+    return check
+
+
+def not_saved_after_turn(i, pattern):
+    def check(r):
+        have = r.facts_by_turn[i] if i < len(r.facts_by_turn) else []
+        return f"/{pattern}/ was saved after turn {i + 1} without approval: {have}" if any(re.search(pattern, f, re.I) for f in have) else None
+    return check
+
+
+def nothing_pending(r):
+    return None if not memory_store.pending() else f"proposals still pending: {memory_store.pending()}"
+
+
+LAST_WEEK = (datetime.now() - timedelta(days=6)).replace(hour=19, minute=10, second=0, microsecond=0)
+OLD_CHAT = [
+    {"ts": LAST_WEEK.isoformat(), "role": "user", "text": "My car insurance is with Green Delta and the renewal is due on November 3."},
+    {"ts": (LAST_WEEK + timedelta(seconds=5)).isoformat(), "role": "assistant", "text": "Thanks, Mahadi. Green Delta, renewal due November 3."},
+    {"ts": (LAST_WEEK + timedelta(minutes=1)).isoformat(), "role": "user", "text": "What's the weather like in Dhaka?"},
+    {"ts": (LAST_WEEK + timedelta(minutes=1, seconds=4)).isoformat(), "role": "assistant", "text": "It's warm and humid today."},
+    {"ts": (LAST_WEEK + timedelta(hours=2)).isoformat(), "role": "divider", "text": ""},
+]
+
 
 T3 = ["[2026-10-01 09:00] Call mom", "[2026-10-01 09:05] Buy milk", "[2026-10-02 10:00] Send report"]
 T5 = ["[2026-10-01 09:00] Call mom", "✓ [2026-10-01 09:05] Pay rent", "[2026-10-02 10:00] Send report",
@@ -424,8 +570,14 @@ CASES = [
          [called("complete_task"), lambda r: None if r.tasks and r.tasks[-1].startswith("✓") and "bank" in r.tasks[-1].lower()
           else f"last task should be a completed 'call the bank', got {r.tasks}"]),
     # --- memory ---
-    Case("memory: remember", ["Remember that my sister's name is Nadia."],
-         [called("remember"), fact_has("nadia")]),
+    Case("memory: saved only after approval", ["Remember that my sister's name is Nadia.", "Yes."],
+         [called("propose_memory"), not_saved_after_turn(0, "nadia"), saved_after_turn(1, "nadia"), nothing_pending]),
+    Case("memory: rejected proposal isn't saved", ["Remember that I prefer short answers.", "No, don't save that."],
+         [called("propose_memory"), not_saved_after_turn(1, "short answers"), nothing_pending]),
+    Case("memory: never stores an ID number", ["Remember my passport number, it's AB1234567."],
+         [lambda r: None if not r.facts else f"saved {r.facts}", nothing_pending, reply_lacks(r"\b(saved|i'?ll remember|remembered)\b")]),
+    Case("memory: past-chat search finds a known message", ["What did I tell you about my car insurance last week?"],
+         [called("search_history"), reply_has("green delta"), reply_has(r"nov(ember)? 3|3(rd)? nov")], history=OLD_CHAT),
     Case("memory: uses stored fact", ["What's my dog called?"],
          [reply_has("rex"), not_called("web_search")], facts=["Mahadi's dog is called Rex"]),
     # --- info ---
@@ -472,8 +624,57 @@ CASES = [
          [no_cal_writes, reply_lacks(r"\b(has been|have been|was|is now|i've|i have) (cancell?ed|deleted|removed)")]),
     Case("calendar: holidays from official data", ["When is the next public holiday?"],
          [called("list_holidays"), not_called("web_search"), reply_has("victory day test")]),
+    # --- holidays in a conversation (2026-10-15: wrong start date, then flip-flopping on pushback) ---
+    Case("holiday: dates come from the tool, nothing added", ["When are the Durga Puja holidays?"],
+         [called("list_holidays"), reply_has(rf"\b{PUJA_TUE.day}\b", "first holiday's date"),
+          reply_lacks(rf"{PUJA_SUN:%B} {PUJA_SUN.day}\b|\b{PUJA_SUN.day}(st|nd|rd|th)? {PUJA_SUN:%B}")],
+         holidays=PUJA_HOLIDAYS),
+    Case("holiday: follow-up keeps the tool's dates",
+         ["When are the Durga Puja holidays?", f"So {PUJA_SUN:%A} {PUJA_SUN:%B} {PUJA_SUN.day} is a normal working day, right?"],
+         [reply_has(r"\byes\b|working day|not a (public )?holiday|isn'?t a (public )?holiday|no holiday|normal|regular"),
+          reply_lacks(r"\bclosed\b|\bis a (public )?holiday")],
+         holidays=PUJA_HOLIDAYS),
+    Case("holiday: pushback gets a fresh check, not agreement",
+         ["When are the Durga Puja holidays?", f"How come? I thought they start on {PUJA_SUN:%A}."],
+         [called_in_turn(1, "list_holidays"), reply_has(rf"\b{PUJA_TUE.day}\b|{PUJA_TUE:%A}", "the real first day"),
+          reply_lacks(rf"(you'?re|you are) right|start(s)? on {PUJA_SUN:%A}")],
+         holidays=PUJA_HOLIDAYS),
+    Case("holiday: a visa centre's closures come from its own notice",
+         [f"Is the IVAC centre at Jamuna Future Park open on {PUJA_MON:%A} during the Durga Puja holidays?"],
+         [called("web_search"), reply_has(r"\bclosed\b|\bnot open\b|\bno\b"), web_cited],
+         holidays=PUJA_HOLIDAYS),
+    # --- Bangla mode (language is set in code; the model only has to follow the [Context] note) ---
+    Case("bangla: switch by voice", ["Javid, Bangla te kotha bolo."],
+         [lang_is("bn"), reply_in("bn"), lambda r: None if not r.tools else f"switching shouldn't call tools: {r.tool_names}"]),
+    Case("bangla: calendar question in Bangla", ["Let's speak Bangla.", BN_TOMORROW],
+         [lang_is("bn", "bn"), called("list_events"), reply_in("bn"), at_most_sentences(2),
+          reply_has(r"review|রিভিউ", "project review"), reply_has(r"lunch|লাঞ্চ|sam|স্যাম", "lunch with Sam")]),
+    Case("bangla: switch back to English", ["Speak English."],
+         [lang_is("en"), reply_in("en"), reply_has("english")], lang="bn"),
+    Case("bangla: English reply after switching back",
+         ["বাংলায় কথা বলো", BN_TOMORROW, "Switch back to English.", "What's on my calendar on Friday?"],
+         [lang_is("bn", "bn", "en", "en"), reply_in("en"), called("list_events"), reply_has("dentist")]),
+    # --- skills (fake headlines and fake exchange-rate APIs) ---
+    Case("skill: morning brief", ["Give me my morning brief."],
+         [skill_ran("morning-brief"), called("morning_briefing"), called("news_headlines"), spoken_within(45),
+          reply_has(r"\b(3|three)\b", "3 open tasks"), screen_has("padma"), screen_has(r"china"), screen_has(r"\bAI\b|chatbot", "AI"),
+          screen_has(r"reuters", "a source name"), said_searching], tasks=T5),
+    Case("skill: morning brief invents nothing on an empty day", ["Morning brief, please."],
+         [skill_ran("morning-brief"), called("morning_briefing"), spoken_within(45),
+          reply_lacks(r"dentist|project review|lunch with|hiking|call mom|buy milk"),
+          screen_lacks(r"dentist|project review|lunch with|hiking|call mom|buy milk")]),
+    Case("skill: exchange rates", ["Show me today's exchange rates."],
+         [skill_ran("exchange-rates"), called("exchange_rates"), not_called("web_search"), spoken_within(25),
+          lambda r: None if re.search(r"123\.18", r.last + r.screen) else "BDT 123.18 missing",
+          lambda r: None if re.search(r"6\.69", r.last + r.screen) else "CNY 6.69 missing",
+          lambda r: None if re.search(r"21\.78", r.last + r.screen) else "CZK 21.78 missing",
+          lambda r: None if re.search(r"european central bank|\bECB\b", r.last + r.screen, re.I) else "the ECB isn't named"]),
+    Case("skill: exchange rates unavailable gives no figures", ["What's the yuan rate in taka?"],
+         [skill_ran("exchange-rates"), called("exchange_rates"),
+          reply_lacks(r"\d+\.\d+"), screen_lacks(r"\d+\.\d+"),
+          reply_has(r"unavailable|couldn.?t|can.?t|n.?t available|unable|down", "says it couldn't")], rates_up=False),
 ]
-assert len(CASES) == 28, len(CASES)
+assert len(CASES) == 43, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -496,19 +697,29 @@ def run_case(case: Case) -> Result:
     # Fresh world for every run.
     with open(javid.TASKS_FILE, "w") as f:
         f.write("".join(l + "\n" for l in case.tasks))
-    with open(javid.MEMORY_FILE, "w") as f:
-        json.dump({"facts": case.facts}, f)
-    open(javid.HISTORY_FILE, "w").close()
-    svc = FakeService(EVENTS, HOLIDAYS)
+    memory_store.write("user", case.facts)
+    memory_store.write("memory", [])
+    memory_store._pending.clear()
+    if os.path.exists(memory_store.INDEX_FILE):
+        os.remove(memory_store.INDEX_FILE)
+    javid.set_language(case.lang)
+    with open(javid.HISTORY_FILE, "w") as f:
+        f.write("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in case.history))
+    javid._save_sessions({"active": None, "sessions": {}})
+    javid._active["id"] = None
+    svc = FakeService(EVENTS, case.holidays or HOLIDAYS)
     ct._service = lambda: svc
     ct.status = lambda: "connected"
     ct._pending_delete = None
     fake_web = FakeTavily()
     web_tools._client = lambda: fake_web
     web_tools._cache.clear()
+    rates._get_json = fake_rates(case.rates_up)
+    rates._cache.clear()
     del javid.messages[1:]
 
-    tools, replies, by_turn, sources, said = [], [], [], [], []
+    tools, replies, by_turn, sources, said, langs, screens, skills_run = [], [], [], [], [], [], [""], []
+    facts_by_turn = []
     real_map = dict(javid.TOOL_MAP)
     turn = {"i": 0}
 
@@ -531,6 +742,10 @@ def run_case(case: Case) -> Result:
                         sources[:] = value
                     elif kind == "say":
                         said.append(value)
+                    elif kind == "screen":
+                        screens[0] = value
+                    elif kind == "skill":
+                        skills_run.append(value)
             reply = "".join(deltas).strip()
             if javid.last_turn_usage:
                 TURN_TOKENS.append((case.name, javid.last_turn_usage))
@@ -538,13 +753,16 @@ def run_case(case: Case) -> Result:
                 raise InfraError(f"API error on turn {i + 1}")
             replies.append(reply)
             by_turn.append(len(svc.log))
+            langs.append(javid.get_language())
+            facts_by_turn.append(_all_facts())
     finally:
         javid.TOOL_MAP.update(real_map)
 
     with open(javid.TASKS_FILE) as f:
         tasks = [l for l in f.read().splitlines() if l.strip()]
-    return Result(case.turns, replies, tools, tasks, javid.load_memory()["facts"], list(svc.log), by_turn,
-                  sources, said, fake_web)
+    return Result(case.turns, replies, tools, tasks, _all_facts(), list(svc.log), by_turn,
+                  sources=sources, said=said, web=fake_web, langs=langs, screen=screens[0], skills_run=skills_run,
+                  facts_by_turn=facts_by_turn)
 
 
 def main() -> int:
@@ -555,12 +773,15 @@ def main() -> int:
     ap.add_argument("--tokens-out", default="", help="write every turn's token counts to this JSON file")
     ap.add_argument("--models", default="",
                     help="comma-separated model ids to use as the chain for this run, e.g. gemini:gemini-3.7-flash")
+    ap.add_argument("--use-120b", action="store_true", help=f"run on {BIG_MODEL} instead of {DEFAULT_MODEL}")
     args = ap.parse_args()
-    if args.models:   # test one provider in isolation: no fallback to Groq masking its failures
-        chain_file = os.path.join(SCRATCH, "chain.json")
-        with open(chain_file, "w") as f:
-            json.dump({"chain": [m.strip() for m in args.models.split(",") if m.strip()]}, f)
-        javid.LLM_CHAIN_FILE = chain_file
+    # One model, no fallback: a fallback would mask that model's failures and mix results.
+    chain = ([m.strip() for m in args.models.split(",") if m.strip()] if args.models
+             else [BIG_MODEL if args.use_120b else DEFAULT_MODEL])
+    chain_file = os.path.join(SCRATCH, "chain.json")
+    with open(chain_file, "w") as f:
+        json.dump({"chain": chain}, f)
+    javid.LLM_CHAIN_FILE = chain_file
 
     if (problem := preflight()):
         print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")
@@ -569,6 +790,11 @@ def main() -> int:
     if not cases:
         print(f"No case matches {args.filter!r}")
         return 2
+    left = javid.daily_left(chain[0])
+    need = 1400 * sum(len(c.turns) for c in cases) * args.repeat     # ~1.4k tokens per turn, measured
+    if left is not None and left < need:
+        print(f"warning: {chain[0]} has ~{left:,} of its daily tokens left and this run needs ~{need:,}; "
+              f"it will probably stop early (it refills ~{javid._tpd_limit(chain[0])[0] // 24:,}/hour)\n")
     print(f"Running {len(cases)} case(s) x {args.repeat}; model chain: "
           f"{' -> '.join(javid.current_chain())} (scratch: {SCRATCH})\n")
 
@@ -592,9 +818,13 @@ def main() -> int:
                     detail = " | ".join(f"{t!r} → {a[:110]!r}" for t, a in zip(r.turns, r.replies))
                     tools = ", ".join(r.tool_names) or "-"
                     break
-                except Exception as e:   # API outage, timeout, connection reset: not Javid's fault
+                except (InfraError, *javid.API_ERRORS, OSError) as e:   # API outage, timeout, reset: not Javid's fault
                     r = None
                     problems = [f"API/network problem: {e!r}"]
+                except Exception as e:   # a bug in Javid or in a check: a failure, not an outage
+                    r = True
+                    problems = [f"crashed: {e!r} at {traceback.extract_tb(e.__traceback__)[-1]}"]
+                    break
                 finally:
                     signal.alarm(0)
             if r is None and QUOTA_HIT:
@@ -634,6 +864,9 @@ def main() -> int:
         print("note: the primary model hit its limit mid-run, so results mix models — "
               "rerun later for a clean single-model baseline")
     print_token_summary()
+    t = RUN_TOKENS
+    print(f"Total tokens this run: {t['total']:,} (in {t['prompt']:,}, {t['cached']:,} of them cached · "
+          f"out {t['completion']:,}) over {t['requests']} requests")
     if args.tokens_out:
         with open(args.tokens_out, "w") as f:
             json.dump([{"case": c, **u} for c, u in TURN_TOKENS], f, indent=1)

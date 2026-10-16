@@ -49,14 +49,17 @@ LLM_MODEL = "openai/gpt-oss-20b"
 # Tried in order when LLM_MODEL is rate-limited (free tier: 200k tokens/day per model) or down.
 # Quotas are per model, so each fallback has its own budget. Checked against this key's model list.
 # Entries without a prefix are Groq models; "gemini:<model>" goes to Google's OpenAI-compatible
-# endpoint (needs GEMINI_API_KEY) and "deepseek:<model>" to DeepSeek's (needs DEEPSEEK_API_KEY, paid).
+# endpoint (needs GEMINI_API_KEY), "deepseek:<model>" to DeepSeek's (needs DEEPSEEK_API_KEY, paid) and
+# "ifm:<model>" to IFM's (MBZUAI) K2 Horizon API at api.ifm.ai (needs IFM_API_KEY).
 # A provider without its key in .env is skipped.
 # Highest model that answered on the free tier on 2026-10-13 (tool calls OK). gemini-3.8-flash is newer
 # but returned 503 "high demand" on every try; gemini-3-flash-preview is much faster (~2 s vs 6-8 s).
 GEMINI_MODEL = "gemini-3.7-flash"
 DEEPSEEK_MODEL = "deepseek-chat"
+# The only K2 Horizon size api.ifm.ai served on 2026-10-16 (the others are open weights only).
+IFM_MODEL = "IFM/K2-Horizon-375B-A23B"
 LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b",
-                 f"gemini:{GEMINI_MODEL}", f"deepseek:{DEEPSEEK_MODEL}"]
+                 f"gemini:{GEMINI_MODEL}", f"deepseek:{DEEPSEEK_MODEL}", f"ifm:{IFM_MODEL}"]
 # Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
 KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
 LLM_MIN_REQUEST_TOKENS = 1500   # one request is ~0.6-1.7k tokens (prompt + the tools sent); a turn ~2 requests
@@ -1040,6 +1043,7 @@ PROVIDERS = {
     "gemini": {"label": "Google", "key_env": "GEMINI_API_KEY",
                "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"},
     "deepseek": {"label": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com"},
+    "ifm":    {"label": "IFM (K2 Horizon)", "key_env": "IFM_API_KEY", "base_url": "https://api.ifm.ai/v1"},
 }
 _provider_clients: dict = {}
 
@@ -1251,6 +1255,8 @@ def _models_on_provider(provider: str) -> list[str] | None:
             keep = [i for i in raw_ids if not any(k in i for k in _NON_CHAT)]
             if provider in ("gemini", "deepseek"):
                 keep = [i for i in keep if provider in i]
+            elif provider == "ifm":
+                keep = [i for i in keep if "K2-" in i]   # also lists Jais (Arabic) and Jais-ASR
             cache.update(at=time.time(), ids=[i if provider == "groq" else f"{provider}:{i}" for i in keep])
         except Exception:
             cache["at"] = time.time() - 540     # retry in a minute
@@ -1369,6 +1375,20 @@ def _forget_provider(provider: str) -> None:
             _model_info.get(m, {}).pop("last_error", None)
 
 
+def _verify_key(provider: str, c) -> None:
+    """Raise the provider's API error if it rejects the key; spends no tokens. api.ifm.ai lists
+    its models without checking the key at all, so IFM gets a chat request with no messages:
+    a bad key is a 401, a good one the 400 for the empty request (checked 2026-10-16)."""
+    if provider != "ifm":
+        c.models.list()
+        return
+    try:
+        c.chat.completions.create(model=IFM_MODEL, messages=[], max_tokens=1)
+    except API_ERRORS as e:
+        if getattr(e, "status_code", None) not in (400, 422):   # key accepted, request refused
+            raise
+
+
 def set_provider_key(provider: str, key: str) -> None:
     """Check `key` against the provider (a model-list call: no tokens spent), then save it to
     .env and use it straight away. Raises ValueError with a message safe to show the user."""
@@ -1379,7 +1399,7 @@ def set_provider_key(provider: str, key: str) -> None:
     if not _KEY_FORMAT.match(key):
         raise ValueError("That doesn't look like an API key (letters, digits, - _ . only, no spaces).")
     try:
-        _openai.OpenAI(api_key=key, base_url=cfg["base_url"], timeout=15.0, max_retries=0).models.list()
+        _verify_key(provider, _openai.OpenAI(api_key=key, base_url=cfg["base_url"], timeout=15.0, max_retries=0))
     except API_ERRORS as e:
         if getattr(e, "status_code", None) in (400, 401, 403):
             raise ValueError(f"{cfg['label']} rejected this key. Nothing was saved.") from None

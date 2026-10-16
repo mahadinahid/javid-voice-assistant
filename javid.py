@@ -708,12 +708,21 @@ _MEMORY_ASK = re.compile(r"^\W*(?:(?:please|ok(?:ay)?|hey javid|javid)\W+)?(?:re
                          r"keep in mind|note that|make a note|save (?:this|that))\b|মনে রাখ", re.I)   # "remember to X" is a task
 _PAST_ASK = re.compile(r"\bdid (i|we|you) (say|tell|mention|ask|talk|discuss)|\bwe (talked|discussed|spoke)\b|"
                        r"\bwhat did i (say|tell)|\bremind me what|বলেছিলাম", re.I)
+# An explicit "look it up" / "search online" must search: K2 answered "Look up how tall Mount Everest is"
+# from memory, with no source. Not when it's about Mahadi's own data ("look up my calendar").
+_WEB_ASK = re.compile(r"^(?!.*\b(?:my|our)\s+(?:calendar|schedule|tasks?|to-?do|list|notes?|memory|chats?|history|"
+                      r"events?|meetings?|appointments?)\b|.*\b(?:tasks?|to-?do|remind(?:er)?|remember to)\b)"
+                      r".*?(?:\blook\s+(?:it\s+|that\s+|this\s+)?up\b|\bsearch\s+(?:online|the\s+(?:web|internet)|for\b)|"
+                      r"\bgoogle\s+(?:it|that|this|for|how|what|who|when|where|why)\b|\b(?:check|find(?:\s+out)?)\s+online\b|"
+                      r"\bon\s+the\s+(?:web|internet)\b|সার্চ|অনলাইনে|ইন্টারনেটে)", re.I | re.S)
 # (request pattern, tool the answer needs, note for the one retry when the model answered without it)
 REQUIRED_TOOLS = [
     (_MEMORY_ASK, "propose_memory", "Mahadi asked you to remember that, and you can't save memory yourself: call "
                                     "propose_memory with it now, then ask him to approve. Don't say it's saved."),
     (_PAST_ASK, "search_history", "Mahadi is asking about an earlier chat, which you can't see: call search_history "
                                   "with the key words, then answer from what it finds."),
+    (_WEB_ASK, "web_search", "Mahadi asked you to look this up, so don't answer from memory: call web_search now, "
+                             "then answer from the results and name the source."),
 ]
 # A required skill's request also goes without the web tools: with them, gpt-oss-120b ran three searches
 # and a page read (~4 Tavily credits) before the retry note sent it to the skill.
@@ -1686,7 +1695,8 @@ def think_stream(user_text: str):
         retried_lang = False
         retried_required = False
         retried_holiday = False
-        required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)]
+        required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
+                    and not (skill_first and tool in WEB_TOOLS)]   # the skill answers without the web
         if _CHALLENGE.search(user_text) and (earlier := _recent_tool_results(turn_start, RECHECK_TOOLS)):
             tool = list(earlier)[-1]
             required.append((tool, f"Mahadi is questioning your earlier answer. Don't just agree or repeat it: "

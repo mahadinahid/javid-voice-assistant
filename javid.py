@@ -1116,7 +1116,12 @@ def _model_kwargs(model_id: str) -> dict:
 
 def _messages_for(provider: str, msgs: list) -> list:
     """Gemini hands back an `extra_content` blob on tool calls that it wants echoed; other
-    providers don't know the field, so it's stripped when failing over to them."""
+    providers don't know the field, so it's stripped when failing over to them. IFM 400s
+    on a follow-up turn unless every assistant message has a thinking field; "" is accepted
+    (checked 2026-10-17), and history replies (other models, chat_log) have none to replay."""
+    if provider == "ifm":
+        msgs = [{**m, "reasoning_content": m.get("reasoning_content") or ""}
+                if m["role"] == "assistant" else m for m in msgs]
     if provider == "gemini" or not any(
             c.get("extra_content") for m in msgs for c in m.get("tool_calls") or []):
         return msgs

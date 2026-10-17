@@ -16,6 +16,7 @@ import json
 import os
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
@@ -264,32 +265,55 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     return "\n".join(lines)
 
 
-def news_headlines(topics: list[str], days: int = 2) -> str:
-    """The top news story per topic, in one tool call (a morning brief needs three searches, and one
-    round each would use up the turn's tool rounds). Sources and texts are registered like web_search's."""
-    topics = [" ".join(str(t).split()) for t in topics or [] if str(t).strip()][:4]
+MAX_NEWS_TOPICS = 8
+MAX_PER_TOPIC = 3
+# Aggregators link to their own front page, not to a story (news.google.com came back as all 5 results).
+_AGGREGATORS = ("news.google.com", "news.yahoo.com", "msn.com")
+
+
+def news_headlines(topics: list[str], days: int = 2, per_topic: int = 1) -> str:
+    """The top news stories per topic, in one tool call: one search per topic, run in parallel (searching
+    topic by topic used up the turn's tool rounds: "10 news from all over the world" ended in "I can't pull
+    that many"). Sources and texts are registered like web_search's."""
+    topics = list(dict.fromkeys(" ".join(str(t).split()) for t in topics or [] if str(t).strip()))[:MAX_NEWS_TOPICS]
     if not topics:
         return "No topics given."
     days = max(1, min(int(days or 2), 7))
-    lines = []
-    for topic in topics:
+    per_topic = max(1, min(int(per_topic or 1), MAX_PER_TOPIC))
+    room = DAILY_CREDIT_CAP - credits_today()     # checked once for all topics: they run at the same time
+    skipped = topics[max(room, 0):]
+    topics = topics[:max(room, 0)]
+
+    def fetch(topic):
         query = f"{topic} news"
-        kw = {"search_depth": "basic", "max_results": 3, "include_usage": True, "topic": "news", "days": days}
-        key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, ())
-        resp = _call("search", key, query, lambda c, q=query, k=kw: c.search(q, **k))
+        kw = {"search_depth": "basic", "max_results": per_topic + 2, "include_usage": True, "topic": "news", "days": days}
+        key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, (), per_topic + 2)
+        return _call("search", key, query, lambda c: c.search(query, **kw))
+
+    with ThreadPoolExecutor(max_workers=len(topics) or 1) as pool:
+        responses = list(pool.map(fetch, topics))
+    lines, seen = [], set()
+    for topic, resp in zip(topics, responses):
         if isinstance(resp, str):
             lines.append(f"{topic}: {resp}")
             continue
-        results = [r for r in resp.get("results", []) if r.get("url")]
+        results = [r for r in resp.get("results", []) if r.get("url") and r["url"] not in seen
+                   and not any(_matches(_domain(r["url"]), a) for a in _AGGREGATORS)][:per_topic]
         if not results:
             lines.append(f"{topic}: no news found in the last {days} days.")
             continue
-        r = results[0]
-        s = _add_source(r)
-        _remember_text(s["domain"], f"{r.get('title', '')}\n{r.get('content', '')}")
-        snippet = " ".join((r.get("content") or "").split())[:SNIPPET_CHARS]
-        lines.append(f"{topic}: [{s['n']}] {s['title']} ({s['name']}, {s['date_text']}) - {snippet}")
-    return "Top headline per topic:\n" + "\n".join(lines)
+        for r in results:
+            seen.add(r["url"])
+            s = _add_source(r)
+            _remember_text(s["domain"], f"{r.get('title', '')}\n{r.get('content', '')}")
+            snippet = " ".join((r.get("content") or "").split())[:SNIPPET_CHARS]
+            # "N. Topic - headline (source, date)" so the list reads well on screen when the model leaves out
+            # its SCREEN part (skills.screen_from_results shows this result as it is).
+            lines.append(f"{s['n']}. {topic} - {s['title']} ({s['name']}, {s['date_text']}): {snippet}")
+    if skipped:
+        lines.append(f"Not searched (daily web budget of {DAILY_CREDIT_CAP} credits used up): {', '.join(skipped)}.")
+    found = sum(bool(re.match(r"\d+\. ", l)) for l in lines)
+    return f"Headlines ({found} stories):\n" + "\n".join(lines)
 
 
 def _resolve_top(url: str) -> str | None:
@@ -369,12 +393,15 @@ TOOLS.append({
     "type": "function",
     "function": {
         "name": "news_headlines",
-        "description": "The top news story for each topic (one search per topic), with source and date.",
+        "description": "The top news stories for each topic (one search per topic, all at once), with source "
+                       "and date. Use it for several stories or topics in one go instead of web_search per topic.",
         "parameters": {
             "type": "object",
             "properties": {
-                "topics": {"type": "array", "items": {"type": "string"}, "description": "e.g. ['Bangladesh', 'China', 'AI']"},
+                "topics": {"type": "array", "items": {"type": "string"},
+                           "description": "Up to 8 short topics, e.g. ['Bangladesh', 'China', 'AI']"},
                 "days": {"type": "integer", "description": "How recent, in days (default 2)."},
+                "per_topic": {"type": "integer", "description": "Stories per topic, 1-3 (default 1)."},
             },
             "required": ["topics"],
         },
@@ -495,9 +522,12 @@ def check_reply(reply: str) -> list[str]:
     return problems
 
 
-def correction(problems: list[str]) -> str:
-    return ("[Automatic check, not from Mahadi] Your answer can't be spoken yet: " + "; ".join(problems)
-            + f". Rewrite it in at most {MAX_SENTENCES} sentences, naming the source and its date.")
+def correction(problems: list[str], in_skill: bool = False) -> str:
+    head = "[Automatic check, not from Mahadi] Your answer can't be spoken yet: " + "; ".join(problems)
+    if in_skill:    # the skill sets the length: a 3-sentence rewrite cut a 13-story news digest to 7
+        return (head + ". Keep everything else as it was - the same stories, the SPOKEN and SCREEN parts - and "
+                "only drop those figures (say which way it moved instead). Don't mention this check.")
+    return head + f". Rewrite it in at most {MAX_SENTENCES} sentences, naming the source and its date."
 
 
 _BOUNDARY = re.compile(r"[.!?\u0964]+[\"')\]]*\s+")   # the same rule index.html uses to split speech (। = Bangla full stop)
@@ -530,16 +560,25 @@ def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SE
     for skills, which have their own spoken budget), ending with a source name and date if the model left
     them out."""
     lead, label = [], "Source"
-    if any("isn't in any source" in p or "couldn't confirm" in p for p in problems):
+    unconfirmed = lambda ps: any("isn't in any source" in p or "couldn't confirm" in p for p in ps)
+    if max_sentences is None and unconfirmed(problems):
+        # A skill's long answer (a news digest) loses only the sentences with the unconfirmed figure.
+        kept = [s for s in sentences(reply) if not unconfirmed(check_reply(s))]
+        if kept:
+            reply, problems = " ".join(kept), [p for p in problems if not unconfirmed([p])]
+    if unconfirmed(problems):
         reply = "I couldn't confirm that figure from an official source or two sources that agree, so I won't guess."
         label = "Checked"
     elif problems:     # only disagreements left
         lead = ["The sources disagree on this."]
     low = reply.lower()
-    cited = next((s for s in _turn["sources"] if s["name"].lower() in low or s["domain"] in low), None)
+    # Whole words: "AP" is in "Japan's", which made a digest end "Source: AP".
+    cited = next((s for s in _turn["sources"] if re.search(rf"\b{re.escape(s['name'].lower())}\b", low)
+                  or s["domain"] in low), None)
     body = lead + sentences(reply)
     cap = max_sentences or len(body) + 1
-    if (cited and _HAS_DATE.search(reply)) or (not problems and not figures(reply) and _NOTHING_FOUND.search(reply)):
+    # A skill's answer covers several stories, each with its own source: one appended source would mislead.
+    if (cited and (_HAS_DATE.search(reply) or max_sentences is None)) or (not problems and not figures(reply) and _NOTHING_FOUND.search(reply)):
         return " ".join(body[:cap])
     src = cited or _turn["sources"][0]
     return " ".join(body[:cap - 1] + [f"{label}: {src['name']}, {src['date_text']}."])

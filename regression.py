@@ -242,6 +242,43 @@ WEB_FIXTURES = [
         hit("https://en.wikipedia.org/wiki/Canberra", "Canberra - Wikipedia", "Canberra is the capital city of Australia."),
         hit("https://www.britannica.com/place/Canberra", "Canberra | Britannica", "Canberra, the capital of Australia, located in the ACT.")]),
 ]
+WEB_FIXTURES[:0] = [   # news-digest topics; first, so "europe news" doesn't get the euro-rate results
+    (r"^(world|global|international)\b.*news$", [
+        hit("https://www.reuters.com/world/un-climate-talks", "UN climate talks open in Nairobi",
+            "Delegates from nearly 200 countries opened climate talks in Nairobi on Friday.", TODAY),
+        hit("https://apnews.com/article/global-shipping-delays", "Storms delay global shipping routes",
+            "Severe storms delayed container ships on several major routes, shipping firms said.", TODAY)]),
+    (r"^asia\w*\b.*news$", [
+        hit("https://www.aljazeera.com/news/japan-election-call", "Japan's prime minister calls snap election",
+            "Japan's prime minister called a snap election for November, broadcaster NHK reported.", TODAY),
+        hit("https://www.bbc.com/news/world-asia-monsoon-floods", "Late monsoon floods hit northern Thailand",
+            "Floods forced thousands from their homes in northern Thailand after late monsoon rains.", YESTERDAY)]),
+    (r"^europe\w*\b.*news$", [
+        hit("https://www.theguardian.com/world/eu-migration-deal", "EU leaders back new migration deal",
+            "European Union leaders backed a new migration deal at a summit in Brussels.", TODAY),
+        hit("https://www.bbc.com/news/world-europe-rail-strike", "French rail workers announce strike",
+            "French rail unions announced a two-day strike over pension changes.", YESTERDAY)]),
+    (r"^middle east\b.*news$", [
+        hit("https://www.aljazeera.com/news/gaza-aid-convoy", "Aid convoy reaches northern Gaza",
+            "A UN aid convoy reached northern Gaza for the first time in weeks, the UN said.", TODAY),
+        hit("https://www.reuters.com/world/middle-east/iran-talks", "Iran and Oman hold talks in Muscat",
+            "Iranian and Omani officials held talks in Muscat on regional security.", YESTERDAY)]),
+    (r"^(war|ukraine|conflict|military)\b.*news$", [
+        hit("https://www.reuters.com/world/europe/ukraine-refinery-strike", "Ukraine says it struck a Russian refinery",
+            "Ukraine said its drones hit an oil refinery in southern Russia overnight.", TODAY),
+        hit("https://www.bbc.com/news/world-africa-sudan-ceasefire", "Sudan ceasefire talks resume in Jeddah",
+            "Talks on a ceasefire in Sudan resumed in Jeddah, mediators said.", YESTERDAY)]),
+    (r"^(sports?|football|cricket)\b.*news$", [
+        hit("https://www.espncricinfo.com/bangladesh-zimbabwe-1st-odi", "Bangladesh beat Zimbabwe by six wickets",
+            "Bangladesh beat Zimbabwe by six wickets in the first ODI in Harare.", YESTERDAY),
+        hit("https://www.bbc.com/sport/football/champions-league-draw", "Champions League: holders drawn against Inter",
+            "The holders were drawn against Inter Milan in the Champions League last 16.", TODAY)]),
+    (r"^(stock|market|shares|business|financ|econom)\w*\b.*news$", [   # a figure no second source gives
+        hit("https://www.reuters.com/markets/asia-stocks-fall", "Asian stocks fall 1.2% on rate worries",
+            "Asian stocks fell 1.2% on Friday as investors worried about interest rates.", TODAY),
+        hit("https://apnews.com/article/wall-street-tech-rally", "Wall Street ends higher on tech rally",
+            "US stocks ended higher, led by technology shares.", YESTERDAY)]),
+]
 WEB_FIXTURES += [   # morning-brief headlines (news_headlines searches "<topic> news")
     (r"^bangladesh news$", [hit("https://www.thedailystar.net/padma-rail-freight", "Padma rail link opens to freight trains",
                                 "Freight trains began running on the Padma rail link on Tuesday, Bangladesh Railway said.", TODAY)]),
@@ -674,8 +711,19 @@ CASES = [
           reply_lacks(r"\d+\.\d+"), screen_lacks(r"\d+\.\d+"),
           reply_has(r"unavailable|couldn.?t|can.?t|n.?t available|unable|down", "says it couldn't"),
           reply_lacks(r"\b(source|checked):")], rates_up=False),
+    # The 2026-10-17 chat: searched topic by topic, ran out of tool rounds and answered "I can't pull that many".
+    Case("skill: news digest of many stories",
+         ["Bring me at least 10 news from all over the world including Asia, Europe, Middle East and also "
+          "war news, sport news, and the stock market mix."],
+         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search", "read_page"), spoken_within(60),
+          lambda r: None if len(re.findall(r"^\s*\d+[.)]", r.screen, re.M)) >= 10
+          else f"screen lists {len(re.findall(r'^\s*\d+[.)]', r.screen, re.M))} stories (want 10+)",
+          screen_has(r"japan|thailand", "an Asia story"), screen_has(r"migration|rail", "a Europe story"),
+          screen_has(r"gaza|iran", "a Middle East story"), screen_has(r"zimbabwe|champions league", "a sport story"),
+          reply_lacks(r"1\.2"), reply_lacks(r"can.?t (pull|get|fetch|bring)|couldn.?t (pull|get|fetch)"),
+          said_searching]),
 ]
-assert len(CASES) == 43, len(CASES)
+assert len(CASES) == 44, len(CASES)
 
 
 def print_token_summary() -> None:

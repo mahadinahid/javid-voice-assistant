@@ -1765,7 +1765,7 @@ def think_stream(user_text: str):
                     retried_web = True
                     print(f"[web] answer rejected: {problems}")
                     notes.append((len(messages), [{"role": "assistant", "content": text},
-                                                  {"role": "user", "content": web_tools.correction(problems)}]))
+                                                  {"role": "user", "content": web_tools.correction(problems, bool(skills.active()))}]))
                     continue
             if not tool_calls:
                 held = _recent_tool_results(len(messages), ("list_holidays",), turns=FACT_TURNS + 1)

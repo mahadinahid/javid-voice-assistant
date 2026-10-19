@@ -12,9 +12,11 @@ from fastapi import FastAPI, File, Form, HTTPException, Request, Response, Uploa
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+import agents
 import calendar_tools
 import memory_store
 import skills
+import timers
 import tracing
 import web_tools
 from javid import (
@@ -32,6 +34,7 @@ def _warm_tts():
         for lang in LANGUAGES:
             synthesize(phrase("ack", lang), lang)
             synthesize(phrase("searching", lang), lang)
+            synthesize(phrase("working", lang), lang)
     except Exception as e:
         print(f"[tts] warm-up failed: {str(e)[:80]}")
 
@@ -132,12 +135,16 @@ def _reply_stream(user_text: str):
                 yield _event(type="memory_proposal", id=value["id"], text=value["text"], file=value["file"])
             elif kind == "memory":
                 yield _event(type="memory", outcome=value["outcome"], id=value["id"], text=value["text"])
-            else:
+            elif kind == "agent":
+                yield _event(type="agent", name=value)
+            elif kind == "delta":
                 yield _event(type="delta", text=value)
+            # any other kind is internal: never sent, and never spoken as reply text
     except Exception as e:
         print(f"[error] {e!r}")
         yield _event(type="error", message="Something went wrong on my end.")
-    yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
+    yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language(),
+                 timers=timers.active_json())
 
 
 def _ndjson(gen) -> StreamingResponse:
@@ -362,6 +369,31 @@ def latency(limit: int = 20):
 
 
 # ---------- skills (sidebar list) ----------
+@app.get("/agents")
+def agents_list():
+    return agents.all_agents()
+
+
+# Timers and reminders: the page rings them and reports back; only the first tab to report announces one.
+@app.get("/timers")
+def timers_list():
+    return timers.active_json()
+
+
+@app.post("/timers/{tid}/fired")
+def timers_fired(tid: str, request: Request):
+    _local_page_only(request)
+    return {"first": timers.mark_fired(tid)}
+
+
+@app.delete("/timers/{tid}")
+def timers_cancel(tid: str, request: Request):
+    _local_page_only(request)
+    if not timers.cancel(tid):
+        raise HTTPException(404, "No such timer")
+    return {"ok": True}
+
+
 @app.get("/skills")
 def skills_list():
     return skills.all_skills()

@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 43 prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 55 prompts through the real LLM + tool loop.
 
     python regression.py              # run everything once
     python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
@@ -10,9 +10,9 @@ Regression check for Javid's agent behaviour: 43 prompts through the real LLM + 
 Runs on gpt-oss-20b alone by default (no fallback: a model change mid-run would mix results, and the live
 chain's 120b is the user's backup, so it is only used with --use-120b).
 
-Safe to run: tasks, memory and chat history go to a temp dir, the Google Calendar is a
-fake in-memory service, and Tavily is a fake with fixed results (no credits spent, no key
-needed). Your real data is never touched.
+Safe to run: tasks, memory, chat history and timers go to a temp dir, the Google Calendar is a
+fake in-memory service, and Tavily, the weather services and the price APIs are fakes with fixed
+results (no credits spent, no key needed). Your real data is never touched.
 Needs GROQ_API_KEY. A full run makes ~40-50 LLM requests (~40-45k tokens): on Groq's free tier
 (200k tokens/day for this model) that is half the day's budget, so don't loop it. Exit code: 0 all passed, 1 a check failed, 3 only API/network errors (inconclusive).
 """
@@ -34,9 +34,12 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import calendar_tools as ct  # noqa: E402
 import javid  # noqa: E402
+import markets  # noqa: E402
 import memory_store  # noqa: E402
 import rates  # noqa: E402
 import skills  # noqa: E402
+import timers  # noqa: E402
+import weather  # noqa: E402
 import web_tools  # noqa: E402
 from groq import Groq  # noqa: E402
 
@@ -115,6 +118,7 @@ javid.SESSIONS_FILE = os.path.join(SCRATCH, "sessions.json")      # chats made b
 javid.LLM_TURNS_FILE = os.path.join(SCRATCH, "llm_turns.jsonl")   # the Models panel averages real turns only
 javid.LANGUAGE_FILE = os.path.join(SCRATCH, "language.json")      # never flips the real reply language
 web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
+timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings or lists the real timers
 TURN_TOKENS: list[tuple[str, dict]] = []   # (case name, javid.last_turn_usage) for every turn run
 
 
@@ -242,6 +246,25 @@ WEB_FIXTURES = [
         hit("https://en.wikipedia.org/wiki/Canberra", "Canberra - Wikipedia", "Canberra is the capital city of Australia."),
         hit("https://www.britannica.com/place/Canberra", "Canberra | Britannica", "Canberra, the capital of Australia, located in the ACT.")]),
 ]
+WEB_FIXTURES[:0] = [   # the research agent's searches about electric cars in Bangladesh
+    (r"electric|\bevs?\b|charging|battery|vehicle", [
+        hit("https://www.thedailystar.net/business/electric-vehicle-policy", "Govt drafts electric vehicle policy",
+            "Bangladesh's draft electric vehicle policy would cut import duties on EVs and set up charging rules.", TODAY),
+        hit("https://www.tbsnews.net/economy/ev-charging-stations", "Few charging stations hold back EV adoption",
+            "Dhaka has only a few dozen public charging stations, so most EV owners charge at home.", YESTERDAY),
+        hit("https://www.dhakatribune.com/business/ev-running-costs", "EVs cheaper to run, costly to buy",
+            "Owners say electric cars cost far less to run than petrol cars, but the purchase price and battery "
+            "replacement are high.", YESTERDAY),
+        hit("https://en.prothomalo.com/bangladesh/ev-load-shedding", "Load-shedding worries EV owners",
+            "Power cuts during summer load-shedding make home charging unreliable, EV owners say.", TODAY)]),
+]
+WEB_FIXTURES[:0] = [   # the market agent's crypto headlines
+    (r"^(crypto|bitcoin|btc|ethereum|altcoin)\w*\b.*news$", [
+        hit("https://www.reuters.com/markets/crypto-etf-inflows", "Bitcoin steadies as ETF inflows return",
+            "Bitcoin steadied as inflows into spot bitcoin ETFs resumed after a week of outflows.", TODAY),
+        hit("https://www.coindesk.com/markets/altcoins-solana-rally", "Solana leads altcoin gains",
+            "Solana led gains among large altcoins as on-chain activity picked up.", YESTERDAY)]),
+]
 WEB_FIXTURES[:0] = [   # news-digest topics; first, so "europe news" doesn't get the euro-rate results
     (r"^(world|global|international)\b.*news$", [
         hit("https://www.reuters.com/world/un-climate-talks", "UN climate talks open in Nairobi",
@@ -300,6 +323,69 @@ def fake_rates(up: bool):
     return get
 
 
+# Fake weather in Open-Meteo's shape: thunderstorms likely this afternoon (70%, peak 4 PM), rain tomorrow (80%).
+def fake_open_meteo() -> dict:
+    days = [TODAY + timedelta(days=i) for i in range(7)]
+    hours = [datetime.combine(d, datetime.min.time()) + timedelta(hours=h) for d in days for h in range(24)]
+
+    def chance(t):
+        if t.date() == TODAY:
+            return 70 if t.hour == 16 else 40 if 13 <= t.hour <= 19 else 10
+        if t.date() == days[1]:
+            return 80 if t.hour == 15 else 50 if 11 <= t.hour <= 18 else 20
+        return 5
+    return {
+        "timezone": "Asia/Dhaka", "utc_offset_seconds": 21600,
+        "current": {"time": datetime.now().strftime("%Y-%m-%dT%H:00"), "temperature_2m": 31.4,
+                    "apparent_temperature": 36.2, "relative_humidity_2m": 70, "weather_code": 2, "wind_speed_10m": 12.3},
+        "hourly": {"time": [t.strftime("%Y-%m-%dT%H:%M") for t in hours],
+                   "temperature_2m": [26 + 7 * (1 - abs(t.hour - 14) / 14) for t in hours],
+                   "precipitation_probability": [chance(t) for t in hours],
+                   "precipitation": [1.2 if chance(t) >= 50 else 0.0 for t in hours],
+                   "weather_code": [95 if chance(t) >= 70 else 61 if chance(t) >= 50 else 2 for t in hours]},
+        "daily": {"time": [d.isoformat() for d in days],
+                  "weather_code": [95, 61, 3, 2, 1, 1, 2], "temperature_2m_max": [33.1, 31.8, 31, 30, 31, 32, 33],
+                  "temperature_2m_min": [26.2, 25.1, 25, 24, 25, 26, 26],
+                  "precipitation_probability_max": [70, 80, 20, 10, 5, 5, 10],
+                  "precipitation_sum": [6.2, 9.5, 0.4, 0, 0, 0, 0.1], "uv_index_max": [8.1, 6.0, 7, 7, 8, 8, 8],
+                  "sunrise": [f"{d}T05:58" for d in days], "sunset": [f"{d}T17:32" for d in days]},
+    }
+
+
+FAKE_PLACES = {"sylhet": {"name": "Sylhet", "latitude": 24.8998, "longitude": 91.8714, "country": "Bangladesh",
+                          "country_code": "BD", "admin1": "Sylhet Division", "timezone": "Asia/Dhaka"}}
+
+
+def fake_weather_get(url, timeout=None):
+    if "geocoding" in url:
+        return {"results": [copy.deepcopy(v) for k, v in FAKE_PLACES.items() if k in url.lower()]}
+    if "open-meteo" in url:
+        return fake_open_meteo()
+    raise OSError("MET Norway isn't faked")
+
+
+# Fake live prices: Binance's ticker and Yahoo's chart shapes. An unknown symbol is a 400 (Binance) / 404 (Yahoo).
+FAKE_TICKERS = {"BTCUSDT": ("82152.34", "1.363", "83158.00", "80684.36"), "ETHUSDT": ("2396.45", "0.771", "2446.27", "2329.00"),
+                "BNBUSDT": ("612.30", "-0.420", "620.10", "605.80"), "SOLUSDT": ("104.24", "2.070", "106.22", "100.43")}
+
+
+def fake_market_get(url):
+    import urllib.error
+    if "binance" in url:
+        sym = url.rsplit("=", 1)[1]
+        if sym not in FAKE_TICKERS:
+            raise urllib.error.HTTPError(url, 400, "Bad Request", None, None)
+        last, pct, high, low = FAKE_TICKERS[sym]
+        return {"symbol": sym, "lastPrice": last, "priceChangePercent": pct, "highPrice": high, "lowPrice": low,
+                "quoteVolume": "1159623859.5", "closeTime": int(time.time() * 1000)}
+    if "yahoo" in url and "/AAPL?" in url:
+        return {"chart": {"result": [{"meta": {"symbol": "AAPL", "shortName": "Apple Inc.", "currency": "USD",
+                "regularMarketPrice": 342.94, "chartPreviousClose": 343.46, "regularMarketChangePercent": -0.151,
+                "regularMarketDayHigh": 346.0, "regularMarketDayLow": 340.12, "regularMarketTime": int(time.time()),
+                "fullExchangeName": "NasdaqGS", "exchangeTimezoneName": "America/New_York"}}]}}
+    raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
+
+
 WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 percent, down from 8.91 percent in August."}
 
 
@@ -336,6 +422,8 @@ EVENTS = [
     timed("hike", "Hiking trip", SATURDAY, 8, mins=120),
 ]
 HOLIDAYS = [allday("h1", HOLIDAY_NAME, HOLIDAY_DATE)]
+# A weekday with no fake events (it was always Tuesday, which on a Monday is tomorrow: lunch and the review).
+EMPTY_DAY = next(d for d in map(next_weekday, (1, 2, 3, 0, 6)) if d not in (TOMORROW, FRIDAY, SATURDAY, HOLIDAY_DATE))
 # A Durga Puja-like run, Tuesday to Thursday, with the Sunday before it a working day: the shape of
 # the 2026-10-15 chat where Javid said the holidays started on that Sunday.
 PUJA_TUE = next_weekday(1) if (next_weekday(1) - TODAY).days >= 3 else next_weekday(1) + timedelta(days=7)
@@ -368,6 +456,8 @@ class Result:
     skills_run: list = field(default_factory=list)  # "skill" events
     facts_by_turn: list = field(default_factory=list)  # memory lines after each turn
     langs: list = field(default_factory=list)    # the reply language after each turn
+    agents_run: list = field(default_factory=list)  # "agent" events (an agent took the job)
+    timers: list = field(default_factory=list)   # timers/reminders running after the run
 
     @property
     def tool_names(self):
@@ -533,6 +623,29 @@ def at_most_sentences(n):
     return lambda r: None if len(web_tools.sentences(r.last)) <= n else f"reply has {len(web_tools.sentences(r.last))} sentences (max {n})"
 
 
+def agent_ran(name):
+    return lambda r: None if name in r.agents_run else f"expected the {name} agent, got {r.agents_run or 'none'}"
+
+
+def timer_is(seconds):
+    def check(r):
+        items = [t for t in r.timers if t["kind"] == "timer"]
+        if len(items) != 1:
+            return f"expected one timer, got {[(t['kind'], t['label'], t['seconds']) for t in r.timers]}"
+        return None if abs(items[0]["seconds"] - seconds) <= 2 else f"the timer is {items[0]['seconds']}s, not {seconds}s"
+    return check
+
+
+def reminder_at(day, hour, minute=0):
+    def check(r):
+        items = [t for t in r.timers if t["kind"] == "reminder"]
+        if len(items) != 1:
+            return f"expected one reminder, got {[(t['kind'], t['label']) for t in r.timers]}"
+        due = datetime.fromtimestamp(items[0]["due"] / 1000)
+        return None if (due.date(), due.hour, due.minute) == (day, hour, minute) else f"the reminder is at {due:%a %d %H:%M}"
+    return check
+
+
 def skill_ran(name):
     return lambda r: None if name in r.skills_run else f"skill {name} should have run (ran: {r.skills_run or 'none'})"
 
@@ -644,7 +757,7 @@ CASES = [
     # --- calendar ---
     Case("calendar: list tomorrow", ["What's on my calendar tomorrow?"],
          [called("list_events"), reply_has("project review"), reply_has("lunch")]),
-    Case("calendar: empty day isn't invented", [f"Do I have anything on {next_weekday(1).strftime('%A')}?"],
+    Case("calendar: empty day isn't invented", [f"Do I have anything on {EMPTY_DAY:%A}?"],
          [called("list_events"), reply_lacks(r"dentist|review|lunch|hik"), no_cal_writes]),
     Case("calendar: add event", ["Schedule a meeting with Karim on Monday at 3 PM."],
          [called("add_event"), inserted_event("karim", 15), cal_writes("insert", "x")]),
@@ -712,18 +825,54 @@ CASES = [
           reply_has(r"unavailable|couldn.?t|can.?t|n.?t available|unable|down", "says it couldn't"),
           reply_lacks(r"\b(source|checked):")], rates_up=False),
     # The 2026-10-17 chat: searched topic by topic, ran out of tool rounds and answered "I can't pull that many".
+    # Its "stock market mix" once sent it to the market agent instead (2026-10-19): news requests aren't market briefs.
     Case("skill: news digest of many stories",
          ["Bring me at least 10 news from all over the world including Asia, Europe, Middle East and also "
           "war news, sport news, and the stock market mix."],
-         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search", "read_page"), spoken_within(60),
+         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search", "read_page", "delegate"), spoken_within(60),
           lambda r: None if len(re.findall(r"^\s*\d+[.)]", r.screen, re.M)) >= 10
           else f"screen lists {len(re.findall(r'^\s*\d+[.)]', r.screen, re.M))} stories (want 10+)",
           screen_has(r"japan|thailand", "an Asia story"), screen_has(r"migration|rail", "a Europe story"),
           screen_has(r"gaza|iran", "a Middle East story"), screen_has(r"zimbabwe|champions league", "a sport story"),
           reply_lacks(r"1\.2"), reply_lacks(r"can.?t (pull|get|fetch|bring)|couldn.?t (pull|get|fetch)"),
           said_searching]),
+    # ---------- tools added 2026-10-19 ----------
+    # Javid made up "sunny, 28°C in India" in a greeting (2026-10-17) when it had no weather tool.
+    Case("weather: today's forecast from the tool", ["What's the weather like today?"],
+         [called("get_weather"), not_called("web_search"), reply_has(r"\b3[13]\b|thunder", "the tool's figures"),
+          reply_lacks(r"\bsunny\b|\bsnow")]),
+    Case("weather: rain tomorrow", ["Will it rain tomorrow?"],
+         [called("get_weather"), tool_arg("get_weather", "day", r"tomorrow|" + TOMORROW.isoformat()), reply_has(r"\b80\b")]),
+    Case("timer: set by duration", ["Set a timer for 10 minutes for the tea."],
+         [called("set_timer"), timer_is(600), reply_has(r"\b10\b|\bten\b")]),
+    Case("timer: reminder at a clock time", ["Remind me to call mom at 7pm tomorrow."],
+         [called("set_timer"), not_called("add_task"), reminder_at(TOMORROW, 19), reply_has(r"\b7\b|seven")]),
+    Case("calc: exact arithmetic", ["What's 17.5% of 2,340?"], [called("calculate"), reply_has(r"409\.5")]),
+    Case("calc: unit conversion", ["How many miles is 42 km?"], [called("calculate"), reply_has(r"26\.1|26\.09")]),
+    Case("market: crypto price from Binance", ["What's the bitcoin price right now?"],
+         [called("market_price"), not_called("web_search"), reply_has(r"82,?152", "the Binance price"),
+          reply_has(r"binance")]),
+    Case("agent: research hands back a cited report", ["Research the pros and cons of electric cars in Bangladesh."],
+         [called("delegate"), agent_ran("research"), called("web_search"), spoken_within(40),
+          screen_has(r"\[\d\]", "a source number"), screen_has(r"charg|battery|import dut|load.?shedding|running cost",
+                                                              "a finding from the results"), links_shown]),
+    Case("agent: planner builds the day from real data", ["Plan my day tomorrow."],
+         [called("delegate"), agent_ran("planner"), called("list_events"), called("list_tasks"), no_cal_writes,
+          spoken_within(40), screen_has(r"project review", "tomorrow's review"), screen_has(r"lunch", "tomorrow's lunch"),
+          screen_has(r"call mom|send report|water plants", "a pending task"),
+          screen_lacks(r"pay rent|book flights")], tasks=T5),
+    # The planner ends by asking whether to add its blocks: the "yes" must reach add_event (the agent's
+    # follow-up tools) with the plan from the previous turn's screen part, not run the planner again.
+    Case("agent: planner's blocks added after a yes", ["Plan my day tomorrow.", "Yes, add them."],
+         [agent_ran("planner"), called_in_turn(1, "add_event"),
+          lambda r: None if r.writes_in_turn(1) else "no calendar writes after the yes",
+          lambda r: None if r.tool_names.count("delegate") == 1 else f"the planner ran {r.tool_names.count('delegate')} times"],
+         tasks=T5),
+    Case("agent: market brief with live prices", ["Give me a crypto market update."],
+         [called("delegate"), agent_ran("market"), called("market_price"), spoken_within(40),
+          screen_has(r"82,?152", "BTC from Binance"), screen_has(r"not financial advice")]),
 ]
-assert len(CASES) == 44, len(CASES)
+assert len(CASES) == 55, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -765,9 +914,17 @@ def run_case(case: Case) -> Result:
     web_tools._cache.clear()
     rates._get_json = fake_rates(case.rates_up)
     rates._cache.clear()
+    weather._get_json = fake_weather_get
+    weather._cache.clear()
+    weather._places.clear()
+    weather._skip_until["open-meteo"] = 0.0
+    markets._get_json = fake_market_get
+    markets._cache.clear()
+    if os.path.exists(timers.TIMERS_FILE):
+        os.remove(timers.TIMERS_FILE)
     del javid.messages[1:]
 
-    tools, replies, by_turn, sources, said, langs, screens, skills_run = [], [], [], [], [], [], [""], []
+    tools, replies, by_turn, sources, said, langs, screens, skills_run, agents_run = [], [], [], [], [], [], [""], [], []
     facts_by_turn = []
     real_map = dict(javid.TOOL_MAP)
     turn = {"i": 0}
@@ -795,6 +952,8 @@ def run_case(case: Case) -> Result:
                         screens[0] = value
                     elif kind == "skill":
                         skills_run.append(value)
+                    elif kind == "agent":
+                        agents_run.append(value)
             reply = "".join(deltas).strip()
             if javid.last_turn_usage:
                 TURN_TOKENS.append((case.name, javid.last_turn_usage))
@@ -811,7 +970,7 @@ def run_case(case: Case) -> Result:
         tasks = [l for l in f.read().splitlines() if l.strip()]
     return Result(case.turns, replies, tools, tasks, _all_facts(), list(svc.log), by_turn,
                   sources=sources, said=said, web=fake_web, langs=langs, screen=screens[0], skills_run=skills_run,
-                  facts_by_turn=facts_by_turn)
+                  facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json())
 
 
 def main() -> int:

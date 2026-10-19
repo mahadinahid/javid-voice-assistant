@@ -47,7 +47,8 @@ SOURCE_NAMES = {
     "dhakatribune.com": "Dhaka Tribune", "bdnews24.com": "bdnews24", "newagebd.net": "New Age",
     "bb.org.bd": "Bangladesh Bank", "bbs.gov.bd": "Bangladesh Bureau of Statistics",
     "wikipedia.org": "Wikipedia", "britannica.com": "Britannica", "xe.com": "XE",
-    "espncricinfo.com": "ESPNcricinfo",
+    "espncricinfo.com": "ESPNcricinfo", "binance.com": "Binance", "finance.yahoo.com": "Yahoo Finance",
+    "coindesk.com": "CoinDesk",
 }
 _NEWSY = re.compile(r"\b(news|latest|today|tonight|yesterday|this (week|morning|evening)|headlines?|"
                     r"breaking|update|announced?|just|recent(ly)?|current(ly)?)\b", re.I)
@@ -190,7 +191,7 @@ _turn: dict = {}
 
 def new_turn() -> None:
     _turn.clear()
-    _turn.update(sources=[], texts={}, top=[], reads=0, query="")
+    _turn.update(sources=[], texts={}, top=[], reads=0, query="", trusted=set())
 
 
 new_turn()
@@ -217,6 +218,13 @@ def _add_source(r: dict) -> dict:
 
 def _remember_text(domain: str, text: str) -> None:
     _turn["texts"][domain] = _turn["texts"].get(domain, "") + "\n" + (text or "")
+
+
+def note_data(domain: str, text: str) -> None:
+    """Figures from a data API this turn (market_price: Binance, Yahoo Finance). They back up the same
+    figures in a web answer, so a live price quoted next to news isn't flagged as unconfirmed."""
+    _remember_text(domain, text)
+    _turn["trusted"].add(domain)
 
 
 def sources() -> list[dict]:
@@ -510,6 +518,8 @@ def check_reply(reply: str) -> list[str]:
         if value == 1:
             continue        # "1 USD = ..." is the unit of the rate, not a claim
         support = sorted(d for d, figs in by_domain.items() if any(u == unit and _close(v, value) for v, u in figs))
+        if support and any(d in _turn["trusted"] for d in support):
+            continue        # a live figure from a data API: an older one in a news snippet doesn't contradict it
         rivals = _rivals(value, unit, by_domain)
         if rivals and not flags_disagreement:
             others = ", ".join(f"{source_name(d)} says {_fmt(v, unit)}" for d, v in rivals.items())
@@ -575,12 +585,15 @@ def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SE
     # Whole words: "AP" is in "Japan's", which made a digest end "Source: AP".
     cited = next((s for s in _turn["sources"] if re.search(rf"\b{re.escape(s['name'].lower())}\b", low)
                   or s["domain"] in low), None)
+    # Naming a data source (market_price: "on Binance") counts too: appending a news site would misattribute.
+    cited = cited or next(({"name": source_name(d)} for d in sorted(_turn["trusted"])
+                           if re.search(rf"\b{re.escape(source_name(d).lower())}\b", low)), None)
     body = lead + sentences(reply)
     cap = max_sentences or len(body) + 1
     # A skill's answer covers several stories, each with its own source: one appended source would mislead.
     if (cited and (_HAS_DATE.search(reply) or max_sentences is None)) or (not problems and not figures(reply) and _NOTHING_FOUND.search(reply)):
         return " ".join(body[:cap])
-    src = cited or _turn["sources"][0]
+    src = cited if cited and "date_text" in cited else _turn["sources"][0]
     return " ".join(body[:cap - 1] + [f"{label}: {src['name']}, {src['date_text']}."])
 
 

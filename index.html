@@ -4,6 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Javid</title>
+<script id="theme-boot">
+// The saved theme applies before the first paint (no flash of the classic look).
+try {
+    if (localStorage.getItem('javid-theme') === 'overdrive') {
+        document.documentElement.dataset.theme = 'overdrive';
+        const font = Object.assign(document.createElement('link'), { id: 'od-font', rel: 'stylesheet',
+            href: 'https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap' });
+        document.head.appendChild(font);
+    }
+} catch {}
+</script>
 <style>
 /* ── Reset ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -765,13 +776,494 @@ header h1 {
     white-space: nowrap;
 }
 .toast.show { opacity: 1; }
+
+/* ── Theme switch (header) ── */
+.theme-btn {
+    margin-left: auto;
+    padding: 6px 12px;
+    border-radius: 16px;
+    border: 1px solid #1e2d3d;
+    background: transparent;
+    color: #64748b;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.theme-btn:hover { color: #f87171; border-color: #ef4444; }
+.theme-btn + .lang-toggle { margin-left: 0; }
+
+/* ── Timers: live countdowns in the sidebar; a timer that comes due shows the banner ── */
+#timers-panel[hidden] { display: none; }
+.timer-item { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px solid #181828;
+              font-size: 12.5px; color: #94a3b8; }
+.timer-item:last-child { border-bottom: none; }
+.timer-left { min-width: 54px; color: #fbbf24; font-weight: 600; font-variant-numeric: tabular-nums; }
+.timer-item.reminder .timer-left { color: #60a5fa; font-weight: 500; font-size: 11.5px; }
+.timer-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timer-item .del-btn { opacity: 0.6; }
+.timer-item .del-btn:hover { opacity: 1; }
+.ring {
+    position: fixed; top: 18px; left: 50%; transform: translateX(-50%); z-index: 98;
+    display: flex; align-items: center; gap: 12px; max-width: min(560px, calc(100vw - 32px));
+    padding: 12px 14px 12px 16px; border-radius: 12px; border: 1px solid #b45309; background: #1c1405;
+    color: #fde68a; font-size: 14px; box-shadow: 0 10px 40px rgba(0,0,0,0.55);
+    animation: ring-shake 0.45s ease-in-out 4;
+}
+.ring[hidden] { display: none; }
+.ring-icon { font-size: 20px; }
+.ring-text { flex: 1; min-width: 0; line-height: 1.4; }
+.ring-text small { display: block; color: #d6b47a; font-size: 11.5px; }
+.ring button { padding: 6px 12px; border-radius: 8px; border: 1px solid #b45309; background: #b45309; color: #fff;
+               font-size: 12.5px; cursor: pointer; }
+@keyframes ring-shake {
+    0%, 100% { transform: translateX(-50%) rotate(0); }
+    25% { transform: translateX(-50%) rotate(-1.5deg); }
+    75% { transform: translateX(-50%) rotate(1.5deg); }
+}
+
+/* ── Agents: listed under Skills, highlighted while one works ── */
+.agent-item .skill-name::before { content: '◆ '; }
+.agent-item.running .skill-name::after { content: ' · working'; }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   OVERDRIVE theme: black and red, angular panels, a reactor core for the orb.
+   Toggled with the ⚡ button in the header and saved per browser. Everything is
+   scoped to html[data-theme="overdrive"]; the classic look above is untouched.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html[data-theme="overdrive"] {
+    --od-red: #ff2a2a;
+    --od-hot: #ff5640;
+    --od-ember: #ff7a1a;
+    --od-amber: #ffb000;
+    --od-dim: #5c1010;
+    --od-line: #2e0c0c;
+    --od-bg: #050404;
+    --od-text: #f4e8e6;
+    --od-muted: #a5807c;
+    --od-font: 'Chakra Petch', 'Rajdhani', 'Segoe UI', system-ui, sans-serif;
+    --od-mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+    color-scheme: dark;
+}
+html[data-theme="overdrive"] body {
+    color: var(--od-text);
+    background-color: var(--od-bg);
+    background-image:
+        radial-gradient(1100px 520px at 50% -12%, rgba(255, 32, 32, 0.17), transparent 62%),
+        radial-gradient(900px 500px at 50% 118%, rgba(255, 100, 0, 0.07), transparent 60%),
+        linear-gradient(rgba(255, 42, 42, 0.045) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 42, 42, 0.045) 1px, transparent 1px);
+    background-size: auto, auto, 36px 36px, 36px 36px;
+}
+/* CRT scanlines and a vignette over everything (clicks pass through) */
+html[data-theme="overdrive"] body::after {
+    content: '';
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    pointer-events: none;
+    background:
+        repeating-linear-gradient(0deg, rgba(0, 0, 0, 0.22) 0 1px, transparent 1px 3px),
+        radial-gradient(ellipse at center, transparent 58%, rgba(0, 0, 0, 0.55) 100%);
+}
+
+/* Header: a glitching title over a hazard stripe */
+html[data-theme="overdrive"] header {
+    position: relative;
+    background: linear-gradient(180deg, #140404, #080303);
+    border-bottom: 1px solid var(--od-dim);
+    box-shadow: 0 1px 0 rgba(255, 42, 42, 0.35), 0 10px 32px rgba(255, 0, 0, 0.08);
+}
+html[data-theme="overdrive"] header::after {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: -4px;
+    height: 3px;
+    background: repeating-linear-gradient(-45deg, var(--od-red) 0 10px, transparent 10px 20px);
+    opacity: 0.5;
+    pointer-events: none;
+}
+html[data-theme="overdrive"] .status-dot {
+    border-radius: 1px;
+    transform: rotate(45deg);
+    background: var(--od-red);
+    box-shadow: 0 0 8px var(--od-red), 0 0 18px rgba(255, 0, 0, 0.6);
+    animation: od-blink 1.2s steps(2, jump-none) infinite;
+}
+html[data-theme="overdrive"] header h1 {
+    position: relative;
+    font-family: var(--od-font);
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: 0.42em;
+    color: #fff;
+    text-shadow: 0 0 6px rgba(255, 42, 42, 0.9), 0 0 22px rgba(255, 0, 0, 0.45);
+}
+html[data-theme="overdrive"] header h1::before,
+html[data-theme="overdrive"] header h1::after {
+    content: attr(data-text);
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+}
+html[data-theme="overdrive"] header h1::before {
+    color: #22e6ff;
+    clip-path: inset(0 0 58% 0);
+    animation: od-glitch-a 3.4s infinite steps(1);
+}
+html[data-theme="overdrive"] header h1::after {
+    color: var(--od-red);
+    clip-path: inset(52% 0 0 0);
+    animation: od-glitch-b 2.9s infinite steps(1);
+}
+@keyframes od-glitch-a {
+    0%, 91%, 100% { opacity: 0; transform: translate(0); }
+    92% { opacity: 0.75; transform: translate(-3px, -1px); }
+    94% { opacity: 0.6; transform: translate(3px, 1px); clip-path: inset(18% 0 44% 0); }
+    96% { opacity: 0.5; transform: translate(-1px, 0); }
+}
+@keyframes od-glitch-b {
+    0%, 86%, 100% { opacity: 0; transform: translate(0); }
+    87% { opacity: 0.9; transform: translate(3px, 1px); }
+    89% { opacity: 0.7; transform: translate(-3px, 0); clip-path: inset(38% 0 22% 0); }
+    91% { opacity: 0.5; transform: translate(1px, 0); }
+}
+@keyframes od-blink { 50% { opacity: 0.25; } }
+
+/* Chamfered (cut-corner) controls */
+html[data-theme="overdrive"] .theme-btn,
+html[data-theme="overdrive"] .new-chat-btn,
+html[data-theme="overdrive"] .chats-toggle,
+html[data-theme="overdrive"] .lang-toggle {
+    border-radius: 0;
+    border-color: var(--od-dim);
+    background: rgba(255, 0, 0, 0.035);
+    color: #dba49d;
+    font-family: var(--od-font);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    clip-path: polygon(8px 0, 100% 0, 100% calc(100% - 8px), calc(100% - 8px) 100%, 0 100%, 0 8px);
+}
+html[data-theme="overdrive"] .theme-btn:hover,
+html[data-theme="overdrive"] .new-chat-btn:hover,
+html[data-theme="overdrive"] .chats-toggle:hover {
+    color: #fff;
+    border-color: var(--od-red);
+    background: rgba(255, 42, 42, 0.16);
+}
+html[data-theme="overdrive"] .theme-btn.on {
+    color: #000;
+    background: var(--od-red);
+    border-color: var(--od-red);
+    box-shadow: inset 0 0 12px rgba(255, 255, 255, 0.3);
+}
+html[data-theme="overdrive"] .lang-toggle button { color: #dba49d; font-family: var(--od-font); letter-spacing: 0.1em; }
+html[data-theme="overdrive"] .lang-toggle button:hover { color: #fff; }
+html[data-theme="overdrive"] .lang-toggle button.on { background: var(--od-red); color: #000; font-weight: 700; }
+
+/* Side panels: HUD plates */
+html[data-theme="overdrive"] .sidebar,
+html[data-theme="overdrive"] .chats {
+    background: rgba(9, 3, 3, 0.9);
+    border-color: var(--od-line);
+    scrollbar-color: var(--od-dim) transparent;
+}
+html[data-theme="overdrive"] .panel {
+    position: relative;
+    border-radius: 0;
+    border: 1px solid var(--od-line);
+    background: linear-gradient(180deg, rgba(42, 7, 7, 0.55), rgba(12, 4, 4, 0.8));
+    clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 14px 100%, 0 calc(100% - 14px));
+}
+html[data-theme="overdrive"] .panel::before {
+    content: '';
+    position: absolute;
+    top: 0; left: 0;
+    width: 22px; height: 2px;
+    background: var(--od-red);
+    box-shadow: 0 0 8px var(--od-red);
+}
+html[data-theme="overdrive"] .panel-title {
+    color: var(--od-hot);
+    font-family: var(--od-font);
+    font-size: 10.5px;
+    letter-spacing: 0.24em;
+}
+html[data-theme="overdrive"] .panel-title::before { content: '▮ '; color: var(--od-red); }
+html[data-theme="overdrive"] .panel-title .link-btn { color: var(--od-amber); font-family: var(--od-font); }
+html[data-theme="overdrive"] .empty { color: #6b3a36; }
+html[data-theme="overdrive"] .task-item,
+html[data-theme="overdrive"] .memory-item,
+html[data-theme="overdrive"] .event-item,
+html[data-theme="overdrive"] .model-row,
+html[data-theme="overdrive"] .timer-item { color: #d8bcb8; border-bottom-color: var(--od-line); }
+html[data-theme="overdrive"] .task-item.done .item-text { color: #5e3a37; }
+html[data-theme="overdrive"] .check-btn { border-radius: 0; border-color: var(--od-dim); }
+html[data-theme="overdrive"] .check-btn:hover { border-color: var(--od-red); }
+html[data-theme="overdrive"] .task-item.done .check-btn { background: var(--od-red); border-color: var(--od-red); color: #000; }
+html[data-theme="overdrive"] .add-task,
+html[data-theme="overdrive"] .chats-search {
+    border-radius: 0;
+    border-color: var(--od-line);
+    background-color: #080303;
+    color: var(--od-text);
+    font-family: var(--od-mono);
+}
+html[data-theme="overdrive"] .add-task:focus,
+html[data-theme="overdrive"] .chats-search:focus { border-color: var(--od-red); }
+html[data-theme="overdrive"] .event-time,
+html[data-theme="overdrive"] .timer-left { color: var(--od-hot); font-family: var(--od-mono); }
+html[data-theme="overdrive"] .timer-item.reminder .timer-left { color: var(--od-amber); }
+html[data-theme="overdrive"] .mem-dot { color: var(--od-red); }
+html[data-theme="overdrive"] .mem-section { color: #7a4a45; }
+html[data-theme="overdrive"] .skill-item { border-radius: 0; color: #c9a9a4; }
+html[data-theme="overdrive"] .skill-item .skill-name { color: #f4d9d5; font-family: var(--od-font); letter-spacing: 0.06em; }
+html[data-theme="overdrive"] .skill-item .skill-name::before { color: var(--od-red); }
+html[data-theme="overdrive"] .skill-item .skill-desc { color: #7d5651; }
+html[data-theme="overdrive"] .skill-item.running {
+    background: rgba(255, 42, 42, 0.14);
+    box-shadow: inset 2px 0 0 var(--od-red), 0 0 18px rgba(255, 42, 42, 0.15);
+}
+html[data-theme="overdrive"] .skill-item.running .skill-name::after { color: var(--od-amber); }
+html[data-theme="overdrive"] .chat-item { border-radius: 0; color: #c9a9a4; }
+html[data-theme="overdrive"] .chat-item:hover { background: rgba(255, 42, 42, 0.07); }
+html[data-theme="overdrive"] .chat-item.active { background: rgba(255, 42, 42, 0.14); color: #fff; box-shadow: inset 2px 0 0 var(--od-red); }
+html[data-theme="overdrive"] .chats-group { color: #7a4a45; font-family: var(--od-font); letter-spacing: 0.12em; text-transform: uppercase; }
+html[data-theme="overdrive"] .chats-new { color: #f4d9d5; font-family: var(--od-font); letter-spacing: 0.08em; }
+html[data-theme="overdrive"] .chats-new span.plus { border-radius: 0; background: var(--od-red); color: #000; }
+
+/* The orb becomes a reactor core inside two counter-rotating rings */
+html[data-theme="overdrive"] .orb-wrapper { width: 178px; height: 178px; }
+html[data-theme="overdrive"] .orb-wrapper::before,
+html[data-theme="overdrive"] .orb-wrapper::after {
+    content: '';
+    position: absolute;
+    border-radius: 50%;
+    pointer-events: none;
+}
+html[data-theme="overdrive"] .orb-wrapper::before {
+    inset: -8px;
+    background: repeating-conic-gradient(var(--od-red) 0 6deg, transparent 6deg 12deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 4px), #000 calc(100% - 3px));
+    opacity: 0.8;
+    animation: od-spin 14s linear infinite;
+}
+html[data-theme="overdrive"] .orb-wrapper::after {
+    inset: 4px;
+    background: conic-gradient(var(--od-ember) 0 70deg, transparent 70deg 118deg, var(--od-ember) 118deg 200deg,
+                               transparent 200deg 238deg, var(--od-ember) 238deg 326deg, transparent 326deg);
+    -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+            mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 1px));
+    opacity: 0.75;
+    animation: od-spin 7s linear infinite reverse;
+}
+html[data-theme="overdrive"] .orb-wrapper:has(.orb.listening)::before { animation-duration: 2.4s; opacity: 1; }
+html[data-theme="overdrive"] .orb-wrapper:has(.orb.thinking)::before {
+    animation-duration: 1.1s;
+    background: repeating-conic-gradient(var(--od-amber) 0 6deg, transparent 6deg 12deg);
+}
+html[data-theme="overdrive"] .orb-wrapper:has(.orb.thinking)::after { animation-duration: 0.9s; }
+html[data-theme="overdrive"] .orb-wrapper:has(.orb.speaking)::before { animation-duration: 3.5s; opacity: 1; }
+html[data-theme="overdrive"] .orb-wrapper:has(.orb.standby)::before { opacity: 0.35; animation-duration: 24s; }
+@keyframes od-spin { to { transform: rotate(360deg); } }
+
+html[data-theme="overdrive"] .orb { width: 132px; height: 132px; }
+html[data-theme="overdrive"] .orb::after {        /* a light sweeping round the core */
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(transparent 0 300deg, rgba(255, 255, 255, 0.38) 342deg, transparent 360deg);
+    mix-blend-mode: screen;
+    opacity: 0.5;
+    animation: od-spin 2.4s linear infinite;
+}
+html[data-theme="overdrive"] .orb.idle {
+    background: radial-gradient(circle, #fff3ef 0 4%, #ff6a4d 12%, #e3120b 32%, #6b0000 60%, #160000 78%);
+    box-shadow: 0 0 34px rgba(255, 30, 30, 0.55), 0 0 110px rgba(255, 0, 0, 0.22), inset 0 0 28px rgba(0, 0, 0, 0.85);
+    animation: od-throb 2.6s ease-in-out infinite;
+}
+html[data-theme="overdrive"] .orb.listening {
+    background: radial-gradient(circle, #fff 0 6%, #ffd0c2 12%, #ff3b1f 30%, #a30000 58%, #1c0000 78%);
+    box-shadow: 0 0 52px rgba(255, 59, 31, 0.85), 0 0 130px rgba(255, 0, 0, 0.35), inset 0 0 22px rgba(0, 0, 0, 0.7);
+    animation: od-pulse 0.5s ease-in-out infinite;
+}
+html[data-theme="overdrive"] .orb.listening ~ .orb-ring:nth-child(2) { border-color: rgba(255, 42, 42, 0.75); border-width: 2px; }
+html[data-theme="overdrive"] .orb.listening ~ .orb-ring:nth-child(3) { border-color: rgba(255, 122, 26, 0.5); border-width: 2px; }
+html[data-theme="overdrive"] .orb.thinking {
+    background: radial-gradient(circle, #fff7e0 0 5%, #ffc04d 14%, #ff6a00 34%, #8a1d00 60%, #1a0500 78%);
+    box-shadow: 0 0 46px rgba(255, 120, 0, 0.7), 0 0 120px rgba(255, 80, 0, 0.25), inset 0 0 24px rgba(0, 0, 0, 0.8);
+    animation: od-flicker 1.1s steps(6) infinite;
+}
+html[data-theme="overdrive"] .orb.speaking {
+    background: radial-gradient(circle, #fff 0 10%, #ffe1d6 18%, #ff2a2a 40%, #7a0000 64%, #140000 80%);
+    box-shadow: 0 0 62px rgba(255, 42, 42, 0.85), 0 0 140px rgba(255, 0, 0, 0.35), inset 0 0 18px rgba(0, 0, 0, 0.6);
+    animation: od-wave 0.28s ease-in-out infinite alternate;
+}
+html[data-theme="overdrive"] .orb.standby {
+    background: radial-gradient(circle, #ffb199 0 4%, #c21807 22%, #4a0000 56%, #0d0000 78%);
+    box-shadow: 0 0 22px rgba(194, 24, 7, 0.45), inset 0 0 26px rgba(0, 0, 0, 0.85);
+    animation: od-throb 4s ease-in-out infinite;
+}
+html[data-theme="overdrive"] .orb.followup {
+    background: radial-gradient(circle, #fff6d6 0 5%, #ffcc33 16%, #ff8a00 36%, #6e2400 62%, #120400 80%);
+    box-shadow: 0 0 40px rgba(255, 176, 0, 0.6), inset 0 0 22px rgba(0, 0, 0, 0.8);
+    animation: od-throb 1.4s ease-in-out infinite;
+}
+html[data-theme="overdrive"] .orb.followup ~ .orb-ring:nth-child(2) { border-color: rgba(255, 176, 0, 0.45); }
+@keyframes od-throb {
+    0%, 100% { transform: scale(1); filter: brightness(1); }
+    50% { transform: scale(1.045); filter: brightness(1.2); }
+}
+@keyframes od-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.08); }
+}
+@keyframes od-flicker {
+    0%, 100% { filter: brightness(1); }
+    20% { filter: brightness(1.35); }
+    40% { filter: brightness(0.9); }
+    60% { filter: brightness(1.25); }
+    80% { filter: brightness(1.05); }
+}
+@keyframes od-wave { from { transform: scale(1); } to { transform: scale(1.09); } }
+html[data-theme="overdrive"] .orb-label { font-family: var(--od-font); font-size: 11.5px; letter-spacing: 0.3em; }
+html[data-theme="overdrive"] .orb-label.idle { color: #d2352f; }
+html[data-theme="overdrive"] .orb-label.listening { color: var(--od-hot); animation: od-blink 0.8s steps(2, jump-none) infinite; }
+html[data-theme="overdrive"] .orb-label.thinking { color: var(--od-amber); }
+html[data-theme="overdrive"] .orb-label.speaking { color: #fff; text-shadow: 0 0 10px var(--od-red); }
+html[data-theme="overdrive"] .orb-label.standby { color: #9b3029; }
+html[data-theme="overdrive"] .orb-label.followup { color: var(--od-amber); }
+
+/* Talk controls */
+html[data-theme="overdrive"] .talk-btn,
+html[data-theme="overdrive"] .hf-btn,
+html[data-theme="overdrive"] .stop-btn {
+    border-radius: 0;
+    border: 1px solid var(--od-dim);
+    background: linear-gradient(180deg, rgba(255, 42, 42, 0.09), rgba(255, 42, 42, 0.02));
+    color: #ecb9b2;
+    font-family: var(--od-font);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    clip-path: polygon(12px 0, 100% 0, 100% calc(100% - 12px), calc(100% - 12px) 100%, 0 100%, 0 12px);
+}
+html[data-theme="overdrive"] .talk-btn:hover,
+html[data-theme="overdrive"] .hf-btn:hover {
+    color: #fff;
+    border-color: var(--od-red);
+    background: rgba(255, 42, 42, 0.18);
+    box-shadow: inset 0 0 18px rgba(255, 42, 42, 0.35);
+}
+html[data-theme="overdrive"] .talk-btn.active { color: #000; background: var(--od-red); border-color: var(--od-red); }
+html[data-theme="overdrive"] .hf-btn.active { color: var(--od-amber); background: rgba(255, 176, 0, 0.14); border-color: var(--od-amber); }
+html[data-theme="overdrive"] .stop-btn {
+    color: #fff;
+    border-color: var(--od-red);
+    background: repeating-linear-gradient(-45deg, rgba(255, 42, 42, 0.9) 0 10px, rgba(110, 0, 0, 0.92) 10px 20px);
+    text-shadow: 0 1px 2px #000;
+}
+
+/* Conversation */
+html[data-theme="overdrive"] .msg-who { font-family: var(--od-font); letter-spacing: 0.22em; }
+html[data-theme="overdrive"] .message.user .msg-who { color: var(--od-hot); }
+html[data-theme="overdrive"] .message.javid .msg-who { color: var(--od-ember); }
+html[data-theme="overdrive"] .message.user .msg-bubble {
+    border-radius: 0;
+    border: 1px solid #6e1010;
+    background: linear-gradient(135deg, #3d0707, #1a0303);
+    color: #ffe4df;
+    clip-path: polygon(0 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%);
+}
+html[data-theme="overdrive"] .message.javid .msg-bubble {
+    border-radius: 0;
+    border: 1px solid #2a1414;
+    border-left: 3px solid var(--od-ember);
+    background: #0d0808;
+    color: var(--od-text);
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 0 100%);
+}
+html[data-theme="overdrive"] .msg-screen {
+    border-radius: 0;
+    border-left: 2px solid var(--od-red);
+    background: rgba(255, 42, 42, 0.045);
+    color: #ead7d4;
+    font-family: var(--od-mono);
+    font-size: 12px;
+}
+html[data-theme="overdrive"] .msg-skill { color: var(--od-amber); font-family: var(--od-font); letter-spacing: 0.12em; }
+html[data-theme="overdrive"] .msg-sources a { color: #ff9384; }
+html[data-theme="overdrive"] .tool-note { color: var(--od-amber); font-family: var(--od-mono); font-style: normal; letter-spacing: 0.04em; }
+html[data-theme="overdrive"] .typing span { border-radius: 0; background: var(--od-red); box-shadow: 0 0 6px var(--od-red); }
+html[data-theme="overdrive"] .chat-divider { color: #7a4a45; font-family: var(--od-font); letter-spacing: 0.16em; text-transform: uppercase; }
+html[data-theme="overdrive"] .chat-divider::before,
+html[data-theme="overdrive"] .chat-divider::after { background: var(--od-line); }
+html[data-theme="overdrive"] .chat { scrollbar-color: var(--od-dim) transparent; }
+html[data-theme="overdrive"] .chat::-webkit-scrollbar-thumb { background: var(--od-dim); }
+html[data-theme="overdrive"] .load-earlier { border-radius: 0; border-color: var(--od-line); color: var(--od-muted); }
+
+/* Command line */
+html[data-theme="overdrive"] .input-row { border-top-color: var(--od-line); }
+html[data-theme="overdrive"] .text-input {
+    border-radius: 0;
+    border: 1px solid var(--od-dim);
+    background: #080303;
+    color: #fff;
+    font-family: var(--od-mono);
+    caret-color: var(--od-red);
+    clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%, 0 10px);
+}
+html[data-theme="overdrive"] .text-input:focus { border-color: var(--od-red); box-shadow: inset 0 0 14px rgba(255, 42, 42, 0.2); }
+html[data-theme="overdrive"] .text-input::placeholder { color: #7a3b36; letter-spacing: 0.08em; }
+html[data-theme="overdrive"] .send-btn {
+    border-radius: 0;
+    background: var(--od-red);
+    color: #000;
+    font-family: var(--od-font);
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 10px, 100% 100%, 10px 100%, 0 calc(100% - 10px));
+}
+html[data-theme="overdrive"] .send-btn:hover:not(:disabled) { background: #ff5a4a; }
+
+/* Dialogs, toasts, the timer alarm */
+html[data-theme="overdrive"] .modal-card { border-radius: 0; border-color: var(--od-dim); background: #0a0505; }
+html[data-theme="overdrive"] .modal-head h2 { color: var(--od-hot); font-family: var(--od-font); }
+html[data-theme="overdrive"] .btn-ghost { border-radius: 0; border-color: var(--od-dim); background: #0d0606; }
+html[data-theme="overdrive"] .btn-ghost:hover { border-color: var(--od-red); }
+html[data-theme="overdrive"] .model-card { border-radius: 0; border-color: var(--od-line); background: #0d0606; }
+html[data-theme="overdrive"] .toast { border-radius: 0; border-color: var(--od-red); background: #140303; color: #ffb3a8; font-family: var(--od-mono); }
+html[data-theme="overdrive"] .ring {
+    border-radius: 0;
+    border-color: var(--od-red);
+    background: linear-gradient(90deg, rgba(255, 42, 42, 0.25), #120303 40%);
+    color: #fff;
+    font-family: var(--od-font);
+    letter-spacing: 0.04em;
+    box-shadow: 0 0 0 1px rgba(255, 42, 42, 0.3), 0 0 40px rgba(255, 0, 0, 0.35);
+}
+html[data-theme="overdrive"] .ring-text small { color: var(--od-amber); }
+html[data-theme="overdrive"] .ring button { border-radius: 0; border-color: var(--od-red); background: var(--od-red); color: #000; font-weight: 700; }
+
+@media (prefers-reduced-motion: reduce) {
+    html[data-theme="overdrive"] *,
+    html[data-theme="overdrive"] *::before,
+    html[data-theme="overdrive"] *::after { animation: none !important; }
+}
 </style>
 </head>
 <body>
 
 <header>
     <div class="status-dot"></div>
-    <h1>JAVID</h1>
+    <h1 data-text="JAVID">JAVID</h1>
+    <button id="theme-btn" class="theme-btn" title="Switch to the Overdrive theme">⚡ Overdrive</button>
     <div class="lang-toggle" role="group" aria-label="Reply language" title="Reply language (or say “speak Bangla” / “speak English”)">
         <button data-lang="en">EN</button>
         <button data-lang="bn" lang="bn">বাংলা</button>
@@ -788,6 +1280,10 @@ header h1 {
             <div class="panel-title">Today</div>
             <div id="calendar-list"><p class="empty">Loading…</p></div>
         </div>
+        <div class="panel" id="timers-panel" hidden>
+            <div class="panel-title">Timers</div>
+            <div id="timers-list"></div>
+        </div>
         <div class="panel">
             <div class="panel-title">Tasks</div>
             <input id="add-task" class="add-task" type="text" placeholder="+ Add a task" autocomplete="off">
@@ -796,6 +1292,10 @@ header h1 {
         <div class="panel">
             <div class="panel-title">Skills</div>
             <div id="skills-list"><p class="empty">No skills installed.</p></div>
+        </div>
+        <div class="panel">
+            <div class="panel-title">Agents</div>
+            <div id="agents-list"><p class="empty">No agents installed.</p></div>
         </div>
         <div class="panel">
             <div class="panel-title">Memory</div>
@@ -895,6 +1395,12 @@ header h1 {
     </div>
 </div>
 
+<div id="ring" class="ring" role="alert" hidden>
+    <span class="ring-icon">⏰</span>
+    <span id="ring-text" class="ring-text"></span>
+    <button id="ring-dismiss">Dismiss</button>
+</div>
+
 <div id="toast" class="toast"></div>
 
 <script>
@@ -915,13 +1421,19 @@ const ORB_STATES = {
     followup:  { label: 'Go ahead…',    cls: 'followup' },
 };
 
+// Overdrive's own words for the same states.
+const OD_LABELS = {
+    idle: 'Armed', listening: 'Target locked · listening', thinking: 'Processing',
+    speaking: 'Transmitting', standby: 'Standby · say “Javid”', followup: 'Go',
+};
+
 function setOrb(state) {
     const s = ORB_STATES[state];
     const orb   = document.getElementById('orb');
     const label = document.getElementById('orb-label');
     orb.className   = `orb ${s.cls}`;
     label.className = `orb-label ${s.cls}`;
-    label.textContent = s.label;
+    label.textContent = (document.documentElement.dataset.theme === 'overdrive' && OD_LABELS[state]) || s.label;
 }
 
 // ── Latency tracing (observation only) ────────────────────────────────────
@@ -1478,7 +1990,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
         showTyping();
     }
 
-    let bubble = null, reply = '', sources = null, screen = null, skill = null, proposals = [];
+    let bubble = null, reply = '', sources = null, screen = null, skill = null, agent = null, proposals = [];
     const ensureBubble = () => {
         if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); speechMsg = bubble.closest('.message'); }
         return bubble;
@@ -1520,6 +2032,9 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                 } else if (ev.type === 'skill') {
                     skill = ev.name;
                     markSkill(ev.name);
+                } else if (ev.type === 'agent') {
+                    agent = ev.name;        // an agent is working: its tool calls follow as "tool" events
+                    markAgent(ev.name);
                 } else if (ev.type === 'screen') {
                     screen = ev.text;
                 } else if (ev.type === 'memory_proposal') {
@@ -1546,6 +2061,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     refreshCalendar();  // a reply may have added an event
                     refreshModels();    // tokens were just spent
                     refreshChats();     // a first message names the chat; the order changes
+                    if (ev.timers) syncTimers(ev.timers);   // a reply may have set or cancelled one
                 }
             }
         }
@@ -1554,9 +2070,10 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
         if (e.name !== 'AbortError') showToast('Server error — is it running?');
     } finally {
         markSkill(null);
+        markAgent(null);
         if (bubble && !reply.trim()) bubble.closest('.message').remove();
         else if (bubble) {
-            if (screen) addScreen(bubble.closest('.message'), screen, skill);
+            if (screen) addScreen(bubble.closest('.message'), screen, skill, agent);
             for (const p of proposals) bubble.closest('.message').appendChild(memoryCard(p));
             if (sources?.length) addSources(bubble.closest('.message'), sources);
             scrollChat();
@@ -1610,6 +2127,8 @@ const TOOL_LABELS = {
     move_event: 'Moving event…', delete_event: 'Looking up event…',
     find_free_time: 'Finding free time…', list_holidays: 'Checking holidays…',
     use_skill: 'Loading skill…', news_headlines: 'Checking the headlines…', exchange_rates: 'Fetching exchange rates…',
+    get_weather: 'Checking the weather…', set_timer: 'Setting the timer…', timers: 'Checking timers…',
+    calculate: 'Calculating…', market_price: 'Fetching live prices…', delegate: 'Handing it to an agent…',
 };
 
 function showToolNote(name) {
@@ -1629,27 +2148,27 @@ function scrollChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-function makeMsg(role, text, sources, screen, skill) {
+function makeMsg(role, text, sources, screen, skill, agent) {
     const el = document.createElement('div');
     el.className = `message ${role}`;
     el.innerHTML = `
         <span class="msg-who">${role === 'user' ? 'You' : 'Javid'}</span>
         <div class="msg-bubble">${esc(text)}</div>`;
-    if (screen) addScreen(el, screen, skill);
+    if (screen) addScreen(el, screen, skill, agent);
     if (sources?.length) addSources(el, sources);
     return el;
 }
 
 // A skill's full version (on screen only; the bubble above holds what was spoken).
-function addScreen(msgEl, text, skill) {
+function addScreen(msgEl, text, skill, agent) {
     const box = document.createElement('div');
     box.className = 'msg-screen';
     box.textContent = text;
     msgEl.querySelector('.msg-bubble').after(box);
-    if (skill) {
+    if (skill || agent) {
         const tag = document.createElement('div');
         tag.className = 'msg-skill';
-        tag.textContent = `⚡ ${skill}`;
+        tag.textContent = agent ? `◆ ${agent} agent` : `⚡ ${skill}`;
         box.after(tag);
     }
 }
@@ -1699,7 +2218,7 @@ function historyNodes(entries) {
             continue;
         }
         if (day !== lastDay) { nodes.push(makeDivider(fmtDay(d))); lastDay = day; }
-        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources, e.screen, e.skill));
+        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources, e.screen, e.skill, e.agent));
     }
     return nodes;
 }
@@ -1965,9 +2484,22 @@ function renderSkills(list) {
         : '<p class="empty">No skills installed.</p>';
 }
 function markSkill(name) {
-    document.querySelectorAll('.skill-item').forEach(r => r.classList.toggle('running', r.dataset.skill === name));
+    document.querySelectorAll('.skill-item[data-skill]').forEach(r => r.classList.toggle('running', r.dataset.skill === name));
 }
 fetch('/skills').then(r => r.json()).then(renderSkills).catch(() => {});
+
+// ── Agents: specialists Javid hands big jobs to (research, planning, markets) ──
+function renderAgents(list) {
+    const el = document.getElementById('agents-list');
+    el.innerHTML = list.length
+        ? list.map(a => `<div class="skill-item agent-item" data-agent="${esc(a.name)}" title="${esc(a.description)}">
+                <div class="skill-name">${esc(a.name)}</div><div class="skill-desc">${esc(a.description)}</div></div>`).join('')
+        : '<p class="empty">No agents installed.</p>';
+}
+function markAgent(name) {
+    document.querySelectorAll('.agent-item').forEach(r => r.classList.toggle('running', r.dataset.agent === name));
+}
+fetch('/agents').then(r => r.json()).then(renderAgents).catch(() => {});
 
 // Memory v2: memory/USER.md (about Mahadi) and memory/MEMORY.md (how he likes things done).
 const MEM_TITLES = { user: 'About you · USER.md', memory: 'How you like things · MEMORY.md' };
@@ -2622,6 +3154,137 @@ document.querySelectorAll('.lang-toggle button').forEach(b => b.addEventListener
         setLang((await res.json()).lang);
     } catch { showToast('Could not change the language — is the server running?'); }
 }));
+
+// ── Theme: Classic / Overdrive (saved per browser; the head script applies it before the first paint) ──
+function applyTheme(name) {
+    const od = name === 'overdrive';
+    if (od) document.documentElement.dataset.theme = 'overdrive';
+    else delete document.documentElement.dataset.theme;
+    if (od && !document.getElementById('od-font')) {
+        document.head.appendChild(Object.assign(document.createElement('link'), { id: 'od-font', rel: 'stylesheet',
+            href: 'https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap' }));
+    }
+    const btn = document.getElementById('theme-btn');
+    btn.classList.toggle('on', od);
+    btn.title = od ? 'Overdrive is on: click for the classic theme' : 'Switch to the Overdrive theme';
+    document.getElementById('text-input').placeholder = od ? '> enter command_' : 'Or type a message…';
+    const orb = document.getElementById('orb');
+    setOrb(Object.keys(ORB_STATES).find(k => orb.classList.contains(k)) || 'idle');   // re-label the current state
+    try { localStorage.setItem('javid-theme', od ? 'overdrive' : 'classic'); } catch {}
+}
+document.getElementById('theme-btn').addEventListener('click', () =>
+    applyTheme(document.documentElement.dataset.theme === 'overdrive' ? 'classic' : 'overdrive'));
+applyTheme(document.documentElement.dataset.theme === 'overdrive' ? 'overdrive' : 'classic');
+
+// ── Timers & reminders ────────────────────────────────────────────────────
+// The server keeps them (timers.json); this page counts down and rings them: a chime, the banner, then the
+// announcement in Javid's own voice. POST /timers/<id>/fired says whether this tab is the first to ring it,
+// so two open tabs don't both announce. Browsers block sound until the page has been clicked once.
+let timerList = [];                 // [{id, kind, label, due (epoch ms), seconds, announce: {en, bn}}]
+const rungTimers = new Set();
+let ringAudio = null;               // WebAudio context for the chime (a sound, not a voice)
+let ringHideTimer = null;
+
+function syncTimers(list) {
+    timerList = Array.isArray(list) ? list : [];
+    renderTimers();
+}
+
+async function refreshTimers() {
+    try { syncTimers(await (await fetch('/timers')).json()); } catch {}
+}
+
+function fmtCountdown(ms) {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60), sec = s % 60;
+    return h ? `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}` : `${m}:${String(sec).padStart(2, '0')}`;
+}
+
+function timerWhen(t, now) {
+    const left = t.due - now;
+    if (t.kind === 'timer' || left < 3600000) return fmtCountdown(left);
+    const d = new Date(t.due);
+    const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    return d.toDateString() === new Date(now).toDateString() ? time
+        : `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`;
+}
+
+function renderTimers() {
+    const now = Date.now();
+    const list = timerList.filter(t => !rungTimers.has(t.id));
+    document.getElementById('timers-panel').hidden = !list.length;
+    document.getElementById('timers-list').innerHTML = list.map(t => `
+        <div class="timer-item ${t.kind}" data-id="${esc(t.id)}">
+            <span class="timer-left">${esc(timerWhen(t, now))}</span>
+            <span class="timer-label" title="${esc(t.label)}">${esc(t.label || (t.kind === 'timer' ? 'Timer' : 'Reminder'))}</span>
+            <button class="del-btn" data-cancel="${esc(t.id)}" title="Cancel">✕</button>
+        </div>`).join('');
+}
+
+function chime() {
+    try {
+        ringAudio ??= new (window.AudioContext || window.webkitAudioContext)();
+        if (ringAudio.state === 'suspended') ringAudio.resume();
+        const od = document.documentElement.dataset.theme === 'overdrive';
+        const t0 = ringAudio.currentTime + 0.03;
+        for (let i = 0; i < (od ? 4 : 3); i++) {
+            const o = ringAudio.createOscillator(), g = ringAudio.createGain(), at = t0 + i * (od ? 0.2 : 0.3);
+            o.type = od ? 'sawtooth' : 'sine';
+            o.frequency.value = od ? (i % 2 ? 660 : 990) : 880;
+            g.gain.setValueAtTime(0.0001, at);
+            g.gain.exponentialRampToValueAtTime(od ? 0.09 : 0.16, at + 0.02);
+            g.gain.exponentialRampToValueAtTime(0.0001, at + (od ? 0.16 : 0.24));
+            o.connect(g).connect(ringAudio.destination);
+            o.start(at);
+            o.stop(at + 0.3);
+        }
+    } catch { /* no audio until the page has been clicked */ }
+}
+
+function showRing(t, text) {
+    const late = Date.now() - t.due > 120000;
+    const when = new Date(t.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    document.getElementById('ring-text').innerHTML = `${esc(text)}${late ? `<small>Missed at ${esc(when)}</small>` : ''}`;
+    document.getElementById('ring').hidden = false;
+    clearTimeout(ringHideTimer);
+    ringHideTimer = setTimeout(() => { document.getElementById('ring').hidden = true; }, 120000);
+}
+
+async function ringTimer(t) {
+    rungTimers.add(t.id);
+    renderTimers();
+    let first = true;
+    try {
+        const res = await fetch(`/timers/${encodeURIComponent(t.id)}/fired`, { method: 'POST' });
+        if (res.ok) first = (await res.json()).first;
+    } catch {}
+    if (!first) return;             // another tab is announcing it
+    const text = t.announce?.[replyLang] || t.announce?.en || 'Mahadi, your timer is done.';
+    showRing(t, text);
+    chime();
+    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, 1000);   // Javid's voice, after the chime
+}
+
+document.getElementById('ring-dismiss').addEventListener('click', () => {
+    document.getElementById('ring').hidden = true;
+    clearTimeout(ringHideTimer);
+});
+document.getElementById('timers-list').addEventListener('click', async e => {
+    const id = e.target.closest('[data-cancel]')?.dataset.cancel;
+    if (!id) return;
+    try { await fetch(`/timers/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+    refreshTimers();
+});
+setInterval(() => {
+    const now = Date.now();
+    for (const t of timerList) if (!rungTimers.has(t.id) && t.due <= now) ringTimer(t);
+    document.querySelectorAll('.timer-item').forEach(el => {
+        const t = timerList.find(x => x.id === el.dataset.id);
+        if (t) el.querySelector('.timer-left').textContent = timerWhen(t, now);
+    });
+}, 1000);
+setInterval(refreshTimers, 30000);     // timers set from the CLI or another tab, or cancelled there
+refreshTimers();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────
 (async () => {

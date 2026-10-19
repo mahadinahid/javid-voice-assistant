@@ -21,3 +21,5 @@ chat_log.jsonl.bak-*
 .DS_Store
 .claude/settings.local.json
 data/
+timers.json
+timers.json.tmp

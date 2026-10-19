@@ -11,7 +11,9 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
+import types
 import uuid
 import wave
 from datetime import datetime, timedelta
@@ -24,11 +26,16 @@ import groq as _groq
 import openai as _openai
 from groq import APIError, BadRequestError, Groq, InternalServerError, NotFoundError, RateLimitError
 
+import agents
+import calc
 import calendar_tools
+import markets
 import memory_store
 import rates
 import skills
+import timers
 import tracing
+import weather
 import web_tools
 
 # Groq and OpenAI-compatible providers (Gemini) raise different exception classes for the same thing.
@@ -118,6 +125,7 @@ PHRASES = {
                    "bn": "ঠিক আছে মাহাদি, এখন থেকে আমি বাংলায় কথা বলব।"},
     "ack":        {"en": "Yes?", "bn": "হ্যাঁ, বলো?"},
     "searching":  {"en": web_tools.SEARCHING, "bn": "খুঁজে দেখছি…"},
+    "working":    {"en": "On it. Give me a moment.", "bn": "করছি, একটু সময় দাও।"},   # while an agent works
     "not_caught": {"en": "I didn't catch that clearly. Try again.", "bn": "ঠিক বুঝতে পারিনি। আবার বলো।"},
     "stuck":      {"en": "Sorry, I got stuck on that one. Try asking another way.",
                    "bn": "দুঃখিত, এটায় আটকে গেলাম। অন্যভাবে বলে দেখো।"},
@@ -214,6 +222,8 @@ SYSTEM_PROMPT = (
     "moved or deleted unless a tool result in this turn says so (to keep a fact, call propose_memory: it's saved only once Mahadi approves), "
     "and don't say you checked unless you called a tool. "
     "If you're not sure, say so instead of guessing. "
+    "Weather, prices and sums come only from get_weather, market_price and calculate, and a timer exists only "
+    "once set_timer says so. "
     "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
     "Calendar: when the day and time are given, add the event straight away. To move or delete one, "
     "call move_event or delete_event with part of its title; the tool finds it, so don't ask for its "
@@ -511,6 +521,11 @@ TOOLS = [
     *calendar_tools.TOOLS,
     *rates.TOOLS,
     *skills.TOOLS,
+    *weather.TOOLS,
+    *timers.TOOLS,
+    *calc.TOOLS,
+    *markets.TOOLS,
+    *agents.TOOLS,
 ]
 
 
@@ -699,6 +714,10 @@ def morning_briefing() -> str:
     calendar = calendar_tools.briefing_line()
     if calendar:
         parts.append(f"Calendar: {calendar}")
+    # Real weather, so it's never made up ("sunny, 28°C in India" in a greeting, 2026-10-17) - but after the
+    # tasks and calendar: with it, a "good morning" reply once spent its two sentences on the weather.
+    parts.append(weather.brief_line() or "Weather: unavailable right now; don't mention or guess it.")
+    parts.append("Say the pending count and today's calendar first; the weather only if it fits.")
     return "\n".join(parts)
 
 
@@ -715,6 +734,38 @@ _WEB_ASK = re.compile(r"^(?!.*\b(?:my|our)\s+(?:calendar|schedule|tasks?|to-?do|
                       r".*?(?:\blook\s+(?:it\s+|that\s+|this\s+)?up\b|\bsearch\s+(?:online|the\s+(?:web|internet)|for\b)|"
                       r"\bgoogle\s+(?:it|that|this|for|how|what|who|when|where|why)\b|\b(?:check|find(?:\s+out)?)\s+online\b|"
                       r"\bon\s+the\s+(?:web|internet)\b|সার্চ|অনলাইনে|ইন্টারনেটে)", re.I | re.S)
+_WEATHER_ASK = re.compile(r"\bweather\b|\bforecast\b|\bwill it (?:rain|be (?:hot|cold|sunny))|\b(?:is it|it'?s) "
+                          r"(?:going to )?(?:rain|hot|cold)\b|\btemperature (?:today|tomorrow|now|outside)|"
+                          r"\bhow (?:hot|cold) is it\b|\bumbrella\b|আবহাওয়া|বৃষ্টি হবে", re.I)
+_TIMER_ASK = re.compile(r"\b(?:set|start|put on|make)\b.{0,20}\b(?:timer|alarm|countdown)\b|\btimer for\b|"
+                        r"\bremind me (?:in|at) |\bremind me\b.{0,60}\b(?:in \d+|at \d|at (?:noon|midnight)|"
+                        r"in (?:an?|one|two|five|ten|half an?) (?:hour|minute))|\bwake me\b|টাইমার", re.I)
+_COINS = (r"(?:bitcoin|\bbtc\b|ethereum|\beth\b|\bsolana\b|\bsol\b|\bbnb\b|\bxrp\b|dogecoin|\bdoge\b|"
+          r"\bpepe\b|cardano|\bton\b|crypto|\bcoin\b|nvidia|tesla|apple stock|\bstock\b|\bshares?\b|s&p 500|"
+          r"nasdaq|dow jones|বিটকয়েন|ক্রিপ্টো|শেয়ার)")
+# Bengali price words sit outside \b: Python's \b breaks at Bengali vowel signs. A price word alone ("আলুর দাম")
+# isn't a market question: it needs a coin or stock word next to it.
+_MARKET_ASK = re.compile(rf"(?:\b(?:price|prices|worth|value|trading at|how much|rate)\b|দাম|মূল্য).{{0,40}}{_COINS}|"
+                         rf"{_COINS}.{{0,30}}(?:\b(?:price|prices|worth|trading|now|today)\b|দাম|মূল্য)", re.I)
+
+
+class _Calc:
+    """A message that is a sum or a conversion ("what's 17.5% of 2,340", "how many miles is 42 km"):
+    gpt-oss-20b gets arithmetic wrong, so its answer must come from calculate. Not "open 24/7" or a date."""
+    _ONLY_MATH = re.compile(r"^\W*(?:what'?s|what is|calculate|compute|how much is|work out|solve)?\s*"
+                            r"[\d\s.,()]+(?:\s*(?:[-+*/×÷^x]|times|plus|minus|divided by|multiplied by)\s*[\d\s.,()]+)+"
+                            r"(?:squared|cubed)?\s*\??\W*$", re.I)
+    _WORDED = re.compile(r"\d+(?:\.\d+)?\s*(?:%|percent|per cent)\s*of\s*\d|\bsquare root of\s*\d|"
+                         r"\bconvert\s+-?\d|\bhow many \w+(?: \w+)? (?:is|are|in|make) -?\d|"
+                         r"\d\s*(?:km|kg|miles?|lbs?|pounds|feet|ft|c|f|celsius|fahrenheit|katha|bigha|acres?)\s+"
+                         r"(?:to|in|into) (?:km|kg|miles?|lbs?|pounds|feet|ft|meters?|celsius|fahrenheit|sq ft|square feet|acres?|decimal)\b",
+                         re.I)
+
+    def search(self, text: str):
+        return self._ONLY_MATH.match(text) or self._WORDED.search(text)
+
+
+_CALC_ASK = _Calc()
 # (request pattern, tool the answer needs, note for the one retry when the model answered without it)
 REQUIRED_TOOLS = [
     (_MEMORY_ASK, "propose_memory", "Mahadi asked you to remember that, and you can't save memory yourself: call "
@@ -723,7 +774,20 @@ REQUIRED_TOOLS = [
                                   "with the key words, then answer from what it finds."),
     (_WEB_ASK, "web_search", "Mahadi asked you to look this up, so don't answer from memory: call web_search now, "
                              "then answer from the results and name the source."),
+    (_WEATHER_ASK, "get_weather", "Mahadi asked about the weather, which you can't know: call get_weather now and "
+                                  "answer only from its figures."),
+    (_TIMER_ASK, "set_timer", "Mahadi asked for a timer or a timed reminder: call set_timer now with his words. "
+                              "Don't say it's set until the tool says so."),
+    (_CALC_ASK, "calculate", "That's a sum or a conversion: call calculate with it now and say its result; don't "
+                             "work it out yourself."),
+    (_MARKET_ASK, "market_price", "Mahadi asked for a live price: call market_price now and use its figures."),
 ]
+# A required agent's request goes to that agent (delegate), with nothing else to call first.
+for _a in agents.all_agents():
+    if (_meta := agents._agents[_a["name"]]["metadata"]).get("required") == "true" and _meta.get("triggers"):
+        REQUIRED_TOOLS.append((re.compile(_meta["triggers"], re.I), "delegate",
+                               f"This is a job for the {_a['name']} agent: call delegate with agent='{_a['name']}' and "
+                               "Mahadi's request as the task."))
 # A required skill's request also goes without the web tools: with them, gpt-oss-120b ran three searches
 # and a page read (~4 Tavily credits) before the retry note sent it to the skill.
 _REQUIRED_SKILL = (re.compile(skills.trigger_pattern(required_only=True), re.I)
@@ -755,7 +819,17 @@ TOOL_MAP = {
     **calendar_tools.TOOL_MAP,
     **rates.TOOL_MAP,
     **skills.TOOL_MAP,
+    **weather.TOOL_MAP,
+    **timers.TOOL_MAP,
+    **calc.TOOL_MAP,
+    **markets.TOOL_MAP,
+    **agents.TOOL_MAP,
 }
+# Agents run their own requests through the same model chain and tools. The lambdas look the names up when
+# called, so regression.py's request counter (it replaces _stream_completion) and its tool spies see them too.
+agents.configure(complete=lambda *a: _stream_completion(*a), tools=TOOLS, tool_map=TOOL_MAP,
+                 context=lambda: context_block("", get_language()), memory=memory_store.block,
+                 api_errors=API_ERRORS)
 
 
 # ---------- which tools a request gets ----------
@@ -775,11 +849,22 @@ TOOL_GROUPS = [
      r"did (i|we|you) (say|tell|mention|ask|talk|discuss)|we (talked|discussed|spoke)|last (time|week|month)|"
      r"earlier|previous(ly)?|a while ago|days? ago|conversation|past chat|history|what was (it|that)|"
      r"বলেছিলাম|আগে|গত (সপ্তাহ|মাস)"),
-    (["web_search", "read_page"], r"search|look (it )?up|google|news|headline|latest|weather|forecast|"
+    (["web_search", "read_page"], r"search|look (it )?up|google|news|headline|latest|"
      r"price|stock|score|\bwho (is|was|won)|capital of|population|exchange|\brates?\b|currenc|dollar|"
      r"taka|euro|gold|inflation|how (tall|high|big|far|old|long)|when (was|did|is)|website|online|"
      r"official|\bopen\b|\bclosed\b|opening|office hours|visa|embassy|consulate|ivac|খোলা|বন্ধ|"
-     r"খবর|দাম|আবহাওয়া|সার্চ|খুঁজ|টাকা|ডলার"),
+     r"খবর|দাম|সার্চ|খুঁজ|টাকা|ডলার"),
+    (["get_weather"], r"weather|forecast|\brain|umbrella|temperature|\bhot\b|\bcold\b|humid|\bwindy?\b|sunny|cloudy|"
+     r"storm|thunder|\bdegrees\b|আবহাওয়া|বৃষ্টি|তাপমাত্রা|গরম|ঠান্ডা|ঝড়"),
+    (["set_timer", "timers"], r"timer|alarm|countdown|remind me|\bwake me\b|minutes? from now|টাইমার|অ্যালার্ম|মনে করিয়ে"),
+    (["calculate"], r"\d\s*[-+*/x×÷^%]\s*\d|\d\s*(%|percent)|calculat|\bsum\b|how much is \d|what'?s \d|square root|"
+     r"how many \w+( \w+)? (is|are|in|make) -?\d|"
+     r"sqrt|\bconvert|\b(to|in) (miles|km|kilometers?|kg|pounds|lbs|feet|meters?|celsius|fahrenheit|ounces|grams|"
+     r"liters?|gallons|mph|acres?|katha|bigha|decimal|sq ?ft|square feet)\b|times \d|divided|multipl|\bplus\b|"
+     r"\bminus\b|হিসাব|যোগফল|গুণ|ভাগ"),
+    (["market_price"], r"bitcoin|\bbtc\b|ethereum|\beth\b|crypto|binance|solana|\bsol\b|\bbnb\b|\bxrp\b|dogecoin|"
+     r"\bdoge\b|\bpepe\b|\busdt\b|altcoin|\bcoins?\b|\bstocks?\b|\bshares?\b|nasdaq|s&p|dow jones|ticker|nvidia|"
+     r"tesla|apple stock|বিটকয়েন|ক্রিপ্টো|শেয়ার"),
     (["get_datetime"], r"\btime\b|\bdate\b|what day|which day|today|clock|o'?clock|সময়|কয়টা|কটা বাজে|তারিখ|বার আজ"),
     (["morning_briefing"], r"good (morning|afternoon|evening)|briefing"),
     # Calendar is split: reading is most turns and costs ~270 tokens; the write tools add ~570.
@@ -796,8 +881,15 @@ TOOL_GROUPS = [
 ]
 if skills.trigger_pattern():
     TOOL_GROUPS.append((["use_skill"], skills.trigger_pattern()))
+if agents.trigger_pattern():
+    TOOL_GROUPS.append((["delegate"], agents.trigger_pattern()))
 _SMALL_TALK = re.compile(r"^(hi|hey|hello|yo|thanks|thank you|thx|ok(ay)?|cool|great|nice|got it|bye|"
                          r"good ?night|see you)\b[\w\s,.!']{0,20}$", re.I)
+
+
+# Left out when nothing matched (~660 tokens on every such turn): each has its own trigger words, and an agent's
+# job goes to it in code. If the model still reaches for one, the "not in request" retry sends every tool.
+_NOT_IN_FALLBACK = {"delegate", "get_weather", "set_timer", "timers", "calculate", "market_price"}
 
 
 def select_tools(user_text: str, previous_tools: set[str] = frozenset()) -> list[dict]:
@@ -807,7 +899,7 @@ def select_tools(user_text: str, previous_tools: set[str] = frozenset()) -> list
         if re.search(pattern, text) or previous_tools & set(group):
             names.update(group)
     if not names:
-        return [] if _SMALL_TALK.match(user_text.strip()) else TOOLS
+        return [] if _SMALL_TALK.match(user_text.strip()) else [t for t in TOOLS if t["function"]["name"] not in _NOT_IN_FALLBACK]
     return [t for t in TOOLS if t["function"]["name"] in names]
 
 
@@ -1564,6 +1656,7 @@ def _summarize(older: list[tuple[str, str]]) -> str:
 # model's own earlier reply, and it repeated its own wrong date over the tool's. The latest result of
 # these tools from the last few turns rides in the [Context] note instead (~150 tokens).
 FACT_TOOLS = ("list_holidays", "list_events", "find_free_time")
+SCREEN_CHARS = 900       # the previous reply's screen part, in the next request only
 FACT_TURNS = 3
 FACT_CHARS = 700
 _CALENDAR_WRITES = {"add_event", "move_event", "delete_event"}   # make earlier calendar reads stale
@@ -1616,7 +1709,12 @@ def _request_messages(turn_start: int, lang: str = "en") -> list:
     recent, older = past[-HISTORY_TURNS:], past[:-HISTORY_TURNS]
     # The memory files ride in the system message as a fixed block: it only changes when an entry does.
     out = [{"role": "system", "content": messages[0]["content"] + "\n\n" + memory_store.block()}]
-    for user, reply in recent:
+    # The previous reply's screen part (a skill's or agent's full version) rides along for one turn only, so a
+    # follow-up can use it: "yes, add those blocks" after the planner, "tell me more about the third one".
+    last = next((m for m in reversed(messages[1:turn_start]) if m["role"] == "assistant" and not m.get("tool_calls")), None)
+    for i, (user, reply) in enumerate(recent):
+        if i == len(recent) - 1 and last and last.get("screen") and reply == last["content"]:
+            reply += f"\n[Shown on screen, not spoken: {_clip(last['screen'], SCREEN_CHARS)}]"
         if user:
             out.append({"role": "user", "content": user})
         if reply:
@@ -1627,12 +1725,29 @@ def _request_messages(turn_start: int, lang: str = "en") -> list:
     return out + current[1:]
 
 
+def _agent_task(user_text: str, turn_start: int) -> str:
+    """The task for an agent handed a request in code: the request plus the last two turns (the agent can't
+    see the chat, and "research that" needs them)."""
+    recent = [(u, r) for u, r in _past_turns(messages[1:turn_start])[-2:] if u or r]
+    if not recent:
+        return user_text
+    earlier = " | ".join(f"Mahadi: {_clip(u, 200)} / Javid: {_clip(r, 200)}" for u, r in recent)
+    return f"{user_text}\n(Earlier in this chat: {earlier})"
+
+
 def _tools_used_in_previous_turn(turn_start: int) -> set[str]:
     names = set()
     for m in reversed(messages[1:turn_start]):
         if m["role"] == "user":
             break
-        names.update(c["function"]["name"] for c in m.get("tool_calls") or [])
+        for c in m.get("tool_calls") or []:
+            if c["function"]["name"] == "delegate":      # a follow-up gets the agent's tools, not a second run
+                try:
+                    names.update(agents.followup_tools(json.loads(c["function"]["arguments"]).get("agent", "")))
+                except (ValueError, AttributeError):
+                    pass
+            else:
+                names.add(c["function"]["name"])
     return names
 
 
@@ -1650,21 +1765,29 @@ def think_stream(user_text: str):
     web_tools.new_turn()
     skills.new_turn()
     memory_store.new_turn()
+    agents.new_turn()
     _new_proposals.clear()
     global _turn_heavy
     turn_start = len(messages)
     tools = select_tools(user_text, _tools_used_in_previous_turn(turn_start))
-    skill_first = bool(_REQUIRED_SKILL and _REQUIRED_SKILL.search(user_text))
-    if skill_first:
+    # A job for a required agent goes straight to it: the turn gets only delegate (the agent has the tools).
+    agent_first = agents.required_agent(user_text)
+    skill_first = not agent_first and bool(_REQUIRED_SKILL and _REQUIRED_SKILL.search(user_text))
+    if agent_first:
+        tools = [t for t in TOOLS if t["function"]["name"] == "delegate"]
+    elif skill_first:
+        tools = [t for t in tools if t["function"]["name"] not in WEB_TOOLS]
+    elif _MARKET_ASK.search(user_text):      # a live price: market_price, no web search (no Tavily credits)
         tools = [t for t in tools if t["function"]["name"] not in WEB_TOOLS]
     widened = False
-    _turn_heavy = is_heavy_turn(user_text, tools)
+    _turn_heavy = is_heavy_turn(user_text, tools) or bool(agent_first)
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
     reply = ""
     links = []
     screen = ""
     skill_results = []    # what the active skill's tools returned (the screen part if the model leaves it out)
+    via_agent = None      # an agent's answer ({agent, spoken, screen}) when one handled the turn
     lang = get_language()
     try:
         # A yes/no right after a memory proposal decides it here: the model can't save memory.
@@ -1696,7 +1819,8 @@ def think_stream(user_text: str):
         retried_required = False
         retried_holiday = False
         required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
-                    and not (skill_first and tool in WEB_TOOLS)]   # the skill answers without the web
+                    and not (skill_first and tool in WEB_TOOLS)   # the skill answers without the web
+                    and not (agent_first and tool != "delegate" and tool not in agents.agent_tools(agent_first))]
         if _CHALLENGE.search(user_text) and (earlier := _recent_tool_results(turn_start, RECHECK_TOOLS)):
             tool = list(earlier)[-1]
             required.append((tool, f"Mahadi is questioning your earlier answer. Don't just agree or repeat it: "
@@ -1707,6 +1831,14 @@ def think_stream(user_text: str):
         # rewrite each. The rejected draft and the note go only into requests (never `messages`), at
         # the point in the turn they were made: (len(messages) then, [draft, note]).
         notes = []
+        handoff = None      # an agent's answer waiting to be used as this round's reply
+        # A required agent's request is handed over in code: gpt-oss-20b offered only delegate still reached for
+        # other tools (Groq: "not in request"), and once widened it called use_skill("planner").
+        forced = None
+        if agent_first:
+            forced = {0: {"id": f"call_{uuid.uuid4().hex[:12]}", "name": "delegate",
+                          "arguments": json.dumps({"agent": agent_first, "task": _agent_task(user_text, turn_start)},
+                                                  ensure_ascii=False)}}
         rounds = MAX_TOOL_ROUNDS + 4
         for round_no in range(rounds):
             tool_calls = {}
@@ -1718,7 +1850,12 @@ def think_stream(user_text: str):
                 cut = len(req) - (len(messages) - at)
                 req = req[:cut] + extra + req[cut:]
             try:
-                text = "".join(_stream_completion(tool_calls, req, round_tools))
+                if forced:      # this round's call was decided in code
+                    tool_calls, text, forced = forced, "", None
+                elif handoff:   # the agent already answered Mahadi: no request to reword it
+                    text, handoff = handoff["spoken"], None
+                else:
+                    text = "".join(_stream_completion(tool_calls, req, round_tools))
             except API_ERRORS as e:
                 # The model reached for a tool select_tools didn't send (Groq rejects the call):
                 # widen to every tool and ask again.
@@ -1743,7 +1880,8 @@ def think_stream(user_text: str):
                     print(f"[retry] garbled reply: {text[:60]!r}")
                     continue
                 text = phrase("garbled", lang)
-            called = {c["function"]["name"] for m in messages[turn_start:] for c in m.get("tool_calls") or []}
+            called = ({c["function"]["name"] for m in messages[turn_start:] for c in m.get("tool_calls") or []}
+                      | agents.tools_used())
             missing = [(tool, note) for tool, note in required if tool not in called]
             if not tool_calls and missing and not retried_required:
                 retried_required = True
@@ -1760,8 +1898,8 @@ def think_stream(user_text: str):
                                               {"role": "user", "content": language_note(lang)}]))
                 continue
             if not tool_calls and web_tools.used():
-                problems = web_tools.check_reply(text)
-                if problems and not retried_web:
+                problems = web_tools.check_reply(text + ("\n" + via_agent["screen"] if via_agent else ""))
+                if problems and not retried_web and not via_agent:
                     retried_web = True
                     print(f"[web] answer rejected: {problems}")
                     notes.append((len(messages), [{"role": "assistant", "content": text},
@@ -1782,6 +1920,8 @@ def think_stream(user_text: str):
                     print(f"[holiday] rewrite still has {bad}; using the tool's list")
                     text = (lang == "en" and calendar_tools.holiday_fallback(list(held.values()))) or phrase("holiday_unsure", lang)
             skill = skills.active()
+            if not tool_calls and via_agent and not screen:
+                screen = via_agent["screen"]
             if not tool_calls and skill:
                 # A skill reply has a spoken part (cut to the skill's time budget) and a screen-only part.
                 text, screen = skills.split_reply(text)
@@ -1790,7 +1930,8 @@ def think_stream(user_text: str):
             if not tool_calls and web_tools.used():
                 # (problems were checked on the whole reply, screen part included, above)
                 # A skill's own spoken budget replaces the plain web answer's sentence cap.
-                text = web_tools.finalize(text, problems, max_sentences=None if skill else web_tools.MAX_SENTENCES)
+                text = web_tools.finalize(text, problems,
+                                          max_sentences=None if skill or via_agent else web_tools.MAX_SENTENCES)
                 links = web_tools.sources()
                 yield ("sources", links)
             if not tool_calls and screen:
@@ -1818,12 +1959,17 @@ def think_stream(user_text: str):
                 if call["name"] in ("web_search", "news_headlines") and not said_searching:
                     said_searching = True
                     yield ("say", phrase("searching", lang))   # spoken while the search runs
+                elif call["name"] == "delegate" and not said_searching:
+                    said_searching = True
+                    yield ("say", phrase("working", lang))     # an agent takes a while
                 yield ("tool", call["name"])
                 fn = TOOL_MAP.get(call["name"])
                 args = json.loads(call["arguments"] or "{}")
                 span = tracing.tool_start(call["name"])
                 try:
                     result = fn(args) if fn else f"Unknown tool: {call['name']}"
+                    if isinstance(result, types.GeneratorType):   # an agent: relay its progress, then its result
+                        result = yield from result
                 except TypeError as e:   # a made-up argument name (propose_memory(user=...)): let it retry
                     result = f"Wrong arguments for {call['name']}: {e}. Use only the parameters in its schema."
                 finally:
@@ -1833,6 +1979,11 @@ def think_stream(user_text: str):
                     skill_results.append(result)
                 while _new_proposals:
                     yield ("memory_proposal", _new_proposals.pop(0))
+                if call["name"] == "delegate":
+                    # One agent run per turn: if it failed, the model answers instead of starting it again.
+                    tools = [t for t in tools if t["function"]["name"] != "delegate"]
+                    if h := agents.take_handoff():
+                        handoff = via_agent = h
                 if call["name"] == "use_skill" and skills.active():
                     yield ("skill", skills.active()["name"])
                     # Unlock the skill's tools for the rest of the turn (and its follow-up turn).
@@ -1855,10 +2006,11 @@ def think_stream(user_text: str):
     finally:
         # Runs on normal finish and when the client aborts mid-stream,
         # so history always gets whatever was actually said.
-        messages.append({"role": "assistant", "content": reply.strip()})
+        messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {})})
         if reply.strip():
             log_message("assistant", reply.strip(), **({"sources": links} if links else {}),
-                        **({"screen": screen} if screen else {}), **({"skill": skills.active()["name"]} if skills.active() else {}))
+                        **({"screen": screen} if screen else {}), **({"skill": skills.active()["name"]} if skills.active() else {}),
+                        **({"agent": via_agent["agent"]} if via_agent else {}))
         _finish_turn_usage()
 
 
@@ -1944,8 +2096,22 @@ def speak(text: str, trace: tracing.Trace | None = None) -> None:
 
 
 # ---------- main loop ----------
+def _ring_timers() -> None:
+    """CLI only: announce timers and reminders as they come due (in the web UI the page rings them)."""
+    while True:
+        for t in timers.take_due():
+            text = t["announce"].get(get_language()) or t["announce"]["en"]
+            print(f"\n⏰ {text}")
+            try:
+                speak(text)
+            except Exception as e:
+                print(f"[tts] {str(e)[:80]}")
+        time.sleep(1)
+
+
 def main() -> None:
     _restore_context()
+    threading.Thread(target=_ring_timers, daemon=True).start()
     greeting = startup_greeting()
     print(f"Javid: {greeting}")
     speak(greeting)

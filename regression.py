@@ -1,11 +1,17 @@
 """
-Regression check for Javid's agent behaviour: 55 prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 89 cases, 75 of them prompts through the real LLM + tool loop.
 
     python regression.py              # run everything once
     python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
     python regression.py -k delete    # only cases whose name contains "delete"
     python regression.py -v           # print every reply, not just failures
     python regression.py --use-120b   # on gpt-oss-120b instead of the default gpt-oss-20b
+    python regression.py --offline    # only the 14 scripted cases: no LLM request, no tokens, a few seconds
+
+The scripted ("offline") cases fix the model's output to test what code decides whatever the model says: the
+garble guard, questions about Javid itself (about.py), and the voice every spoken sentence gets. Each case's
+line ends with its average time per turn and tokens: the web, weather and price services are fakes, so the
+time is the model's (plus Javid's own work), not what a real search adds.
 
 Runs on gpt-oss-20b alone by default (no fallback: a model change mid-run would mix results, and the live
 chain's 120b is the user's backup, so it is only used with --use-120b).
@@ -43,8 +49,15 @@ import weather  # noqa: E402
 import web_tools  # noqa: E402
 from groq import Groq  # noqa: E402
 
+class _SuiteGroq(Groq):
+    def _should_retry(self, response):
+        # A 429 comes straight to _counted_stream_completion, which waits it out and leaves the wait out of the
+        # turn's measured time; the SDK's own retry would sleep where the timer can't see it. 5xx still retry.
+        return response.status_code != 429 and super()._should_retry(response)
+
+
 # A stalled stream must fail the run, not hang the suite.
-javid.client = Groq(timeout=30.0, max_retries=2)
+javid.client = _SuiteGroq(timeout=30.0, max_retries=2)
 RUN_TIMEOUT_SEC = 150      # hard cap for one case run
 INFRA_RETRIES = 2          # re-runs when the API itself failed (not the assistant)
 API_FAILED_REPLY = tuple(javid.PHRASES["api_failed"].values())   # think_stream's canned reply on APIError
@@ -57,6 +70,7 @@ class InfraError(Exception):
 # Count LLM requests, and turn a 429 into a hard stop (each request costs ~1k tokens of the daily cap).
 LLM_REQUESTS = 0
 QUOTA_HIT: list[str] = []
+RATE_WAITS = [0.0]      # seconds slept riding out per-minute 429s: left out of a turn's measured time
 _orig_stream_completion = javid._stream_completion
 
 
@@ -67,6 +81,9 @@ def _counted_stream_completion(tool_calls, *args):
     """Count requests; ride out per-minute 429s (Gemini's free tier allows 5/min per model) and
     treat a longer wait (daily cap) as 'out of quota' so the suite stops instead of lying."""
     global LLM_REQUESTS
+    if _script is not None:      # an offline case: the model's part is scripted, no request is made
+        yield from _scripted_completion(tool_calls)
+        return
     for attempt in range(6):
         LLM_REQUESTS += 1
         try:
@@ -78,9 +95,86 @@ def _counted_stream_completion(tool_calls, *args):
                 QUOTA_HIT.append(str(e))
                 raise
             time.sleep(wait + 1)   # no chunk was yielded yet: a 429 arrives when the stream opens
+            RATE_WAITS[0] += wait + 1
 
 
 javid._stream_completion = _counted_stream_completion
+
+# ---------- scripted model: offline cases test what code decides, whatever the model says (no tokens) ----------
+_script: list | None = None     # the running offline case's model outputs, used in order
+SCRIPTED_REQUESTS = 0
+
+
+def call(tool, **args):
+    """A scripted tool call (a plain string in a script is a scripted reply)."""
+    return {"tool": tool, "args": args}
+
+
+def _scripted_completion(tool_calls):
+    global SCRIPTED_REQUESTS
+    if not _script:
+        raise AssertionError("the model was asked more often than the case's script allows")
+    SCRIPTED_REQUESTS += 1
+    step = _script.pop(0)
+    if isinstance(step, dict):
+        tool_calls[0] = {"id": f"call_s{SCRIPTED_REQUESTS}", "name": step["tool"], "arguments": json.dumps(step["args"])}
+    else:
+        yield step
+
+
+# ---------- voice: speak each reply the way index.html does, recording the voice edge-tts was asked for ----------
+TTS_CALLS: list[tuple[str, str]] = []     # (text, voice) for every edge-tts request
+
+
+class FakeCommunicate:
+    """edge_tts.Communicate without the network. Any option besides text and voice (rate, pitch) would
+    change how the voice sounds, so it fails the case."""
+
+    def __init__(self, text, voice, **options):
+        if options:
+            raise AssertionError(f"edge-tts asked for {options}: the locked voice is used as it is")
+        TTS_CALLS.append((text, voice))
+
+    async def stream(self):
+        yield {"type": "audio", "data": b"ID3 fake mp3"}
+
+
+@contextlib.contextmanager
+def fake_edge_tts():
+    real = javid.edge_tts.Communicate
+    javid.edge_tts.Communicate = FakeCommunicate
+    try:
+        yield
+    finally:
+        javid.edge_tts.Communicate = real
+
+
+_speech_client = None
+
+
+def page_speech(said: list[str], reply: str) -> list[str]:
+    """What index.html sends to /speak for one turn: each "say" event, then the reply sentence by sentence
+    (web_tools.sentences is feedSpeech's rule), skipping chunks with no letters or digits (speakChunk)."""
+    return [c for c in [*said, *web_tools.sentences(reply)] if re.search(r"[a-z0-9ঀ-৿]", c, re.I)]
+
+
+def speak_like_page(chunks: list[str], page_lang: str | None) -> list[tuple[str, str]]:
+    """POST each chunk to the server's /speak, as the page does; (chunk, voice used) for each."""
+    global _speech_client
+    if _speech_client is None:
+        from fastapi.testclient import TestClient   # no `with`: the server's startup (warm-up, pings) doesn't run
+        import server
+        _speech_client = TestClient(server.app)
+    out = []
+    with fake_edge_tts():
+        for chunk in chunks:
+            javid._tts_cache.clear()     # every sentence reaches edge-tts, so every one's voice is recorded
+            before = len(TTS_CALLS)
+            res = _speech_client.post("/speak", json={"text": chunk, **({"lang": page_lang} if page_lang else {})})
+            if res.status_code != 200 or len(TTS_CALLS) != before + 1:
+                raise AssertionError(f"/speak gave {res.status_code} for {chunk!r} ({len(TTS_CALLS) - before} edge-tts calls)")
+            out.append((chunk, TTS_CALLS[-1][1]))
+    return out
 
 RUN_TOKENS = {"requests": 0, "prompt": 0, "cached": 0, "completion": 0, "total": 0}   # every request, pings too
 _orig_record_usage = javid._record_usage
@@ -315,9 +409,9 @@ FAKE_AGG = {"result": "success", "time_last_update_unix": int(datetime.combine(T
             "rates": {"USD": 1, "BDT": 123.18, "CNY": 6.705, "CZK": 21.76}}
 
 
-def fake_rates(up: bool):
+def fake_rates(up: bool, ecb_up: bool = True):
     def get(url):
-        if not up:
+        if not up or (not ecb_up and "frankfurter" in url):
             raise OSError("network down (fake)")
         return copy.deepcopy(FAKE_ECB if "frankfurter" in url else FAKE_AGG)
     return get
@@ -390,11 +484,13 @@ WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 
 
 
 class FakeTavily:
-    def __init__(self):
-        self.searches, self.extracts = [], []
+    def __init__(self, down: bool = False):
+        self.searches, self.extracts, self.down = [], [], down
 
     def search(self, query, **kw):
         self.searches.append((query, kw))
+        if self.down:
+            raise ConnectionError("Tavily unreachable (fake)")
         results = next((r for pat, r in WEB_FIXTURES if re.search(pat, query, re.I)), [])
         return {"query": query, "results": copy.deepcopy(results), "usage": {"credits": 1}}
 
@@ -458,6 +554,10 @@ class Result:
     langs: list = field(default_factory=list)    # the reply language after each turn
     agents_run: list = field(default_factory=list)  # "agent" events (an agent took the job)
     timers: list = field(default_factory=list)   # timers/reminders running after the run
+    voices: list = field(default_factory=list)   # per turn: [(sentence, voice)] as the page had them spoken
+    seconds: list = field(default_factory=list)  # per turn: time until the reply was complete, minus 429 waits
+    tokens: int = 0                              # LLM tokens the run spent (all turns)
+    model_requests: int = 0                      # model requests the run made, real or scripted
 
     @property
     def tool_names(self):
@@ -483,6 +583,12 @@ class Case:
     history: list = field(default_factory=list)  # chat_log entries from earlier chats (for search_history)
     rates_up: bool = True                        # the fake exchange-rate APIs answer
     holidays: list = None                        # the fake public-holiday calendar (default HOLIDAYS)
+    ecb_up: bool = True                          # the ECB's rates answer (else only the aggregator does)
+    web_down: bool = False                       # every fake Tavily search fails
+    events: list = None                          # the fake calendar's events (default EVENTS)
+    script: list = None                          # offline: the model's outputs, in order (no LLM, no tokens)
+    speak: bool = False                          # speak each reply through /speak as the page does (fake edge-tts)
+    page_lang: str = None                        # the language a (stale) page sends to /speak with each sentence
 
 
 def called(name):
@@ -704,6 +810,101 @@ T5 = ["[2026-10-01 09:00] Call mom", "✓ [2026-10-01 09:05] Pay rent", "[2026-1
       "✓ [2026-10-02 10:10] Book flights", "[2026-10-03 08:00] Water plants"]
 T_DUP = ["[2026-10-01 09:00] Buy milk"]
 
+
+# ---------- checks for the offline (scripted) cases, voices and the skill/agent cases ----------
+def model_requests(n):
+    return lambda r: None if r.model_requests == n else f"expected {n} model request(s), the run made {r.model_requests}"
+
+
+def one_voice(voice):
+    """Every sentence spoken, in every turn, was synthesized in this voice, and every turn said something."""
+    def check(r):
+        if len(r.voices) != len(r.turns) or not all(r.voices):
+            return f"not every turn was spoken: sentences per turn {[len(v) for v in r.voices]}"
+        wrong = [(c, v) for turn in r.voices for c, v in turn if v != voice]
+        n = sum(map(len, r.voices))
+        return f"{len(wrong)} of {n} sentences weren't {voice}: {wrong[:3]}" if wrong else None
+    return check
+
+
+def voices_by_turn(*voices):
+    """Turn i was spoken entirely in voices[i]."""
+    def check(r):
+        got = [sorted({v for _, v in turn}) for turn in r.voices]
+        return None if got == [[v] for v in voices] else f"voices per turn should be {list(voices)}, got {got}"
+    return check
+
+
+def cached_phrases_in_locked_voices(r):
+    """Every fixed phrase is regenerated, sentence by sentence, in its language's locked voice, and the CLI's
+    speak() goes through the same synthesize()."""
+    bn = javid._BN_LETTERS.search
+    with fake_edge_tts():
+        TTS_CALLS.clear()
+        javid.warm_phrases()
+        warmed = dict(TTS_CALLS)
+        cached = list(javid._tts_cache)
+        real_run = javid.subprocess.run
+        javid.subprocess.run = lambda *a, **kw: None      # afplay
+        try:
+            javid.speak("Goodbye, Mahadi. Talk soon.")
+        finally:
+            javid.subprocess.run = real_run
+        cli_voice = TTS_CALLS[-1][1]
+    javid._tts_cache.clear()
+    want = {s: javid.VOICES[lang] for texts in javid.PHRASES.values() for lang, t in texts.items()
+            for s in web_tools.sentences(t) if len(s) <= javid._TTS_CACHE_MAX_CHARS}
+    if missing := [s for s in want if s not in warmed]:
+        return f"not regenerated: {missing[:3]}"
+    if wrong := [(s, warmed[s]) for s, v in want.items() if warmed[s] != v]:
+        return f"phrases in the wrong voice: {wrong[:3]}"
+    if stray := [(v, t) for v, t in cached if v != (javid.EDGE_VOICE_BN if bn(t) else javid.EDGE_VOICE)]:
+        return f"cache holds clips in another voice: {stray[:3]}"
+    want_cli = javid.VOICES[javid.get_language()]
+    return None if cli_voice == want_cli else f"the CLI's speak() used {cli_voice}, not {want_cli}"
+
+
+def figure_in(pattern, label):
+    """The figure appears in the spoken or the screen part."""
+    return lambda r: None if re.search(pattern, _plain(r.last + "\n" + r.screen)) else f"{label} is missing"
+
+
+def mentions_only_if(name_re, also_re, label):
+    """If the reply or screen names `name_re`, it must also say `also_re` (e.g. the ECB only as unavailable)."""
+    def check(r):
+        text = _plain(r.last + "\n" + r.screen)
+        return label if re.search(name_re, text, re.I) and not re.search(also_re, text, re.I) else None
+    return check
+
+
+def numbered_lines_at_least(n):
+    def check(r):
+        found = len(re.findall(r"^\s*(?:\d+|[০-৯]+)[.)]", r.screen, re.M))
+        return None if found >= n else f"screen lists {found} numbered stories (want {n}+)"
+    return check
+
+
+def tool_count_at_most(name, n):
+    return lambda r: None if r.tool_names.count(name) <= n else f"{name} ran {r.tool_names.count(name)} times (max {n})"
+
+
+ADVICE = (r"\byou should (?:buy|sell)\b|\b(?:good|great|right|bad) time to (?:buy|sell)\b|\bwill (?:rise|fall|go up|"
+          r"go down|climb|drop|hit|reach)\b|\bprice target\b|\bi (?:recommend|suggest) (?:buying|selling)\b")
+COULD_NOT = r"couldn.?t|could not|can.?t|unable|unavailable|not available|no (?:reliable )?(?:results|sources|news|information)|didn.?t find|down|failed"
+TODAY_EVENTS = [timed("standup", "Team standup", TODAY, 10), timed("dinner", "Dinner with Rafi", TODAY, 20)]
+
+# The reply that started the garble guard (chat_log, 2026-10-13), to "why does your voice change for tasks?".
+GARBLED_2026_10_13 = ("I’m designed to keep the conversation friendly friendly… Actually…\xa0…\xa0…... ... …\xa0…\xa0…\xa0... "
+                      "...\xa0...\xa0…\xa0...…\xa0…\n\nSorry…\xa0\xa0…\xa0…\n\n...\xa0…\n\n...")
+# Ellipsis fragments restarting themselves, the shape reported from gpt-oss-20b (that reply wasn't logged).
+FRAGMENT_LOOP = "Sure... I... I'm... I'm not... I'm not sure... I'm not sure what... I'm not sure what you mean..."
+TRAILS_OFF = ("You have two pending tasks, Mahadi: reply to the email and the meeting next Friday, and nothing on your "
+              "calendar today... and... ... ... ...")
+RATES_SCREEN = ("1 USD = 123.18 BDT (ExchangeRate-API, updated today)\n1 USD = 6.6938 CNY (European Central Bank, "
+                "reference rate)\n1 USD = 21.78 CZK (European Central Bank, reference rate)\n1 CNY = 18.40 BDT · 1 CZK = 5.6556 BDT")
+MARKET_SCREEN = ("Prices (Binance, today):\n- BTC  82,152.34  +1.36% in 24h  (high 83,158.00 · low 80,684.36)\n"
+                 "News:\n- No headlines found\nNot financial advice.")
+
 CASES = [
     # --- tasks ---
     Case("task: add", ["Add a task to renew my passport."],
@@ -871,8 +1072,146 @@ CASES = [
     Case("agent: market brief with live prices", ["Give me a crypto market update."],
          [called("delegate"), agent_ran("market"), called("market_price"), spoken_within(40),
           screen_has(r"82,?152", "BTC from Binance"), screen_has(r"not financial advice")]),
+    # ---------- audit 2026-10-20: three more cases per skill and agent ----------
+    # exchange-rates
+    Case("skill: exchange rates, koruna in taka (cross rate from code)", ["How many taka is one Czech koruna today?"],
+         [skill_ran("exchange-rates"), called("exchange_rates"), not_called("web_search"), spoken_within(25),
+          figure_in(r"5\.65\d*|5\.66", "the cross rate 1 CZK = 5.6556 BDT")]),
+    Case("skill: exchange rates in Bangla mode", ["আজকের exchange rates দেখাও"],
+         [skill_ran("exchange-rates"), called("exchange_rates"), not_called("web_search"), reply_in("bn"),
+          spoken_within(25), figure_in(r"123\.18|১২৩\.১৮", "BDT 123.18")], lang="bn"),
+    Case("skill: exchange rates with the ECB down use the aggregator, credited to it", ["Show me the exchange rates."],
+         [skill_ran("exchange-rates"), called("exchange_rates"), figure_in(r"6\.705", "CNY 6.705 from ExchangeRate-API"),
+          lambda r: None if not re.search(r"6\.69|21\.78", r.last + r.screen) else "quotes ECB figures it never got",
+          mentions_only_if(r"european central bank|\bECB\b", COULD_NOT, "names the ECB as a source while it was down"),
+          figure_in(r"(?i)exchange\s?rate[- ]?api", "ExchangeRate-API named")], ecb_up=False),
+    # morning-brief
+    Case("skill: morning brief with today's events", ["Morning brief, please."],
+         [skill_ran("morning-brief"), called("morning_briefing"), spoken_within(45), screen_has("standup"),
+          screen_has(r"dinner|rafi", "the dinner"), reply_has(r"standup|dinner|rafi", "an event, spoken"),
+          reply_lacks(r"dentist|project review|lunch with|hiking")], tasks=T3, events=TODAY_EVENTS),
+    Case("skill: morning brief with the news down invents no headlines", ["Give me my morning brief."],
+         [skill_ran("morning-brief"), called("morning_briefing"), reply_has(r"\b(3|three)\b", "3 pending"),
+          reply_has(COULD_NOT, "says the news is unavailable"),
+          lambda r: None if not re.search(r"padma|exports|chatbot|reuters|\bbbc\b", r.last + r.screen, re.I)
+          else "a headline appeared with the news down"], tasks=T3, web_down=True),
+    Case("skill: morning brief in Bangla mode", ["আমার morning brief দাও"],
+         [skill_ran("morning-brief"), called("morning_briefing"), reply_in("bn"), spoken_within(45),
+          reply_has(r"\b3\b|৩|তিন", "3 open tasks"), screen_has(r"padma|পদ্মা", "the Bangladesh headline")],
+         tasks=T3, lang="bn"),
+    # news-digest
+    Case("skill: news digest of two named regions", ["Give me world news headlines, three from Asia and three from Europe."],
+         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search", "read_page", "delegate"),
+          tool_arg("news_headlines", "topics", "asia"), tool_arg("news_headlines", "topics", "europe"),
+          screen_has(r"japan|thailand", "an Asia story"), screen_has(r"migration|rail", "a Europe story"),
+          screen_lacks(r"gaza|iran|zimbabwe"), spoken_within(60)]),
+    Case("skill: news digest follow-up about one story",
+         ["Give me 5 news stories from around the world.", "Tell me more about the Japan story."],
+         [skill_ran("news-digest"), called_in_turn(0, "news_headlines"), reply_has("japan"),
+          reply_has(r"snap election|election", "the election story")]),
+    Case("skill: news digest in Bangla mode", ["বিশ্বের খবর দাও"],
+         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search"), reply_in("bn"),
+          numbered_lines_at_least(4), spoken_within(60)], lang="bn"),
+    # market agent
+    Case("agent: market won't give buy/sell advice", ["Analyze bitcoin for me. Should I buy now?"],
+         [agent_ran("market"), called("market_price"), screen_has(r"82,?152", "BTC from Binance"),
+          screen_has(r"not financial advice"), reply_lacks(ADVICE), screen_lacks(ADVICE)]),
+    Case("agent: market update on the coins named", ["Market update on my coins: BTC and SOL."],
+         [agent_ran("market"), tool_arg("market_price", "symbols", "sol"), screen_has(r"104\.24", "SOL"),
+          screen_has(r"82,?152", "BTC"), screen_lacks(r"2,?396\.45|612\.30"), spoken_within(40)]),
+    Case("agent: market brief on a stock (Yahoo Finance)", ["Give me a stock market update on Apple."],
+         [agent_ran("market"), called("market_price"), screen_has(r"342\.94", "AAPL"), figure_in(r"(?i)yahoo", "Yahoo named"),
+          screen_has(r"not financial advice"), spoken_within(40)]),
+    # planner agent
+    Case("agent: planner for a named day", ["Plan my day on Friday."],
+         [agent_ran("planner"), called("list_events"), screen_has("dentist"), screen_has("friday"),
+          screen_lacks(r"project review|lunch with sam|hiking"), no_cal_writes, spoken_within(40)], tasks=T3),
+    Case("agent: planner, what to do first", ["What should I do first today?"],
+         [agent_ran("planner"), called("list_tasks"), screen_has(r"call mom|send report|water plants", "a pending task"),
+          screen_lacks(r"pay rent|book flights"), reply_has(r"call mom|send report|water plants", "a pending task, spoken"),
+          no_cal_writes], tasks=T5),
+    Case("agent: planner's blocks not added after a no",
+         ["Plan my day tomorrow.", "No thanks, leave my calendar as it is."],
+         [agent_ran("planner"), no_cal_writes, tool_count_at_most("delegate", 1),
+          reply_lacks(r"\b(?:i'?ve|i have|have been|has been|are now|is now) (?:added|scheduled|put)")], tasks=T5),
+    # research agent
+    Case("agent: research deep dive cites its sources", ["Do a deep dive on EV charging in Dhaka."],
+         [agent_ran("research"), called("web_search"), tool_count_at_most("web_search", 4), tool_count_at_most("read_page", 2),
+          screen_has(r"\[\d\]", "a source number"), screen_has(r"charg"), reply_lacks(r"\[\d\]"), links_shown,
+          spoken_within(40)]),
+    Case("agent: research with no results invents nothing", ["Research the history of the Ahsan Manzil palace."],
+         [agent_ran("research"), called("web_search"), reply_has(COULD_NOT, "says it found nothing"),
+          screen_lacks(r"\[\d\]"), lambda r: None if not re.search(r"\b18[4-9]\d\b|nawab|abdul ghani|\bpink\b",
+                                                                   r.last + r.screen, re.I) else "facts from memory, not sources"]),
+    Case("agent: research on contested prices flags the disagreement", ["Research gold prices in Dhaka: the pros and cons of buying gold now."],
+         [agent_ran("research"), called("web_search"), spoken_within(40),
+          lambda r: None if not re.search(r"15,?200|14,?650", r.last + r.screen) or re.search(DISAGREES, r.last + r.screen, re.I)
+          else "states one site's gold price as fact"]),
+    # ---------- voice: every sentence Javid says, through /speak, in the locked voice ----------
+    Case("voice: 5 chat replies, one voice",
+         ["Hello Javid.", "How are you doing today?", "Tell me a fun fact about the moon.",
+          "What's a good way to stay focused while working?", "Thanks, that's helpful."],
+         [one_voice(javid.EDGE_VOICE)], speak=True),
+    Case("voice: 5 task replies, one voice",
+         ["Add a task to renew my passport.", "What's on my task list?", "Mark buy milk as done.",
+          "Delete the call mom task.", "How many tasks are still pending?"],
+         [one_voice(javid.EDGE_VOICE), called("add_task"), called("complete_task"), called("delete_task")],
+         tasks=T3, speak=True),
+    Case("voice: fixed phrases and the phrase cache use the locked voices", ["Let's speak Bangla.", "Speak English."],
+         [voices_by_turn(javid.EDGE_VOICE_BN, javid.EDGE_VOICE), model_requests(0), cached_phrases_in_locked_voices],
+         script=[], speak=True),
+    Case("voice: Bangla mode is Pradeep only, English words too", ["কাল আমার কী আছে?"],
+         [one_voice(javid.EDGE_VOICE_BN)], lang="bn", speak=True,
+         script=["ঠিক আছে, মাহাদি। OK. Project review কাল দুপুর ২টায়।"]),
+    Case("voice: a taka sign stays in Andrew's voice, whatever a stale tab sends", ["Hello Javid."],
+         [one_voice(javid.EDGE_VOICE)], speak=True, page_lang="bn",
+         script=["The dollar is ৳122.50 today, Mahadi. That's the Bangladesh Bank rate."]),
+    # ---------- garble guard (scripted: the model's output is fixed, so these never depend on luck) ----------
+    Case("garble: the 2026-10-13 ellipsis reply is retried", ["Tell me a fun fact."],
+         [reply_has("three hearts"), model_requests(2)], script=[GARBLED_2026_10_13, "Octopuses have three hearts, Mahadi."]),
+    Case("garble: a fragment loop is retried", ["Tell me a fun fact."],
+         [reply_has("three hearts"), model_requests(2)], script=[FRAGMENT_LOOP, "Octopuses have three hearts, Mahadi."]),
+    Case("garble: a reply trailing off into dots is retried", ["What's up?"],
+         [reply_lacks(r"\.\.\.|…"), model_requests(2)], script=[TRAILS_OFF, "Not much, Mahadi. What can I do for you?"]),
+    Case("garble: twice garbled gets the apology, not the dots", ["Tell me a fun fact."],
+         [reply_has("lost my train of thought"), reply_lacks(r"\.\.\.|…"), model_requests(2)],
+         script=[GARBLED_2026_10_13, FRAGMENT_LOOP]),
+    Case("garble: a skill's garbled spoken part isn't diluted by its screen part", ["Show me today's exchange rates."],
+         [reply_lacks(r"\.\.\.|…"), reply_has(r"123\.18"), model_requests(4)],
+         script=[call("use_skill", name="exchange-rates"), call("exchange_rates"),
+                 "SPOKEN: One US dollar is... ... ... ... ...\nSCREEN:\n" + RATES_SCREEN,
+                 "SPOKEN: One US dollar is 123.18 taka, 6.69 yuan and 21.78 koruna, per ExchangeRate-API and the "
+                 "European Central Bank.\nSCREEN:\n" + RATES_SCREEN]),
+    # The screen part: Javid's own loop only ever saw an agent's spoken part, so a garbled screen went straight up.
+    Case("garble: an agent's garbled screen part is asked for again", ["Give me a crypto market update."],
+         [agent_ran("market"), reply_has(r"82,?152"), screen_has("not financial advice"), screen_lacks(r"\.\.\.|…"),
+          model_requests(3)],
+         script=[call("market_price", symbols=["BTC"]),
+                 "SPOKEN: Bitcoin is at 82,152.34 dollars on Binance, up 1.36 percent in 24 hours.\nSCREEN:\n"
+                 "Prices... ... ... ...\n- BTC... BTC... BTC... ... ...",
+                 "SPOKEN: Bitcoin is at 82,152.34 dollars on Binance, up 1.36 percent in 24 hours.\nSCREEN:\n" + MARKET_SCREEN]),
+    # ---------- questions about Javid itself: answered from about.py, never the model ----------
+    Case("self: why the voice changes (the 2026-10-13 question)",
+         ["I wanted to ask about one thing. When you are talking as a Javid, the voice is one and when you are "
+          "talking about the task, the voice changes. Why is that?"],
+         [reply_has("andrew"), reply_has("pradeep"), reply_has("no other voice"), model_requests(0)], script=[]),
+    Case("self: weather sources (the 2026-10-15 question)",
+         ["What type of sources are you using to find the weather? Because there are reliable and authentic "
+          "thousands of websites."],
+         [reply_has("open-meteo"), reply_lacks(r"reuters|bloomberg|trained"), model_requests(0)], script=[]),
+    Case("self: model and design, with the full picture on screen", ["How do you work? Which model do you run on?"],
+         [reply_has(r"gpt-oss-20b"), screen_has("tavily"), screen_has("edge-tts"), screen_has("open-meteo"),
+          model_requests(0)], script=[]),
+    Case("self: in Bangla mode, in Bangla", ["তুমি কীভাবে কাজ করো?"],
+         [reply_in("bn"), model_requests(0)], lang="bn", script=[]),
+    Case("self: ordinary questions still go to the model",
+         ["How do you work out 17.5% of 2,340?", "So, what's your opinion on that?"],
+         [called("calculate"), lambda r: None if "409.5" in r.replies[0] else "first reply lacks 409.5",
+          reply_has("round number"), model_requests(3)],
+         script=[call("calculate", expression="17.5% of 2,340"), "It's 409.5, Mahadi.",
+                 "It's a tidy result, not quite a round number."]),
 ]
-assert len(CASES) == 55, len(CASES)
+assert len(CASES) == 89, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -892,6 +1231,7 @@ def print_token_summary() -> None:
 
 # ---------- runner ----------
 def run_case(case: Case) -> Result:
+    global _script
     # Fresh world for every run.
     with open(javid.TASKS_FILE, "w") as f:
         f.write("".join(l + "\n" for l in case.tasks))
@@ -905,14 +1245,14 @@ def run_case(case: Case) -> Result:
         f.write("".join(json.dumps(e, ensure_ascii=False) + "\n" for e in case.history))
     javid._save_sessions({"active": None, "sessions": {}})
     javid._active["id"] = None
-    svc = FakeService(EVENTS, case.holidays or HOLIDAYS)
+    svc = FakeService(EVENTS if case.events is None else case.events, case.holidays or HOLIDAYS)
     ct._service = lambda: svc
     ct.status = lambda: "connected"
     ct._pending_delete = None
-    fake_web = FakeTavily()
+    fake_web = FakeTavily(down=case.web_down)
     web_tools._client = lambda: fake_web
     web_tools._cache.clear()
-    rates._get_json = fake_rates(case.rates_up)
+    rates._get_json = fake_rates(case.rates_up, case.ecb_up)
     rates._cache.clear()
     weather._get_json = fake_weather_get
     weather._cache.clear()
@@ -925,7 +1265,9 @@ def run_case(case: Case) -> Result:
     del javid.messages[1:]
 
     tools, replies, by_turn, sources, said, langs, screens, skills_run, agents_run = [], [], [], [], [], [], [""], [], []
-    facts_by_turn = []
+    facts_by_turn, voices, seconds, tokens = [], [], [], 0
+    _script = copy.deepcopy(case.script)
+    requests_before = LLM_REQUESTS + SCRIPTED_REQUESTS
     real_map = dict(javid.TOOL_MAP)
     turn = {"i": 0}
 
@@ -939,7 +1281,8 @@ def run_case(case: Case) -> Result:
     try:
         for i, text in enumerate(case.turns):
             turn["i"] = i
-            deltas = []
+            deltas, turn_said = [], []
+            started, waited = time.monotonic(), RATE_WAITS[0]
             with contextlib.redirect_stdout(io.StringIO()):   # silence the [tool] debug prints
                 for kind, value in javid.think_stream(text):
                     if kind == "delta":
@@ -948,6 +1291,7 @@ def run_case(case: Case) -> Result:
                         sources[:] = value
                     elif kind == "say":
                         said.append(value)
+                        turn_said.append(value)
                     elif kind == "screen":
                         screens[0] = value
                     elif kind == "skill":
@@ -955,22 +1299,28 @@ def run_case(case: Case) -> Result:
                     elif kind == "agent":
                         agents_run.append(value)
             reply = "".join(deltas).strip()
+            seconds.append(time.monotonic() - started - (RATE_WAITS[0] - waited))
             if javid.last_turn_usage:
-                TURN_TOKENS.append((case.name, javid.last_turn_usage))
+                TURN_TOKENS.append((case.name, {**javid.last_turn_usage, "seconds": round(seconds[-1], 2)}))
+                tokens += javid.last_turn_usage["total"]
             if reply.startswith(API_FAILED_REPLY):
                 raise InfraError(f"API error on turn {i + 1}")
             replies.append(reply)
+            if case.speak:
+                voices.append(speak_like_page(page_speech(turn_said, reply), case.page_lang))
             by_turn.append(len(svc.log))
             langs.append(javid.get_language())
             facts_by_turn.append(_all_facts())
     finally:
         javid.TOOL_MAP.update(real_map)
+        _script = None
 
     with open(javid.TASKS_FILE) as f:
         tasks = [l for l in f.read().splitlines() if l.strip()]
     return Result(case.turns, replies, tools, tasks, _all_facts(), list(svc.log), by_turn,
                   sources=sources, said=said, web=fake_web, langs=langs, screen=screens[0], skills_run=skills_run,
-                  facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json())
+                  facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json(), voices=voices,
+                  seconds=seconds, tokens=tokens, model_requests=LLM_REQUESTS + SCRIPTED_REQUESTS - requests_before)
 
 
 def main() -> int:
@@ -982,6 +1332,7 @@ def main() -> int:
     ap.add_argument("--models", default="",
                     help="comma-separated model ids to use as the chain for this run, e.g. gemini:gemini-3.7-flash")
     ap.add_argument("--use-120b", action="store_true", help=f"run on {BIG_MODEL} instead of {DEFAULT_MODEL}")
+    ap.add_argument("--offline", action="store_true", help="only the scripted cases (no LLM requests, no tokens)")
     args = ap.parse_args()
     # One model, no fallback: a fallback would mask that model's failures and mix results.
     chain = ([m.strip() for m in args.models.split(",") if m.strip()] if args.models
@@ -991,15 +1342,16 @@ def main() -> int:
         json.dump({"chain": chain}, f)
     javid.LLM_CHAIN_FILE = chain_file
 
-    if (problem := preflight()):
-        print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")
-        return 3
-    cases = [c for c in CASES if args.filter.lower() in c.name.lower()]
+    cases = [c for c in CASES if args.filter.lower() in c.name.lower() and (c.script is not None or not args.offline)]
     if not cases:
         print(f"No case matches {args.filter!r}")
         return 2
+    live = [c for c in cases if c.script is None]
+    if live and (problem := preflight()):
+        print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")
+        return 3
     left = javid.daily_left(chain[0])
-    need = 1400 * sum(len(c.turns) for c in cases) * args.repeat     # ~1.4k tokens per turn, measured
+    need = 1400 * sum(len(c.turns) for c in live) * args.repeat     # ~1.4k tokens per turn, measured
     if left is not None and left < need:
         print(f"warning: {chain[0]} has ~{left:,} of its daily tokens left and this run needs ~{need:,}; "
               f"it will probably stop early (it refills ~{javid._tpd_limit(chain[0])[0] // 24:,}/hour)\n")
@@ -1013,7 +1365,7 @@ def main() -> int:
     failed_runs = errored_runs = passed_runs = flaky = 0
     for case in cases:
         passes = errors = 0
-        notes = []
+        notes, timing = [], []      # timing: (seconds per turn, tokens) of each completed run
         for n in range(args.repeat):
             r, problems, detail, tools = None, [], "", "-"
             for attempt in range(INFRA_RETRIES + 1):
@@ -1022,6 +1374,7 @@ def main() -> int:
                 signal.alarm(RUN_TIMEOUT_SEC)
                 try:
                     r = run_case(case)
+                    timing.append((sum(r.seconds) / max(len(r.seconds), 1), r.tokens))
                     problems = [p for chk in case.checks if (p := chk(r))]
                     detail = " | ".join(f"{t!r} → {a[:110]!r}" for t, a in zip(r.turns, r.replies))
                     tools = ", ".join(r.tool_names) or "-"
@@ -1055,6 +1408,9 @@ def main() -> int:
         errored_runs += errors
         flaky += status != "PASS"
         suffix = f"  ({passes}/{args.repeat})" if args.repeat > 1 else ""
+        if timing:
+            suffix += (f"  [{sum(t for t, _ in timing) / len(timing):.1f} s/turn, "
+                       f"{sum(n for _, n in timing) / len(timing):,.0f} tokens{', offline' if case.script is not None else ''}]")
         print(f"{status:5} {case.name}{suffix}")
         for n, problems, tools, detail in notes:
             tag = f"run {n}: " if args.repeat > 1 else ""

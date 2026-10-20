@@ -31,7 +31,7 @@ DEFAULT_ROUNDS = 4
 DEFAULT_SPOKEN_SECONDS = 40
 
 _agents: dict[str, dict] = {}
-_cfg: dict = {}     # set by javid.py: complete, tools, tool_map, context, memory, api_errors
+_cfg: dict = {}     # set by javid.py: complete, tools, tool_map, context, memory, api_errors, garbled
 _turn: dict = {}
 
 
@@ -255,13 +255,20 @@ def delegate(agent: str = "", task: str = ""):
             for c in calls:
                 result = yield from _run_tool(a, c, counts, limits)
                 msgs.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+        if text.strip() and _cfg["garbled"](text):     # a loop of "… … …": ask once more, then give up
+            print(f"[agent] {a['name']} garbled answer: {text[:60]!r}")
+            text = "".join(_cfg["complete"]({}, msgs, []))
+            if _cfg["garbled"](text):
+                return (f"The {a['name']} agent's answer came out garbled. Tell Mahadi it couldn't finish, and "
+                        "answer briefly yourself if you can.")
         spoken, screen = skills.split_reply(text)
         if not screen and text.strip():     # it skipped the screen part (the research report, once): ask for it
             msgs += [{"role": "assistant", "content": text},
                      {"role": "user", "content": "[Note] Your answer has no SCREEN part. Write it now: start with "
                                                  "'SCREEN:' and follow the format exactly."}]
             extra = "".join(_cfg["complete"]({}, msgs, []))
-            screen = skills.split_reply(extra)[1] or re.sub(r"^\W*screen\W*:?\s*", "", extra.strip(), flags=re.I)
+            if not _cfg["garbled"](extra):
+                screen = skills.split_reply(extra)[1] or re.sub(r"^\W*screen\W*:?\s*", "", extra.strip(), flags=re.I)
         if (missing := _missing(meta, fetched, day, spoken, screen)):
             print(f"[agent] {a['name']} left out: {missing}")
             msgs += [{"role": "assistant", "content": f"SPOKEN: {spoken}\nSCREEN:\n{screen}"},
@@ -269,7 +276,7 @@ def delegate(agent: str = "", task: str = ""):
                                                  + ". Rewrite the whole answer with them in it, at their times, in the "
                                                    "same format."}]
             retry = "".join(_cfg["complete"]({}, msgs, []))
-            if retry.strip():
+            if retry.strip() and not _cfg["garbled"](retry):
                 spoken, screen = skills.split_reply(retry)
         if web_tools.used():
             problems = web_tools.check_reply(spoken + "\n" + screen)
@@ -278,7 +285,7 @@ def delegate(agent: str = "", task: str = ""):
                 msgs += [{"role": "assistant", "content": text},
                          {"role": "user", "content": web_tools.correction(problems, in_skill=True)}]
                 retry = "".join(_cfg["complete"]({}, msgs, []))
-                if retry.strip():
+                if retry.strip() and not _cfg["garbled"](retry):
                     spoken, screen = skills.split_reply(retry)
             screen = _drop_unconfirmed(screen)
     except _cfg["api_errors"]:

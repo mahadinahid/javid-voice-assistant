@@ -21,20 +21,17 @@ import tracing
 import web_tools
 from javid import (
     _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
-    LANGUAGES, clear_provider_key, get_language, is_noise, llm_status, phrase,
+    clear_provider_key, get_language, is_noise, llm_status, phrase,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
-    set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn,
+    set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
 )
 
 
 # ---------- startup ----------
 def _warm_tts():
     try:
-        for lang in LANGUAGES:
-            synthesize(phrase("ack", lang), lang)
-            synthesize(phrase("searching", lang), lang)
-            synthesize(phrase("working", lang), lang)
+        warm_phrases()
     except Exception as e:
         print(f"[tts] warm-up failed: {str(e)[:80]}")
 
@@ -51,8 +48,8 @@ def _check_models():
 async def lifespan(app: FastAPI):
     _restore_context()      # reopen the chat that was open (and split an old single log into chats, once)
     print("\nJavid is up. Open http://localhost:8000\n")
-    # The first TTS call after startup is slow (cold connection); warm it and the
-    # cache with the hands-free acknowledgement so the first "Hey Javid" is quick.
+    # The first TTS call after startup is slow (cold connection); warm it and regenerate the
+    # cache of fixed phrases ("Yes?" first) so the first "Hey Javid" is quick.
     threading.Thread(target=_warm_tts, daemon=True).start()
     threading.Thread(target=_check_models, daemon=True).start()
     yield
@@ -97,8 +94,7 @@ def _use_session(sid: str | None) -> None:
 
 
 class SpeakBody(BaseModel):
-    text: str
-    lang: str | None = None     # the reply's language; None = the current setting
+    text: str     # the voice comes from the server's language setting, never the page's copy of it
 
 
 class LanguageBody(BaseModel):
@@ -315,10 +311,12 @@ def calendar_connect():
 
 @app.post("/speak")
 def speak_text(body: SpeakBody):
-    """The language's locked voice for one sentence. 503 = edge-tts failed every try: the page
-    shows the text with a "voice unavailable" notice (there is no other voice)."""
+    """The locked voice for one sentence, chosen here from the language setting: a tab's own copy of the
+    language can be stale (another tab or the CLI switched it), and English sent with "bn" was read by
+    Pradeep. 503 = edge-tts failed every try: the page shows the text with a "voice unavailable" notice
+    (there is no other voice)."""
     try:
-        audio, media_type = synthesize(body.text, body.lang)
+        audio, media_type = synthesize(body.text)
     except Exception as e:
         print(f"[tts] unavailable: {str(e)[:120]}")
         raise HTTPException(503, "TTS unavailable")

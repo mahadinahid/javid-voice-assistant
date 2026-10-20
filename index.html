@@ -2523,10 +2523,11 @@ setInterval(() => {
 
 // ── Voice ─────────────────────────────────────────────────────────────────
 // Each sentence is synthesized by the server's voice for the reply language (/speak:
-// en-US-AndrewNeural, or bn-BD-PradeepNeural in Bangla mode) as soon as it arrives, then
-// played in order. Those are the ONLY voices: the user made them permanent, so there is no
-// browser-speech fallback. A sentence /speak can't voice (the server has already tried 3
-// times) is skipped; the text stays on screen with a "voice unavailable" notice under it.
+// en-US-AndrewNeural, or bn-BD-PradeepNeural in Bangla mode; the server picks it from its own
+// language setting, not this page's copy) as soon as it arrives, then played in order. Those
+// are the ONLY voices: the user made them permanent, so there is no browser-speech fallback.
+// A sentence /speak can't voice (the server has already tried 3 times) is skipped; the text
+// stays on screen with a "voice unavailable" notice under it.
 let voiceNoticeAt = 0;       // last "voice unavailable" toast, so it isn't shown per sentence
 let speechMsg = null;        // the message element sentences being queued now belong to
 let pendingSpeech = '';      // text received but not yet spoken (no sentence end yet)
@@ -2542,7 +2543,7 @@ async function fetchAudio(text) {
     const res = await fetch('/speak', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, lang: replyLang }),
+        body: JSON.stringify({ text }),
         signal: speechCtrl.signal,
     });
     if (!res.ok) throw new Error('tts ' + res.status);

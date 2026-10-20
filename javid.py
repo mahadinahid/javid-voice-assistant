@@ -26,6 +26,7 @@ import groq as _groq
 import openai as _openai
 from groq import APIError, BadRequestError, Groq, InternalServerError, NotFoundError, RateLimitError
 
+import about
 import agents
 import calc
 import calendar_tools
@@ -466,16 +467,59 @@ def reset_conversation() -> None:
     new_session()
 
 
-def _is_garbled(text: str) -> bool:
-    """Degenerate output: a run of ellipses/dots or one word on repeat (seen from gpt-oss-120b
-    answering a question about itself). Real replies are never mostly punctuation."""
-    s = text.strip()
-    marks = sum(c in ".…" for c in s)
+_PAUSE = re.compile(r"…+|\.{2,}|(?:\.\s){2,}\.?")      # an ellipsis, however it was typed
+_NO_WORD = re.compile(r"^[^\w\u0980-\u09ff]+$")       # a token with no letters or digits: "…", "—", "!!!"
+_FRAGMENT_END = re.compile(r"(?:…+|\.{2,}|[.!?।]+(?=\s|$)|\n)+")
+_WORD_EDGES = "\"'“”‘’()[]{}.,;:!?…—–-*·•"
+
+
+def _words(text: str) -> list[str]:
+    return [w for w in (t.strip(_WORD_EDGES).lower() for t in text.split()) if w and not _NO_WORD.match(w)]
+
+
+def _degenerate(text: str) -> str | None:
+    """Why one piece of text is degenerate model output, or None. The first check alone (mostly dots) caught the
+    2026-10-13 reply, but not a normal opening that trails off into "... … …", ellipsis-chopped fragments that
+    restart themselves ("I'm... I'm not... I'm not sure..."), other punctuation piling up, or a phrase on repeat."""
+    s = " ".join(text.replace("\u00a0", " ").split())
     non_space = sum(not c.isspace() for c in s)
-    if non_space >= 12 and marks / non_space > 0.3:
-        return True
-    words = re.findall(r"[a-z']+", s.lower())
-    return len(words) >= 8 and len(set(words)) / len(words) < 0.3
+    if non_space < 12:
+        return None
+    if sum(len(m) for m in re.findall(r"(?<!\d)\.(?!\d)|…", s)) / non_space > 0.3:   # dots in "27.3" don't count
+        return "mostly dots"
+    run = longest = 0
+    for token in s.split():
+        run = run + 1 if _NO_WORD.match(token) else 0
+        longest = max(longest, run)
+    if longest >= 3:
+        return "punctuation piling up"
+    words = _words(s)
+    pauses = len(_PAUSE.findall(s))
+    if pauses >= 4 and pauses * 6 >= len(words):
+        return "chopped into ellipsis fragments"
+    frags = [f for f in (tuple(_words(f)) for f in _FRAGMENT_END.split(s))
+             if f and not all(re.fullmatch(r"[\d.,:]+", w) for w in f)]      # "1." of a numbered list isn't one
+    if len(frags) >= 4:
+        seen, loops = set(), 0
+        for prev, f in zip([()] + frags, frags):
+            loops += f in seen or bool(prev and f[:len(prev)] == prev)
+            seen.add(f)
+        if loops * 2 >= len(frags):
+            return "fragments repeating"
+    joined = " " + " ".join(words) + " "
+    if re.search(r"\s((?:\S+\s){2,6}?)\1{2,}", joined) or re.search(r"\s(\S+\s)\1{3,}", joined):
+        return "a phrase on repeat"     # 2-6 words three times running, or one word four ("no, no, no" is speech)
+    if len(words) >= 8 and len(set(words)) / len(words) < 0.3:
+        return "one word on repeat"
+    return None
+
+
+def _is_garbled(text: str) -> bool:
+    """Degenerate output (seen from gpt-oss-120b and gpt-oss-20b): mostly dots, fragments trailing off into
+    ellipses, or words on repeat. A skill's or agent's SPOKEN and SCREEN parts are checked on their own too: a
+    long screen list used to dilute a garbled spoken part, which was then read aloud."""
+    spoken, screen = skills.split_reply(text)
+    return any(_degenerate(part) for part in dict.fromkeys((text, spoken, screen)) if part)
 
 
 def _restore_context() -> None:
@@ -829,7 +873,7 @@ TOOL_MAP = {
 # called, so regression.py's request counter (it replaces _stream_completion) and its tool spies see them too.
 agents.configure(complete=lambda *a: _stream_completion(*a), tools=TOOLS, tool_map=TOOL_MAP,
                  context=lambda: context_block("", get_language()), memory=memory_store.block,
-                 api_errors=API_ERRORS)
+                 api_errors=API_ERRORS, garbled=_is_garbled)
 
 
 # ---------- which tools a request gets ----------
@@ -1751,6 +1795,20 @@ def _tools_used_in_previous_turn(turn_start: int) -> set[str]:
     return names
 
 
+def _model_name(model_id: str) -> str:
+    provider, name = _split(model_id)
+    return f"{name.split('/')[-1]} on {PROVIDERS[provider]['label']}"
+
+
+def _self_facts() -> dict:
+    """What about.py says about the running Javid: read from the code and settings, never from the model."""
+    chain = [m for m in current_chain() if _has_key(m)] or default_chain()[:1]
+    return {"model": _model_name(chain[0]), "backups": [_model_name(m) for m in chain[1:]],
+            "provider": PROVIDERS[_split(chain[0])[0]]["label"], "stt": STT_MODEL,
+            "voice_en": EDGE_VOICE, "voice_bn": EDGE_VOICE_BN,
+            "skills": [s["name"] for s in skills.all_skills()], "agents": [a["name"] for a in agents.all_agents()]}
+
+
 def think_stream(user_text: str):
     """Yield ("tool", name), ("say", text), ("sources", links), ("lang", code) and ("delta", text)
     events as the reply is produced. "say" is spoken but isn't part of the reply ("Searching…");
@@ -1810,6 +1868,15 @@ def think_stream(user_text: str):
                 reply = phrase("switched", lang)
                 yield ("delta", reply)
                 return
+        # A question about Javid itself is answered from its fixed self-description: the model only guesses.
+        own = about.answer(user_text, lang, _self_facts())
+        if own:
+            tracing.mark("routing_done")
+            reply, screen = own
+            if screen:
+                yield ("screen", screen)
+            yield ("delta", reply)
+            return
         tracing.mark("routing_done")    # tools chosen; the next step is the first LLM request
         retried_empty = False
         retried_error = False
@@ -1908,8 +1975,8 @@ def think_stream(user_text: str):
             if not tool_calls:
                 held = _recent_tool_results(len(messages), ("list_holidays",), turns=FACT_TURNS + 1)
                 web = _results_since(turn_start, ("web_search", "read_page"))
-                about = bool(_HOLIDAY_ASK.search(user_text.lower()) or _results_since(turn_start, ("list_holidays",)))
-                bad = calendar_tools.check_holiday_reply(text, list(held.values()), web, about)
+                on_holidays = bool(_HOLIDAY_ASK.search(user_text.lower()) or _results_since(turn_start, ("list_holidays",)))
+                bad = calendar_tools.check_holiday_reply(text, list(held.values()), web, on_holidays)
                 if bad and not retried_holiday:
                     retried_holiday = True
                     print(f"[holiday] dates not in list_holidays: {bad}: {text[:60]!r}")
@@ -2030,10 +2097,16 @@ EDGE_ATTEMPTS = 3
 EDGE_ATTEMPT_SEC = 6.0       # abandon a stalled try after this long and retry
 
 
+# Bengali letters, not the whole block: the taka sign and Bengali digits are in it too, and "৳122.50" in an
+# English reply would have switched that one sentence to Pradeep (Andrew reads "৳" fine).
+_BN_LETTERS = re.compile(r"[\u0985-\u09b9\u09ce\u09dc-\u09e1\u09f0\u09f1]")
+
+
 def voice_for(text: str, lang: str | None = None) -> str:
-    """The language's locked voice. Bengali script always gets EDGE_VOICE_BN: AndrewNeural can't say
-    it (it returns a near-silent clip, which is how Bangla replies went unheard)."""
-    if _BN_CHARS.search(text):
+    """The reply language's locked voice; the server's setting unless a caller names the language (the
+    warm-up does). Bengali letters always get EDGE_VOICE_BN: AndrewNeural can't say them (it returns a
+    near-silent clip, which is how Bangla replies went unheard)."""
+    if _BN_LETTERS.search(text):
         return EDGE_VOICE_BN
     return VOICES[lang if lang in VOICES else get_language()]
 
@@ -2073,6 +2146,23 @@ def synthesize(text: str, lang: str | None = None) -> tuple[bytes, str]:
             _tts_cache.pop(next(iter(_tts_cache)))
         _tts_cache[voice, text] = result
     return result
+
+
+_WARM_FIRST = ("ack", "searching", "working")     # the ones said while Mahadi waits
+
+
+def warm_phrases() -> list[tuple[str, str]]:
+    """Regenerate the cached audio of every fixed phrase in each language, sentence by sentence as the page
+    asks /speak for them, so a cached clip is always the locked voice's. Returns (sentence, voice) pairs."""
+    _tts_cache.clear()
+    done = []
+    for key in sorted(PHRASES, key=lambda k: k not in _WARM_FIRST):
+        for lang, text in PHRASES[key].items():
+            for sentence in web_tools.sentences(text):
+                if len(sentence) <= _TTS_CACHE_MAX_CHARS:
+                    synthesize(sentence, lang)
+                    done.append((sentence, voice_for(sentence, lang)))
+    return done
 
 
 def speak(text: str, trace: tracing.Trace | None = None) -> None:

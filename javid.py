@@ -825,6 +825,10 @@ REQUIRED_TOOLS = [
     (_CALC_ASK, "calculate", "That's a sum or a conversion: call calculate with it now and say its result; don't "
                              "work it out yourself."),
     (_MARKET_ASK, "market_price", "Mahadi asked for a live price: call market_price now and use its figures."),
+    # Rates questions and market briefs are answered in code; these reach the model only with something else asked.
+    (rates.ASK, "exchange_rates", "Mahadi asked about exchange rates: call exchange_rates now and use its figures "
+                                  "exactly, naming each one's source."),
+    (markets.BRIEF_ASK, "market_price", "Mahadi asked how the market is doing: call market_price now and use its figures."),
 ]
 # A required agent's request goes to that agent (delegate), with nothing else to call first.
 for _a in agents.all_agents():
@@ -906,6 +910,7 @@ TOOL_GROUPS = [
      r"sqrt|\bconvert|\b(to|in) (miles|km|kilometers?|kg|pounds|lbs|feet|meters?|celsius|fahrenheit|ounces|grams|"
      r"liters?|gallons|mph|acres?|katha|bigha|decimal|sq ?ft|square feet)\b|times \d|divided|multipl|\bplus\b|"
      r"\bminus\b|হিসাব|যোগফল|গুণ|ভাগ"),
+    (["exchange_rates"], rates.ASK.pattern),
     (["market_price"], r"bitcoin|\bbtc\b|ethereum|\beth\b|crypto|binance|solana|\bsol\b|\bbnb\b|\bxrp\b|dogecoin|"
      r"\bdoge\b|\bpepe\b|\busdt\b|altcoin|\bcoins?\b|\bstocks?\b|\bshares?\b|nasdaq|s&p|dow jones|ticker|nvidia|"
      r"tesla|apple stock|বিটকয়েন|ক্রিপ্টো|শেয়ার"),
@@ -1809,6 +1814,33 @@ def _self_facts() -> dict:
             "skills": [s["name"] for s in skills.all_skills()], "agents": [a["name"] for a in agents.all_agents()]}
 
 
+def _code_answer(user_text: str):
+    """A rates question or a market brief that code answers whole (rates.request, markets.brief_request): a
+    function of the reply language giving the answer's generator. None leaves the message to the model."""
+    if (req := rates.request(user_text)):
+        return lambda lang: rates.answer(req, lang)
+    if (req := markets.brief_request(user_text)):
+        return lambda lang: markets.brief(req, lang)
+    return None
+
+
+def _relay(answer, lang: str):
+    """Pass a code answer's tool events on, with "Searching…" before its web search as for the model's, and
+    return its (spoken, screen)."""
+    said_searching = False
+    while True:
+        try:
+            kind, value = next(answer)
+        except StopIteration as done:
+            return done.value
+        if kind == "tool":
+            print(f"[tool] {value} (answered in code)")
+            if value in WEB_TOOLS and not said_searching:
+                said_searching = True
+                yield ("say", phrase("searching", lang))
+        yield (kind, value)
+
+
 def think_stream(user_text: str):
     """Yield ("tool", name), ("say", text), ("sources", links), ("lang", code) and ("delta", text)
     events as the reply is produced. "say" is spoken but isn't part of the reply ("Searching…");
@@ -1868,11 +1900,22 @@ def think_stream(user_text: str):
                 reply = phrase("switched", lang)
                 yield ("delta", reply)
                 return
-        # A question about Javid itself is answered from its fixed self-description: the model only guesses.
+        # Answered in code, no LLM request: a question about Javid itself (the model only guesses), a rates
+        # question or a market brief (the model only copied the figures, and got their sources wrong).
         own = about.answer(user_text, lang, _self_facts())
-        if own:
+        in_code = None if own else _code_answer(user_text)
+        if own or in_code:
             tracing.mark("routing_done")
+        if in_code:
+            try:
+                own = yield from _relay(in_code(lang), lang)
+            except Exception as e:      # a bug in a code answer must not lose the turn: the model answers it
+                print(f"[code] {type(e).__name__}: {e}; the model answers instead")
+        if own:
             reply, screen = own
+            if web_tools.used():
+                links = web_tools.sources()
+                yield ("sources", links)
             if screen:
                 yield ("screen", screen)
             yield ("delta", reply)

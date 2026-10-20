@@ -229,7 +229,7 @@ def note_data(domain: str, text: str) -> None:
 
 def sources() -> list[dict]:
     """Links for the screen: every result this turn, in the order found."""
-    return [{k: s[k] for k in ("n", "name", "title", "url", "date_text", "official")}
+    return [{k: s[k] for k in ("n", "name", "title", "url", "date", "date_text", "official")}
             for s in _turn["sources"] if s["url"].startswith(("https://", "http://"))]
 
 

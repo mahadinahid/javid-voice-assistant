@@ -463,8 +463,15 @@ FAKE_TICKERS = {"BTCUSDT": ("82152.34", "1.363", "83158.00", "80684.36"), "ETHUS
                 "BNBUSDT": ("612.30", "-0.420", "620.10", "605.80"), "SOLUSDT": ("104.24", "2.070", "106.22", "100.43")}
 
 
+FAKE_STOCKS = {"AAPL": ("Apple Inc.", 342.94, 343.46, -0.151, 346.0, 340.12, "NasdaqGS"),
+               "^GSPC": ("S&P 500", 7697.39, 7666.72, 0.4, 7702.1, 7651.8, "SNP"),
+               "^IXIC": ("NASDAQ Composite", 26454.51, 26231.55, 0.85, 26470.0, 26150.2, "Nasdaq GIDS"),
+               "^DJI": ("Dow Jones Industrial Average", 51970.08, 52001.28, -0.06, 52110.4, 51890.6, "DJI")}
+
+
 def fake_market_get(url):
     import urllib.error
+    import urllib.parse
     if "binance" in url:
         sym = url.rsplit("=", 1)[1]
         if sym not in FAKE_TICKERS:
@@ -472,11 +479,12 @@ def fake_market_get(url):
         last, pct, high, low = FAKE_TICKERS[sym]
         return {"symbol": sym, "lastPrice": last, "priceChangePercent": pct, "highPrice": high, "lowPrice": low,
                 "quoteVolume": "1159623859.5", "closeTime": int(time.time() * 1000)}
-    if "yahoo" in url and "/AAPL?" in url:
-        return {"chart": {"result": [{"meta": {"symbol": "AAPL", "shortName": "Apple Inc.", "currency": "USD",
-                "regularMarketPrice": 342.94, "chartPreviousClose": 343.46, "regularMarketChangePercent": -0.151,
-                "regularMarketDayHigh": 346.0, "regularMarketDayLow": 340.12, "regularMarketTime": int(time.time()),
-                "fullExchangeName": "NasdaqGS", "exchangeTimezoneName": "America/New_York"}}]}}
+    if "yahoo" in url and (sym := next((k for k in FAKE_STOCKS if f"/{urllib.parse.quote(k)}?" in url), None)):
+        name, price, prev, pct, high, low, exchange = FAKE_STOCKS[sym]
+        return {"chart": {"result": [{"meta": {"symbol": sym, "shortName": name, "currency": "USD",
+                "regularMarketPrice": price, "chartPreviousClose": prev, "regularMarketChangePercent": pct,
+                "regularMarketDayHigh": high, "regularMarketDayLow": low, "regularMarketTime": int(time.time()),
+                "fullExchangeName": exchange, "exchangeTimezoneName": "America/New_York"}}]}}
     raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
 
 
@@ -558,6 +566,7 @@ class Result:
     seconds: list = field(default_factory=list)  # per turn: time until the reply was complete, minus 429 waits
     tokens: int = 0                              # LLM tokens the run spent (all turns)
     model_requests: int = 0                      # model requests the run made, real or scripted
+    tool_events: list = field(default_factory=list)  # [(turn_index, name)] from "tool" events: code answers too
 
     @property
     def tool_names(self):
@@ -591,22 +600,29 @@ class Case:
     page_lang: str = None                        # the language a (stale) page sends to /speak with each sentence
 
 
+def _ran(r, name, turn=None):
+    """The tool ran: called by the model (spied, with its args) or by code that answers on its own (a "tool" event)."""
+    return any((turn is None or t == turn) and n == name for t, n, _ in r.tools) or \
+        any((turn is None or t == turn) and n == name for t, n in r.tool_events)
+
+
 def called(name):
-    return lambda r: None if name in r.tool_names else f"expected a {name} call, got {r.tool_names or 'no tools'}"
+    return lambda r: None if _ran(r, name) else f"expected a {name} call, got {r.tool_names or [n for _, n in r.tool_events] or 'no tools'}"
 
 
 def called_in_turn(i, name):
-    return lambda r: None if any(t == i and n == name for t, n, _ in r.tools) else \
+    return lambda r: None if _ran(r, name, i) else \
         f"expected a {name} call in turn {i + 1}, got {[n for t, n, _ in r.tools if t == i] or 'no tools'}"
 
 
 def not_called(*names):
-    return lambda r: next((f"must not call {n}" for n in names if n in r.tool_names), None)
+    return lambda r: next((f"must not call {n}" for n in names if _ran(r, n)), None)
 
 
 def _plain(text):
-    """gpt-oss-120b writes narrow no-break spaces ("Victory\u202fDay", "3\u202fPM"): compare as spaces."""
-    return re.sub(r"[\u00a0\u202f\u2009]", " ", text)
+    """gpt-oss writes narrow no-break spaces ("Victory\u202fDay", "3\u202fPM") and no-break hyphens
+    ("fxquotes\u2011blog.com"): compare them as spaces and hyphens."""
+    return re.sub(r"[\u00a0\u202f\u2009]", " ", text).replace("\u2011", "-")
 
 
 def reply_has(pattern, label=None):
@@ -685,7 +701,7 @@ def tool_arg(tool, key, pattern):
 def web_cited(r):
     """Names one of the turn's sources and gives a date (web_tools.finalize guarantees it)."""
     names = [s["name"] for s in r.sources]
-    if not any(n.lower() in r.last.lower() for n in names):
+    if not any(n.lower() in _plain(r.last).lower() for n in names):
         return f"reply names no source (have {names})"
     return None if web_tools._HAS_DATE.search(r.last) else "reply has no date"
 
@@ -900,10 +916,19 @@ GARBLED_2026_10_13 = ("I’m designed to keep the conversation friendly friendly
 FRAGMENT_LOOP = "Sure... I... I'm... I'm not... I'm not sure... I'm not sure what... I'm not sure what you mean..."
 TRAILS_OFF = ("You have two pending tasks, Mahadi: reply to the email and the meeting next Friday, and nothing on your "
               "calendar today... and... ... ... ...")
-RATES_SCREEN = ("1 USD = 123.18 BDT (ExchangeRate-API, updated today)\n1 USD = 6.6938 CNY (European Central Bank, "
-                "reference rate)\n1 USD = 21.78 CZK (European Central Bank, reference rate)\n1 CNY = 18.40 BDT · 1 CZK = 5.6556 BDT")
-MARKET_SCREEN = ("Prices (Binance, today):\n- BTC  82,152.34  +1.36% in 24h  (high 83,158.00 · low 80,684.36)\n"
-                 "News:\n- No headlines found\nNot financial advice.")
+NEWS_SCREEN = ("Headlines (6 stories):\n1. World - UN climate talks open in Nairobi (Reuters, today)\n"
+               "2. World - Storms delay global shipping routes (AP, today)\n3. Asia - Japan's prime minister calls snap "
+               "election (Al Jazeera, today)\n4. Asia - Late monsoon floods hit northern Thailand (BBC, yesterday)\n"
+               "5. Europe - EU leaders back new migration deal (The Guardian, today)\n6. Europe - French rail workers "
+               "announce strike (BBC, yesterday)")
+PLAN_SPOKEN = ("SPOKEN: Tomorrow you have lunch with Sam at 1 PM and the project review at 2:30 PM, with time for your "
+               "tasks in the morning. Shall I add the suggested blocks to your calendar?")
+PLAN_SCREEN = (f"{TOMORROW:%A}, {TOMORROW:%B} {TOMORROW.day} · thunderstorms likely in the afternoon\n"
+               "9:00 AM - 9:30 AM  Call mom (suggested)\n10:00 AM - 11:00 AM  Send report (suggested)\n"
+               "1:00 PM - 2:30 PM  Lunch with Sam (calendar)\n2:30 PM - 3:30 PM  Project review (calendar)")
+# Garbled but with every event and the weekday in it, so the planner's own must-show check doesn't catch it.
+PLAN_GARBLED = (f"{TOMORROW:%A} ... ... ...\n1:00 PM - 2:30 PM  Lunch with Sam ... ... ...\n"
+                "2:30 PM - 3:30 PM  Project review ... ... ...")
 
 CASES = [
     # --- tasks ---
@@ -1014,17 +1039,6 @@ CASES = [
          [skill_ran("morning-brief"), called("morning_briefing"), spoken_within(45),
           reply_lacks(r"dentist|project review|lunch with|hiking|call mom|buy milk"),
           screen_lacks(r"dentist|project review|lunch with|hiking|call mom|buy milk")]),
-    Case("skill: exchange rates", ["Show me today's exchange rates."],
-         [skill_ran("exchange-rates"), called("exchange_rates"), not_called("web_search"), spoken_within(25),
-          lambda r: None if re.search(r"123\.18", r.last + r.screen) else "BDT 123.18 missing",
-          lambda r: None if re.search(r"6\.69", r.last + r.screen) else "CNY 6.69 missing",
-          lambda r: None if re.search(r"21\.78", r.last + r.screen) else "CZK 21.78 missing",
-          lambda r: None if re.search(r"european central bank|\bECB\b", r.last + r.screen, re.I) else "the ECB isn't named"]),
-    Case("skill: exchange rates unavailable gives no figures", ["What's the yuan rate in taka?"],
-         [skill_ran("exchange-rates"), called("exchange_rates"),
-          reply_lacks(r"\d+\.\d+"), screen_lacks(r"\d+\.\d+"),
-          reply_has(r"unavailable|couldn.?t|can.?t|n.?t available|unable|down", "says it couldn't"),
-          reply_lacks(r"\b(source|checked):")], rates_up=False),
     # The 2026-10-17 chat: searched topic by topic, ran out of tool rounds and answered "I can't pull that many".
     # Its "stock market mix" once sent it to the market agent instead (2026-10-19): news requests aren't market briefs.
     Case("skill: news digest of many stories",
@@ -1069,22 +1083,7 @@ CASES = [
           lambda r: None if r.writes_in_turn(1) else "no calendar writes after the yes",
           lambda r: None if r.tool_names.count("delegate") == 1 else f"the planner ran {r.tool_names.count('delegate')} times"],
          tasks=T5),
-    Case("agent: market brief with live prices", ["Give me a crypto market update."],
-         [called("delegate"), agent_ran("market"), called("market_price"), spoken_within(40),
-          screen_has(r"82,?152", "BTC from Binance"), screen_has(r"not financial advice")]),
     # ---------- audit 2026-10-20: three more cases per skill and agent ----------
-    # exchange-rates
-    Case("skill: exchange rates, koruna in taka (cross rate from code)", ["How many taka is one Czech koruna today?"],
-         [skill_ran("exchange-rates"), called("exchange_rates"), not_called("web_search"), spoken_within(25),
-          figure_in(r"5\.65\d*|5\.66", "the cross rate 1 CZK = 5.6556 BDT")]),
-    Case("skill: exchange rates in Bangla mode", ["আজকের exchange rates দেখাও"],
-         [skill_ran("exchange-rates"), called("exchange_rates"), not_called("web_search"), reply_in("bn"),
-          spoken_within(25), figure_in(r"123\.18|১২৩\.১৮", "BDT 123.18")], lang="bn"),
-    Case("skill: exchange rates with the ECB down use the aggregator, credited to it", ["Show me the exchange rates."],
-         [skill_ran("exchange-rates"), called("exchange_rates"), figure_in(r"6\.705", "CNY 6.705 from ExchangeRate-API"),
-          lambda r: None if not re.search(r"6\.69|21\.78", r.last + r.screen) else "quotes ECB figures it never got",
-          mentions_only_if(r"european central bank|\bECB\b", COULD_NOT, "names the ECB as a source while it was down"),
-          figure_in(r"(?i)exchange\s?rate[- ]?api", "ExchangeRate-API named")], ecb_up=False),
     # morning-brief
     Case("skill: morning brief with today's events", ["Morning brief, please."],
          [skill_ran("morning-brief"), called("morning_briefing"), spoken_within(45), screen_has("standup"),
@@ -1112,16 +1111,6 @@ CASES = [
     Case("skill: news digest in Bangla mode", ["বিশ্বের খবর দাও"],
          [skill_ran("news-digest"), called("news_headlines"), not_called("web_search"), reply_in("bn"),
           numbered_lines_at_least(4), spoken_within(60)], lang="bn"),
-    # market agent
-    Case("agent: market won't give buy/sell advice", ["Analyze bitcoin for me. Should I buy now?"],
-         [agent_ran("market"), called("market_price"), screen_has(r"82,?152", "BTC from Binance"),
-          screen_has(r"not financial advice"), reply_lacks(ADVICE), screen_lacks(ADVICE)]),
-    Case("agent: market update on the coins named", ["Market update on my coins: BTC and SOL."],
-         [agent_ran("market"), tool_arg("market_price", "symbols", "sol"), screen_has(r"104\.24", "SOL"),
-          screen_has(r"82,?152", "BTC"), screen_lacks(r"2,?396\.45|612\.30"), spoken_within(40)]),
-    Case("agent: market brief on a stock (Yahoo Finance)", ["Give me a stock market update on Apple."],
-         [agent_ran("market"), called("market_price"), screen_has(r"342\.94", "AAPL"), figure_in(r"(?i)yahoo", "Yahoo named"),
-          screen_has(r"not financial advice"), spoken_within(40)]),
     # planner agent
     Case("agent: planner for a named day", ["Plan my day on Friday."],
          [agent_ran("planner"), called("list_events"), screen_has("dentist"), screen_has("friday"),
@@ -1147,6 +1136,60 @@ CASES = [
          [agent_ran("research"), called("web_search"), spoken_within(40),
           lambda r: None if not re.search(r"15,?200|14,?650", r.last + r.screen) or re.search(DISAGREES, r.last + r.screen, re.I)
           else "states one site's gold price as fact"]),
+    # ---------- exchange rates and market briefs: answered in code (rates.py, markets.py), no model request ----------
+    Case("rates: the board, in code", ["Show me today's exchange rates."],
+         [called("exchange_rates"), not_called("web_search", "use_skill"), model_requests(0), spoken_within(25),
+          figure_in(r"123\.18", "BDT 123.18"), figure_in(r"6\.69", "CNY 6.69"), figure_in(r"21\.78", "CZK 21.78"),
+          figure_in(r"(?i)european central bank", "the ECB named"), figure_in(r"(?i)exchangerate-api", "ExchangeRate-API named")],
+         script=[]),
+    Case("rates: unavailable gives no figures", ["What's the yuan rate in taka?"],
+         [called("exchange_rates"), reply_lacks(r"\d+\.\d+"), screen_lacks(r"\d+\.\d+"),
+          reply_has(COULD_NOT, "says it couldn't"), model_requests(0)], rates_up=False, script=[]),
+    # The skill once said "1 Czech koruna is 5.6556 taka, based on the European Central Bank's reference rate".
+    Case("rates: koruna in taka credits both sources", ["How many taka is one Czech koruna today?"],
+         [figure_in(r"5\.66", "1 CZK = 5.66 BDT"), reply_has("european central bank"), reply_has("exchangerate-api"),
+          model_requests(0)], script=[]),
+    Case("rates: an amount is converted in code", ["How much is 500 yuan in taka?"],
+         [reply_has(r"9,201\.05"), screen_has(r"500 CNY = 9,201\.05 BDT"), model_requests(0)], script=[]),
+    Case("rates: in Bangla mode, in Bangla", ["আজকের exchange rates দেখাও"],
+         [reply_in("bn"), figure_in(r"123\.18", "BDT 123.18"), model_requests(0)], lang="bn", script=[]),
+    Case("rates: with the ECB down, the aggregator's figures, credited to it", ["Show me the exchange rates."],
+         [figure_in(r"6\.705", "CNY 6.705 from ExchangeRate-API"), reply_has("exchangerate-api"),
+          lambda r: None if not re.search(r"6\.69|21\.78", r.last + r.screen) else "quotes ECB figures it never got",
+          mentions_only_if(r"european central bank|\bECB\b", COULD_NOT, "names the ECB as a source while it was down"),
+          model_requests(0)], ecb_up=False, script=[]),
+    Case("rates: another currency goes to the model", ["What are the exchange rates for the euro and the yuan?"],
+         [called("exchange_rates"), model_requests(2)],
+         script=[call("exchange_rates"), "One yuan is 18.40 taka, Mahadi; the euro isn't on my rates board."]),
+    Case("rates: a second request in the same message goes to the model", ["Show me the exchange rates and tomorrow's weather."],
+         [called("exchange_rates"), called("get_weather"), model_requests(3)],
+         script=[call("exchange_rates"), call("get_weather", day="tomorrow"),
+                 "One US dollar is 123.18 taka, and tomorrow looks rainy, Mahadi."]),
+    Case("market: crypto brief, in code", ["Give me a crypto market update."],
+         [called("market_price"), called("news_headlines"), not_called("delegate"), model_requests(0), spoken_within(40),
+          screen_has(r"82,?152", "BTC from Binance"), screen_has("not financial advice"), links_shown, said_searching],
+         script=[]),
+    Case("market: no buy/sell advice", ["Analyze bitcoin for me. Should I buy now?"],
+         [screen_has(r"82,?152", "BTC from Binance"), reply_has("don't give buy or sell advice"), reply_lacks(ADVICE),
+          screen_lacks(ADVICE), model_requests(0)], script=[]),
+    Case("market: the coins named, and only those", ["Market update on my coins: BTC and SOL."],
+         [screen_has(r"104\.24", "SOL"), screen_has(r"82,?152", "BTC"), screen_lacks(r"2,?396\.45|612\.30"),
+          model_requests(0)], script=[]),
+    Case("market: a stock from Yahoo Finance", ["Give me a stock market update on Apple."],
+         [screen_has(r"342\.94", "AAPL"), reply_has("yahoo finance"), screen_has("not financial advice"), model_requests(0)],
+         script=[]),
+    Case("market: an unknown coin is said, not skipped", ["Market update on my coins: BTC and FOOCOIN."],
+         [reply_has(r"couldn't find FOOCOIN"), screen_has(r"82,?152", "BTC"), model_requests(0)], script=[]),
+    Case("market: a headline's one-site figure is left out", ["How's the stock market today?"],
+         [screen_has(r"7,?697\.39", "the S&P 500"), screen_has("wall street", "the figure-free headline"),
+          screen_lacks(r"1\.2%"), reply_lacks(r"1\.2%"), model_requests(0)], script=[]),
+    Case("market: in Bangla mode, in Bangla", ["ক্রিপ্টো market update দাও"],
+         [reply_in("bn"), screen_has(r"82,?152", "BTC"), model_requests(0)], lang="bn", script=[]),
+    Case("market: a second request in the same message goes to the model",
+         ["Give me a crypto market update and set a timer for 10 minutes."],
+         [called("market_price"), called("set_timer"), model_requests(3)],
+         script=[call("market_price", symbols=["BTC", "ETH", "BNB", "SOL"]), call("set_timer", duration="10 minutes"),
+                 "Bitcoin is at $82,152.34 on Binance, Mahadi, and your 10-minute timer is running."]),
     # ---------- voice: every sentence Javid says, through /speak, in the locked voice ----------
     Case("voice: 5 chat replies, one voice",
          ["Hello Javid.", "How are you doing today?", "Tell me a fun fact about the moon.",
@@ -1176,20 +1219,17 @@ CASES = [
     Case("garble: twice garbled gets the apology, not the dots", ["Tell me a fun fact."],
          [reply_has("lost my train of thought"), reply_lacks(r"\.\.\.|…"), model_requests(2)],
          script=[GARBLED_2026_10_13, FRAGMENT_LOOP]),
-    Case("garble: a skill's garbled spoken part isn't diluted by its screen part", ["Show me today's exchange rates."],
-         [reply_lacks(r"\.\.\.|…"), reply_has(r"123\.18"), model_requests(4)],
-         script=[call("use_skill", name="exchange-rates"), call("exchange_rates"),
-                 "SPOKEN: One US dollar is... ... ... ... ...\nSCREEN:\n" + RATES_SCREEN,
-                 "SPOKEN: One US dollar is 123.18 taka, 6.69 yuan and 21.78 koruna, per ExchangeRate-API and the "
-                 "European Central Bank.\nSCREEN:\n" + RATES_SCREEN]),
+    Case("garble: a skill's garbled spoken part isn't diluted by its screen part", ["Give me world news headlines."],
+         [skill_ran("news-digest"), reply_lacks(r"\.\.\.|…"), reply_has("snap election"), model_requests(4)],
+         script=[call("use_skill", name="news-digest"), call("news_headlines", topics=["World", "Asia", "Europe"], per_topic=2),
+                 "SPOKEN: I found... ... ... ... ...\nSCREEN:\n" + NEWS_SCREEN,
+                 "SPOKEN: I found six stories, Mahadi. Reuters reports that UN climate talks opened in Nairobi, Al "
+                 "Jazeera says Japan's prime minister called a snap election, and The Guardian says EU leaders backed "
+                 "a migration deal. The full list is on your screen.\nSCREEN:\n" + NEWS_SCREEN]),
     # The screen part: Javid's own loop only ever saw an agent's spoken part, so a garbled screen went straight up.
-    Case("garble: an agent's garbled screen part is asked for again", ["Give me a crypto market update."],
-         [agent_ran("market"), reply_has(r"82,?152"), screen_has("not financial advice"), screen_lacks(r"\.\.\.|…"),
-          model_requests(3)],
-         script=[call("market_price", symbols=["BTC"]),
-                 "SPOKEN: Bitcoin is at 82,152.34 dollars on Binance, up 1.36 percent in 24 hours.\nSCREEN:\n"
-                 "Prices... ... ... ...\n- BTC... BTC... BTC... ... ...",
-                 "SPOKEN: Bitcoin is at 82,152.34 dollars on Binance, up 1.36 percent in 24 hours.\nSCREEN:\n" + MARKET_SCREEN]),
+    Case("garble: an agent's garbled screen part is asked for again", ["Plan my day tomorrow."],
+         [agent_ran("planner"), screen_has("project review"), screen_lacks(r"\.\.\.|…"), no_cal_writes, model_requests(2)],
+         tasks=T3, script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_GARBLED, PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
     # ---------- questions about Javid itself: answered from about.py, never the model ----------
     Case("self: why the voice changes (the 2026-10-13 question)",
          ["I wanted to ask about one thing. When you are talking as a Javid, the voice is one and when you are "
@@ -1211,7 +1251,7 @@ CASES = [
          script=[call("calculate", expression="17.5% of 2,340"), "It's 409.5, Mahadi.",
                  "It's a tidy result, not quite a round number."]),
 ]
-assert len(CASES) == 89, len(CASES)
+assert len(CASES) == 96, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -1265,7 +1305,7 @@ def run_case(case: Case) -> Result:
     del javid.messages[1:]
 
     tools, replies, by_turn, sources, said, langs, screens, skills_run, agents_run = [], [], [], [], [], [], [""], [], []
-    facts_by_turn, voices, seconds, tokens = [], [], [], 0
+    facts_by_turn, voices, seconds, tokens, tool_events = [], [], [], 0, []
     _script = copy.deepcopy(case.script)
     requests_before = LLM_REQUESTS + SCRIPTED_REQUESTS
     real_map = dict(javid.TOOL_MAP)
@@ -1292,6 +1332,8 @@ def run_case(case: Case) -> Result:
                     elif kind == "say":
                         said.append(value)
                         turn_said.append(value)
+                    elif kind == "tool":
+                        tool_events.append((i, value))
                     elif kind == "screen":
                         screens[0] = value
                     elif kind == "skill":
@@ -1320,7 +1362,8 @@ def run_case(case: Case) -> Result:
     return Result(case.turns, replies, tools, tasks, _all_facts(), list(svc.log), by_turn,
                   sources=sources, said=said, web=fake_web, langs=langs, screen=screens[0], skills_run=skills_run,
                   facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json(), voices=voices,
-                  seconds=seconds, tokens=tokens, model_requests=LLM_REQUESTS + SCRIPTED_REQUESTS - requests_before)
+                  seconds=seconds, tokens=tokens, model_requests=LLM_REQUESTS + SCRIPTED_REQUESTS - requests_before,
+                  tool_events=tool_events)
 
 
 def main() -> int:

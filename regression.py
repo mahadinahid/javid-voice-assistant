@@ -1,15 +1,16 @@
 """
-Regression check for Javid's agent behaviour: 89 cases, 75 of them prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 103 cases, 66 of them prompts through the real LLM + tool loop.
 
     python regression.py              # run everything once
     python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
     python regression.py -k delete    # only cases whose name contains "delete"
     python regression.py -v           # print every reply, not just failures
     python regression.py --use-120b   # on gpt-oss-120b instead of the default gpt-oss-20b
-    python regression.py --offline    # only the 14 scripted cases: no LLM request, no tokens, a few seconds
+    python regression.py --offline    # only the 37 scripted cases: no LLM request, no tokens, a few seconds
 
 The scripted ("offline") cases fix the model's output to test what code decides whatever the model says: the
-garble guard, questions about Javid itself (about.py), and the voice every spoken sentence gets. Each case's
+garble guard, questions about Javid itself (about.py), the voice every spoken sentence gets, exchange rates
+and market briefs (answered in code), and the Telegram bot against a fake Bot API. Each case's
 line ends with its average time per turn and tokens: the web, weather and price services are fakes, so the
 time is the model's (plus Javid's own work), not what a real search adds.
 
@@ -44,6 +45,7 @@ import markets  # noqa: E402
 import memory_store  # noqa: E402
 import rates  # noqa: E402
 import skills  # noqa: E402
+import telegram_bot  # noqa: E402
 import timers  # noqa: E402
 import weather  # noqa: E402
 import web_tools  # noqa: E402
@@ -567,6 +569,7 @@ class Result:
     tokens: int = 0                              # LLM tokens the run spent (all turns)
     model_requests: int = 0                      # model requests the run made, real or scripted
     tool_events: list = field(default_factory=list)  # [(turn_index, name)] from "tool" events: code answers too
+    extra: dict = field(default_factory=dict)    # what a case's `drive` returned
 
     @property
     def tool_names(self):
@@ -598,6 +601,7 @@ class Case:
     script: list = None                          # offline: the model's outputs, in order (no LLM, no tokens)
     speak: bool = False                          # speak each reply through /speak as the page does (fake edge-tts)
     page_lang: str = None                        # the language a (stale) page sends to /speak with each sentence
+    drive: object = None                         # instead of turns: a function run in the same scratch world (Telegram)
 
 
 def _ran(r, name, turn=None):
@@ -820,6 +824,165 @@ OLD_CHAT = [
     {"ts": (LAST_WEEK + timedelta(hours=2)).isoformat(), "role": "divider", "text": ""},
 ]
 
+
+
+# ---------- Telegram: the bot's updates handled against a fake Bot API (telegram_bot.handle_update) ----------
+OWNER, STRANGER = 1111, 2222
+
+
+class FakeTelegram:
+    """The Bot API without the network: every call recorded; a voice note downloads as a few fake bytes."""
+
+    def __init__(self):
+        self.calls, self.next_id = [], 100
+
+    def api(self, method, files=None, _token=None, **params):
+        self.calls.append((method, params, files))
+        if method == "getMe":
+            if _token and "bad" in _token:
+                raise RuntimeError("401 Unauthorized")
+            return {"id": 42, "username": "javid_test_bot"}
+        if method in ("sendMessage", "sendVoice", "sendAudio"):
+            self.next_id += 1
+            return {"message_id": self.next_id}
+        return {"file_path": "voice/file_1.oga"} if method == "getFile" else True
+
+    def texts(self, chat_id):
+        return [p["text"] for m, p, _ in self.calls if m == "sendMessage" and p["chat_id"] == chat_id]
+
+
+def tg_message(user, text=None, voice=False, _n=[0]):
+    _n[0] += 1
+    msg = {"message_id": _n[0], "chat": {"id": user, "type": "private"}, "from": {"id": user},
+           **({"voice": {"file_id": "voice1", "duration": 2}} if voice else {"text": text})}
+    return {"update_id": _n[0], "message": msg}
+
+
+@contextlib.contextmanager
+def telegram_world(paired=True):
+    """A fresh bot state in scratch, the fake API, and voice notes that skip ffmpeg."""
+    fake = FakeTelegram()
+    saved = (telegram_bot._api, telegram_bot._download, telegram_bot._to_ogg, telegram_bot.STATE_FILE, javid.transcribe_turn)
+    telegram_bot.STATE_FILE = os.path.join(SCRATCH, "telegram.json")
+    if os.path.exists(telegram_bot.STATE_FILE):
+        os.remove(telegram_bot.STATE_FILE)
+    telegram_bot._api, telegram_bot._download = fake.api, lambda file_id: b"OggS fake voice"
+    telegram_bot._to_ogg = lambda mp3: b"OggS " + mp3
+    telegram_bot._pair.update(code=None, tries=0)
+    telegram_bot._told.clear()
+    if paired:
+        telegram_bot._update_state(owner=OWNER, chat=OWNER)
+    try:
+        yield fake
+    finally:
+        (telegram_bot._api, telegram_bot._download, telegram_bot._to_ogg, telegram_bot.STATE_FILE,
+         javid.transcribe_turn) = saved
+
+
+def tg_pairing():
+    with telegram_world(paired=False) as fake:
+        code = telegram_bot._new_pair_code()
+        telegram_bot.handle_update(tg_message(STRANGER, "/start"))
+        telegram_bot.handle_update(tg_message(STRANGER, f"/pair {(int(code) + 1) % 10**6:06d}"))
+        telegram_bot.handle_update(tg_message(OWNER, f"/pair {code}"))
+        telegram_bot.handle_update(tg_message(STRANGER, "Tell me a fun fact."))
+        telegram_bot.handle_update(tg_message(STRANGER, "Another fun fact?"))
+        telegram_bot.handle_update(tg_message(OWNER, "Tell me a fun fact."))
+        return {"fake": fake, "owner": telegram_bot._load().get("owner")}
+
+
+def tg_own_chat():
+    with telegram_world() as fake:
+        web = javid.create_session("Web chat")
+        javid.open_session(web)
+        telegram_bot.handle_update(tg_message(OWNER, "Hello Javid."))
+        tg = telegram_bot._load().get("session")
+        logged = {e["text"]: e.get("session") for e in javid._read_log()}
+        return {"fake": fake, "web": web, "tg": tg, "active": javid.active_session(), "logged": logged,
+                "title": javid._load_sessions()["sessions"].get(tg, {}).get("title")}
+
+
+def tg_voice():
+    with telegram_world() as fake:
+        javid.transcribe_turn = lambda audio, name="speech.wav", bias_name=True: "What's on my task list?"
+        with fake_edge_tts():
+            TTS_CALLS.clear()
+            telegram_bot.handle_update(tg_message(OWNER, voice=True))
+            voices = [v for _, v in TTS_CALLS]
+        return {"fake": fake, "voices": voices}
+
+
+def tg_memory_buttons():
+    with telegram_world() as fake:
+        telegram_bot.handle_update(tg_message(OWNER, "Remember that my sister's name is Nadia."))
+        card = next((p for m, p, _ in fake.calls if m == "sendMessage" and p.get("reply_markup")), None)
+        data = card["reply_markup"]["inline_keyboard"][0][0]["callback_data"] if card else ""
+        press = lambda user: telegram_bot.handle_update({"update_id": 9000 + user, "callback_query": {
+            "id": f"cb{user}", "from": {"id": user}, "data": data,
+            "message": {"message_id": 5, "chat": {"id": OWNER}, "text": card["text"] if card else ""}}})
+        press(STRANGER)
+        after_stranger = _all_facts()
+        press(OWNER)
+        return {"fake": fake, "card": card, "after_stranger": after_stranger, "after_owner": _all_facts()}
+
+
+def tg_timers():
+    with telegram_world() as fake:
+        now = time.time()
+        reminder = lambda tid, due, **kw: {"id": tid, "kind": "reminder", "label": "call mom", "due": due, "seconds": 0,
+                                           "announce": {"en": f"Mahadi, it's time to {tid}.", "bn": "মাহাদি, সময় হয়েছে।"}, **kw}
+        timers._save([reminder("ring the old one", now - 600, fired=now - 590), reminder("call mom", now + 3600)])
+        telegram_bot.timers.take_due_for("telegram", baseline=True)       # what start() does
+        items = timers._load()
+        items[1]["due"] = now - 1                                         # the reminder comes due
+        timers._save(items)
+        telegram_bot.push_due()
+        telegram_bot.push_due()
+        return {"fake": fake}
+
+
+def tg_commands():
+    with telegram_world() as fake:
+        for text in ["/tasks", "/timers", "/lang bn", "/lang en", "/voice", "/voice", "/status", "/help", "/bogus"]:
+            telegram_bot.handle_update(tg_message(OWNER, text))
+        return {"fake": fake, "lang": javid.get_language()}
+
+
+def tg_setup_from_phone():
+    """The /telegram page: a token pasted (a bad one first), then the phone scans the QR link and taps Start."""
+    from fastapi.testclient import TestClient
+    import server
+    env_file, had = javid.ENV_FILE, os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+    javid.ENV_FILE = os.path.join(SCRATCH, ".env")
+    with open(javid.ENV_FILE, "w") as f:
+        f.write("GROQ_API_KEY=gsk_fake\n")
+    started, real_start = [], telegram_bot.start
+    telegram_bot.start = lambda: started.append(1) or True      # no polling threads in a test
+    try:
+        with telegram_world(paired=False) as fake:
+            client = TestClient(server.app)
+            local = {"host": "localhost:8000", "origin": "http://localhost:8000"}
+            refused = client.post("/telegram/token", json={"token": "123456789:" + "A" * 35}).status_code   # no Origin
+            bad = client.post("/telegram/token", json={"token": "123456789:bad" + "A" * 32}, headers=local)
+            env_after_bad = open(javid.ENV_FILE).read()
+            good = client.post("/telegram/token", json={"token": "123456789:" + "B" * 35}, headers=local)
+            code = telegram_bot._new_pair_code()            # what start() makes for an unpaired bot
+            page = client.get("/telegram/status", headers={"host": "localhost:8000"}).json()
+            elsewhere = client.get("/telegram/status").status_code      # Host isn't this machine
+            telegram_bot.handle_update(tg_message(OWNER, f"/start {code}"))      # the QR link's Start button
+            return {"fake": fake, "refused": refused, "bad": (bad.status_code, bad.json().get("detail", "")),
+                    "env_after_bad": env_after_bad, "good": good.status_code, "env": open(javid.ENV_FILE).read(),
+                    "mode": oct(os.stat(javid.ENV_FILE).st_mode & 0o777), "started": len(started), "code": code,
+                    "page": page, "elsewhere": elsewhere, "owner": telegram_bot._load().get("owner")}
+    finally:
+        telegram_bot.start, javid.ENV_FILE = real_start, env_file
+        os.environ.pop("TELEGRAM_BOT_TOKEN", None)
+        if had:
+            os.environ["TELEGRAM_BOT_TOKEN"] = had
+
+
+def tg_texts(chat_id):
+    return lambda r: r.extra["fake"].texts(chat_id)
 
 T3 = ["[2026-10-01 09:00] Call mom", "[2026-10-01 09:05] Buy milk", "[2026-10-02 10:00] Send report"]
 T5 = ["[2026-10-01 09:00] Call mom", "✓ [2026-10-01 09:05] Pay rent", "[2026-10-02 10:00] Send report",
@@ -1190,6 +1353,63 @@ CASES = [
          [called("market_price"), called("set_timer"), model_requests(3)],
          script=[call("market_price", symbols=["BTC", "ETH", "BNB", "SOL"]), call("set_timer", duration="10 minutes"),
                  "Bitcoin is at $82,152.34 on Binance, Mahadi, and your 10-minute timer is running."]),
+    # ---------- Telegram (telegram_bot.py): the bot's updates against a fake Bot API ----------
+    Case("telegram: only the paired account reaches Javid", [],
+         [lambda r: None if r.extra["owner"] == OWNER else f"owner is {r.extra['owner']}",
+          lambda r: None if not any("three hearts" in t for t in tg_texts(STRANGER)(r)) else "a stranger got a reply",
+          lambda r: None if sum("private" in t for t in tg_texts(STRANGER)(r)) == 1 else f"stranger got {tg_texts(STRANGER)(r)}",
+          lambda r: None if any("three hearts" in t for t in tg_texts(OWNER)(r)) else f"owner got {tg_texts(OWNER)(r)}",
+          model_requests(1)],
+         drive=tg_pairing, script=["Octopuses have three hearts, Mahadi."]),
+    Case("telegram: set up from the page, paired from the phone by the QR link", [],
+         [lambda r: None if r.extra["refused"] == 403 else f"token saved without the page's Origin ({r.extra['refused']})",
+          lambda r: None if r.extra["bad"][0] == 400 and "rejected" in r.extra["bad"][1] else f"bad token: {r.extra['bad']}",
+          lambda r: None if "TELEGRAM" not in r.extra["env_after_bad"] else "a rejected token was saved",
+          lambda r: None if r.extra["good"] == 200 and "TELEGRAM_BOT_TOKEN=123456789:" in r.extra["env"]
+          and "GROQ_API_KEY=gsk_fake" in r.extra["env"] else f"token not saved: {r.extra['good']}",
+          lambda r: None if r.extra["mode"] == "0o600" else f".env mode {r.extra['mode']}",
+          lambda r: None if r.extra["started"] == 1 else f"the bot started {r.extra['started']} times",
+          lambda r: None if r.extra["page"].get("pair_link") == f"https://t.me/javid_test_bot?start={r.extra['code']}"
+          else f"link {r.extra['page'].get('pair_link')}",
+          lambda r: None if r.extra["page"].get("qr_svg", "").startswith("<svg") else "no QR code",
+          lambda r: None if r.extra["elsewhere"] == 403 else "status served to another host",
+          lambda r: None if r.extra["owner"] == OWNER else f"not paired (owner {r.extra['owner']})",
+          lambda r: None if any(t.startswith("Paired.") for t in tg_texts(OWNER)(r)) else "no Paired message",
+          model_requests(0)],
+         drive=tg_setup_from_phone, script=[]),
+    Case("telegram: its own chat, and the web's chat stays open", [],
+         [lambda r: None if r.extra["active"] == r.extra["web"] else "the web chat wasn't reopened",
+          lambda r: None if r.extra["logged"].get("Hello Javid.") == r.extra["tg"] else "the message went to another chat",
+          lambda r: None if r.extra["title"] == "Telegram" else f"chat title {r.extra['title']!r}",
+          lambda r: None if "Hey Mahadi." in tg_texts(OWNER)(r) else "no reply sent"],
+         drive=tg_own_chat, script=["Hey Mahadi."]),
+    Case("telegram: a voice message gets its transcript, a reply and a voice note in Andrew's voice", [],
+         [lambda r: None if any("What's on my task list?" in t for t in tg_texts(OWNER)(r)) else "transcript not echoed",
+          lambda r: None if any("three pending" in t for t in tg_texts(OWNER)(r)) else "no text reply",
+          lambda r: None if [m for m, _, _ in r.extra["fake"].calls].count("sendVoice") == 1 else "no voice note",
+          lambda r: None if r.extra["voices"] and set(r.extra["voices"]) == {javid.EDGE_VOICE} else f"voices {r.extra['voices']}",
+          called("list_tasks"), model_requests(2)],
+         tasks=T3, drive=tg_voice, script=[call("list_tasks"), "You have three pending tasks, Mahadi."]),
+    Case("telegram: a memory proposal's Save button saves it, only for the owner", [],
+         [lambda r: None if r.extra["card"] else "no Save / Don't save card",
+          lambda r: None if not r.extra["after_stranger"] else "a stranger's button press saved it",
+          lambda r: None if any("nadia" in f.lower() for f in r.extra["after_owner"]) else "not saved after Save"],
+         drive=tg_memory_buttons, script=[call("propose_memory", text="Mahadi's sister is called Nadia", file="user"),
+                                          "Shall I remember that your sister is Nadia?"]),
+    Case("telegram: a due reminder is pushed once; one rung before isn't", [],
+         [lambda r: None if [t for t in tg_texts(OWNER)(r) if t.startswith("⏰")] == ["⏰ Mahadi, it's time to call mom."]
+          else f"pushed {[t for t in tg_texts(OWNER)(r) if t.startswith('⏰')]}", model_requests(0)],
+         drive=tg_timers, script=[]),
+    Case("telegram: commands answer without the model", [],
+         [lambda r: None if any("3 pending" in t for t in tg_texts(OWNER)(r)) else "/tasks",
+          lambda r: None if javid.PHRASES["switched"]["bn"] in tg_texts(OWNER)(r) else "/lang bn",
+          lambda r: None if r.extra["lang"] == "en" else "/lang en didn't switch back",
+          lambda r: None if any("every reply" in t for t in tg_texts(OWNER)(r)) and any("only when" in t for t in tg_texts(OWNER)(r))
+          else "/voice didn't toggle",
+          lambda r: None if any(t.startswith("Model: ") for t in tg_texts(OWNER)(r)) else "/status",
+          lambda r: None if any("I don't know /bogus" in t for t in tg_texts(OWNER)(r)) else "unknown command",
+          model_requests(0)],
+         tasks=T3, drive=tg_commands, script=[]),
     # ---------- voice: every sentence Javid says, through /speak, in the locked voice ----------
     Case("voice: 5 chat replies, one voice",
          ["Hello Javid.", "How are you doing today?", "Tell me a fun fact about the moon.",
@@ -1251,7 +1471,7 @@ CASES = [
          script=[call("calculate", expression="17.5% of 2,340"), "It's 409.5, Mahadi.",
                  "It's a tidy result, not quite a round number."]),
 ]
-assert len(CASES) == 96, len(CASES)
+assert len(CASES) == 103, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -1318,7 +1538,11 @@ def run_case(case: Case) -> Result:
         return call
     for name in real_map:
         javid.TOOL_MAP[name] = spy(name)
+    extra = {}
     try:
+        if case.drive:
+            with contextlib.redirect_stdout(io.StringIO()):
+                extra = case.drive() or {}
         for i, text in enumerate(case.turns):
             turn["i"] = i
             deltas, turn_said = [], []
@@ -1363,7 +1587,7 @@ def run_case(case: Case) -> Result:
                   sources=sources, said=said, web=fake_web, langs=langs, screen=screens[0], skills_run=skills_run,
                   facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json(), voices=voices,
                   seconds=seconds, tokens=tokens, model_requests=LLM_REQUESTS + SCRIPTED_REQUESTS - requests_before,
-                  tool_events=tool_events)
+                  tool_events=tool_events, extra=extra)
 
 
 def main() -> int:

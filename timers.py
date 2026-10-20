@@ -3,7 +3,8 @@ Timers and reminders: the set_timer and timers tools, the Timers panel and its r
 
 They're kept in timers.json, so a page reload or a server restart keeps them. The page rings them - a chime,
 then the announcement in Javid's own voice through /speak - and reports POST /timers/{id}/fired; only the
-first tab to report a timer announces it. The CLI rings them from a background thread (javid.main). All the
+first tab to report a timer announces it. The CLI rings them from a background thread (javid.main), and
+Telegram gets each one as a message (take_due_for, telegram_bot.push_due), whether or not a page rang it. All the
 time math is here: the model passes Mahadi's words ("10 minutes", "half an hour", "7pm", "tomorrow").
 """
 import json
@@ -295,6 +296,22 @@ def take_due() -> list[dict]:
         if due:
             _save(items)
     return due
+
+
+def take_due_for(channel: str, baseline: bool = False) -> list[dict]:
+    """Timers due now that haven't been sent to `channel` (Telegram) yet, marked sent there; the page's and the
+    CLI's ringing (`fired`) is separate. baseline=True (the channel starting up) marks the ones that already rang
+    without returning them, so old timers aren't re-sent; one that came due unrung is still sent."""
+    now = time.time()
+    with _lock:
+        items = _prune(_load(), now)
+        due = [t for t in items if t["due"] <= now and channel not in t.get("sent", [])
+               and (t.get("fired") or not baseline)]
+        for t in due:
+            t.setdefault("sent", []).append(channel)
+        if due:
+            _save(items)
+    return [] if baseline else due
 
 
 TOOLS = [

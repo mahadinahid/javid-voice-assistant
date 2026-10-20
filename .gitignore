@@ -23,3 +23,5 @@ chat_log.jsonl.bak-*
 data/
 timers.json
 timers.json.tmp
+telegram.json
+telegram.json.tmp

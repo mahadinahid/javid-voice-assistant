@@ -5,6 +5,7 @@ Day 7 polish: startup greeting, graceful Ctrl+C, network-safe search, file-handl
 """
 
 import asyncio
+import contextlib
 import io
 import json
 import os
@@ -270,6 +271,43 @@ def _now() -> str:
 
 def _new_id() -> str:
     return f"s{datetime.now():%Y%m%d%H%M%S}{uuid.uuid4().hex[:4]}"
+
+
+# One turn at a time: the page's tabs and Telegram share `messages` and the open chat. A plain Lock, not an RLock:
+# a web reply is a generator the server may resume on another thread. A turn that never lets go (a stream left
+# hanging) is waited out for TURN_WAIT_SEC, then ignored rather than locking Javid up.
+TURN_LOCK = threading.Lock()
+TURN_WAIT_SEC = 120
+
+
+@contextlib.contextmanager
+def hold_turn():
+    got = TURN_LOCK.acquire(timeout=TURN_WAIT_SEC)
+    if not got:
+        print(f"[turn] the last turn held on for {TURN_WAIT_SEC}s; going ahead without it")
+    try:
+        yield
+    finally:
+        if got:
+            TURN_LOCK.release()
+
+
+def active_session() -> str | None:
+    """The open chat's id, without creating one (current_session() does)."""
+    return _active["id"]
+
+
+def has_session(sid: str) -> bool:
+    return sid in _load_sessions()["sessions"]
+
+
+def create_session(title: str) -> str:
+    """A new chat with this title, not opened (Telegram's own chat)."""
+    data = _load_sessions()
+    sid = _new_id()
+    data["sessions"][sid] = {"title": title, "created": _now(), "updated": _now(), "pinned": False, "named": True}
+    _save_sessions(data)
+    return sid
 
 
 def _read_log() -> list[dict]:
@@ -1803,6 +1841,12 @@ def _tools_used_in_previous_turn(turn_start: int) -> set[str]:
 def _model_name(model_id: str) -> str:
     provider, name = _split(model_id)
     return f"{name.split('/')[-1]} on {PROVIDERS[provider]['label']}"
+
+
+def next_model() -> str:
+    """The model that would answer now ("gpt-oss-20b on Groq"): chain, keys, cooldowns and the quota guard, no
+    network (llm_status lists every provider's models)."""
+    return _model_name(_models_to_try()[0])
 
 
 def _self_facts() -> dict:

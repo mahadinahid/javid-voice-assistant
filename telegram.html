@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Javid · Telegram</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@600;700&family=JetBrains+Mono:wght@500&display=swap">
+<style>
+/* Telegram setup: paste the bot token, then scan the pairing QR code with the phone. Aurora colours (index.html). */
+:root {
+    --bg: #06070c;
+    --glass: rgba(17, 20, 33, 0.72);
+    --line: rgba(255, 255, 255, 0.08);
+    --line-strong: rgba(255, 255, 255, 0.16);
+    --text: #eef0f8;
+    --text-2: #b8bdd2;
+    --text-3: #7d84a0;
+    --violet: #8b7cff;
+    --mint: #3ee0a8;
+    --red: #ff5d73;
+    --grad: linear-gradient(135deg, #9a7dff 0%, #5b8cff 50%, #3fd0ff 100%);
+    --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+    --font-display: 'Sora', 'Inter', system-ui, sans-serif;
+    --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+    color-scheme: dark;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+    font-family: var(--font);
+    background: radial-gradient(1200px 600px at 20% -10%, rgba(139, 124, 255, 0.16), transparent 60%),
+                radial-gradient(900px 500px at 110% 10%, rgba(63, 208, 255, 0.10), transparent 60%), var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 24px 16px;
+    line-height: 1.5;
+}
+main {
+    width: min(460px, 100%);
+    background: var(--glass);
+    border: 1px solid var(--line);
+    border-radius: 20px;
+    padding: 28px 24px;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.42);
+    backdrop-filter: blur(14px);
+}
+h1 { font-family: var(--font-display); font-size: 1.35rem; font-weight: 700; letter-spacing: -0.01em; }
+h1 span { background: var(--grad); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.sub { color: var(--text-3); font-size: 0.9rem; margin-top: 2px; }
+.step { margin-top: 22px; }
+.step[hidden] { display: none; }
+.step h2 { font-size: 0.95rem; font-weight: 600; margin-bottom: 8px; }
+.step p, .step li { color: var(--text-2); font-size: 0.92rem; }
+.step ol { padding-left: 1.2em; display: grid; gap: 4px; }
+b { color: var(--text); font-weight: 600; }
+code { font-family: var(--mono); font-size: 0.85em; color: var(--text); background: rgba(255, 255, 255, 0.06);
+       padding: 1px 6px; border-radius: 6px; }
+form { display: flex; gap: 8px; margin-top: 12px; }
+input {
+    flex: 1; min-width: 0; font: inherit; font-size: 0.9rem; color: var(--text);
+    background: rgba(0, 0, 0, 0.3); border: 1px solid var(--line-strong); border-radius: 10px; padding: 10px 12px;
+}
+input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(139, 124, 255, 0.22); }
+button {
+    font: inherit; font-size: 0.9rem; font-weight: 600; color: #fff; background: var(--grad); border: 0;
+    border-radius: 10px; padding: 10px 16px; cursor: pointer;
+}
+button:disabled { opacity: 0.55; cursor: progress; }
+.error { color: var(--red); font-size: 0.85rem; margin-top: 8px; min-height: 1.2em; }
+.qr { margin: 14px auto 6px; width: fit-content; background: #fff; border-radius: 14px; padding: 8px; line-height: 0; }
+.qr svg { width: 232px; height: 232px; }
+.code { text-align: center; font-family: var(--mono); font-size: 0.85rem; color: var(--text-3); margin-top: 6px; }
+.done { display: flex; gap: 12px; align-items: center; }
+.done .tick { flex: none; width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+              background: rgba(62, 224, 168, 0.14); color: var(--mint); font-size: 1.1rem; font-weight: 700; }
+.back { display: inline-block; margin-top: 22px; color: var(--text-3); font-size: 0.85rem; text-decoration: none; }
+.back:hover { color: var(--text); }
+</style>
+</head>
+<body>
+<main>
+    <h1><span>Javid</span> on Telegram</h1>
+    <p class="sub" id="state">Checking…</p>
+
+    <section class="step" id="step-token" hidden>
+        <h2>1 · Make the bot</h2>
+        <ol>
+            <li>In Telegram on your phone, open <b>@BotFather</b> and send <code>/newbot</code>.</li>
+            <li>Pick a name, then a username ending in <code>bot</code>.</li>
+            <li>Copy the token it sends you and paste it here (on an iPhone, copy it there and paste on the Mac).</li>
+        </ol>
+        <form id="token-form" autocomplete="off">
+            <input id="token" type="password" placeholder="123456789:AA…" aria-label="Bot token" spellcheck="false">
+            <button id="save">Save</button>
+        </form>
+        <p class="error" id="token-error" role="alert"></p>
+    </section>
+
+    <section class="step" id="step-pair" hidden>
+        <h2>2 · Pair your phone</h2>
+        <p>Scan this with your phone's camera. Telegram opens <b id="bot-name">your bot</b>: tap <b>Start</b> and you're paired.
+           Only that Telegram account can talk to Javid.</p>
+        <div class="qr" id="qr"></div>
+        <p class="code" id="pair-code"></p>
+    </section>
+
+    <section class="step" id="step-done" hidden>
+        <div class="done">
+            <div class="tick">✓</div>
+            <p>Paired with <b id="done-bot">your bot</b>. Talk to Javid there: type or send a voice message.
+               Send <code>/help</code> for the commands.</p>
+        </div>
+    </section>
+
+    <a class="back" href="/">← Back to Javid</a>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+let timer = null;
+
+function show(step) {
+    for (const s of ['token', 'pair', 'done']) $('step-' + s).hidden = s !== step;
+}
+
+async function refresh() {
+    let st;
+    try { st = await (await fetch('/telegram/status')).json(); }
+    catch { $('state').textContent = 'Javid isn’t answering. Is the server running?'; return; }
+    if (!st.configured) {
+        $('state').textContent = 'Not set up yet.';
+        show('token');
+    } else if (st.paired) {
+        $('state').textContent = 'Connected.';
+        $('done-bot').textContent = st.bot || 'your bot';
+        show('done');
+        clearInterval(timer);
+    } else if (st.pair_link) {
+        $('state').textContent = 'Waiting for your phone…';
+        $('bot-name').textContent = st.bot;
+        $('qr').innerHTML = st.qr_svg;      // made by the server from the bot's own link
+        $('pair-code').textContent = `or send /pair ${st.pair_code} to ${st.bot}`;
+        show('pair');
+    } else {
+        $('state').textContent = st.running ? 'Reaching Telegram…' : 'The bot isn’t running. Check the token.';
+        show(st.running ? 'pair' : 'token');
+    }
+}
+
+$('token-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const token = $('token').value.trim();
+    if (!token) return;
+    $('save').disabled = true;
+    $('token-error').textContent = '';
+    try {
+        const res = await fetch('/telegram/token', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Something went wrong.');
+        $('token').value = '';
+        await refresh();
+    } catch (err) {
+        $('token-error').textContent = err.message;
+    } finally {
+        $('save').disabled = false;
+    }
+});
+
+refresh();
+timer = setInterval(refresh, 2000);     // flips to "Connected" once the phone taps Start
+</script>
+</body>
+</html>

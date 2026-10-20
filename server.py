@@ -3,10 +3,12 @@ Javid web server — wraps javid.py in a FastAPI backend.
 Run: python server.py  →  open http://localhost:8000
 """
 
+import asyncio
 import json
 import threading
 from contextlib import asynccontextmanager
 
+import segno
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
@@ -16,6 +18,7 @@ import agents
 import calendar_tools
 import memory_store
 import skills
+import telegram_bot
 import timers
 import tracing
 import web_tools
@@ -24,6 +27,7 @@ from javid import (
     clear_provider_key, get_language, is_noise, llm_status, phrase,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
+    active_session, has_session, hold_turn,
     set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
 )
 
@@ -52,7 +56,9 @@ async def lifespan(app: FastAPI):
     # cache of fixed phrases ("Yes?" first) so the first "Hey Javid" is quick.
     threading.Thread(target=_warm_tts, daemon=True).start()
     threading.Thread(target=_check_models, daemon=True).start()
+    telegram_bot.start()    # only with TELEGRAM_BOT_TOKEN in .env
     yield
+    telegram_bot.stop()
     tracing.flush_all()     # traces still waiting for the page's stages
 
 
@@ -88,8 +94,10 @@ class ChatBody(BaseModel):
 
 
 def _use_session(sid: str | None) -> None:
-    """Messages go to the chat the page has open, even if another tab switched the server's."""
-    if sid and sid != current_session() and not open_session(sid):
+    """Messages go to the chat the page has open, even if another tab or Telegram switched the server's. Checked
+    here; the chat is opened under the turn lock when the reply starts (_reply_stream), so a turn running for
+    Telegram is never switched away under it."""
+    if sid and not has_session(sid):
         raise HTTPException(404, "No such chat")
 
 
@@ -111,54 +119,125 @@ def _event(**data) -> str:
     return json.dumps(data) + "\n"
 
 
-def _reply_stream(user_text: str):
-    """Stream Javid's reply as newline-delimited JSON events."""
+async def _reply_stream(user_text: str, session: str | None = None):
+    """Javid's reply as newline-delimited JSON events, in the page's chat, one turn at a time. The turn runs in
+    its own thread, which holds the turn lock and hands events over a queue: when the page hangs up (Stop), the
+    turn is closed at its next step (its finally still records what was said) and the lock is let go. Holding the
+    lock in a generator the server resumed meant a hang-up kept it until the 120 s wait ran out."""
+    loop = asyncio.get_running_loop()
+    events: asyncio.Queue = asyncio.Queue()
+    hung_up = threading.Event()
+
+    def hand_over(item) -> None:
+        try:
+            loop.call_soon_threadsafe(events.put_nowait, item)
+        except RuntimeError:        # the server is shutting down
+            pass
+
+    def work() -> None:
+        try:
+            with hold_turn():
+                if session and session != active_session():
+                    open_session(session)
+                turn = think_stream(user_text)
+                try:
+                    for event in turn:
+                        hand_over(event)
+                        if hung_up.is_set():
+                            break
+                finally:
+                    turn.close()
+        except Exception as e:
+            print(f"[error] {e!r}")
+            hand_over(("error", None))
+        hand_over(None)
+
+    threading.Thread(target=work, name="turn", daemon=True).start()
     try:
-        for kind, value in think_stream(user_text):
-            if kind == "tool":
-                yield _event(type="tool", name=value)
-            elif kind == "say":
-                yield _event(type="say", text=value)
-            elif kind == "sources":
-                yield _event(type="sources", items=value)
-            elif kind == "lang":
-                yield _event(type="lang", lang=value)
-            elif kind == "skill":
-                yield _event(type="skill", name=value)
-            elif kind == "screen":
-                yield _event(type="screen", text=value)
-            elif kind == "memory_proposal":
-                yield _event(type="memory_proposal", id=value["id"], text=value["text"], file=value["file"])
-            elif kind == "memory":
-                yield _event(type="memory", outcome=value["outcome"], id=value["id"], text=value["text"])
-            elif kind == "agent":
-                yield _event(type="agent", name=value)
-            elif kind == "delta":
-                yield _event(type="delta", text=value)
-            # any other kind is internal: never sent, and never spoken as reply text
-    except Exception as e:
-        print(f"[error] {e!r}")
-        yield _event(type="error", message="Something went wrong on my end.")
+        while (item := await events.get()) is not None:
+            kind, value = item
+            if kind == "error":
+                yield _event(type="error", message="Something went wrong on my end.")
+            elif (line := _reply_event(kind, value)):
+                yield line
+    finally:
+        hung_up.set()
     yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language(),
                  timers=timers.active_json())
+
+
+def _reply_event(kind: str, value) -> str | None:
+    """One think_stream event as the page's NDJSON line; any other kind is internal: never sent, and never
+    spoken as reply text."""
+    if kind in ("tool", "skill", "agent"):
+        return _event(type=kind, name=value)
+    if kind in ("say", "screen", "delta"):
+        return _event(type=kind, text=value)
+    if kind == "sources":
+        return _event(type="sources", items=value)
+    if kind == "lang":
+        return _event(type="lang", lang=value)
+    if kind == "memory_proposal":
+        return _event(type="memory_proposal", id=value["id"], text=value["text"], file=value["file"])
+    if kind == "memory":
+        return _event(type="memory", outcome=value["outcome"], id=value["id"], text=value["text"])
+    return None
 
 
 def _ndjson(gen) -> StreamingResponse:
     return StreamingResponse(gen, media_type="application/x-ndjson")
 
 
-def _traced(trace: tracing.Trace, gen):
-    """The reply stream, passed through unchanged apart from a first "trace" event (its id, so the
-    page can add its own stages); javid.py marks the stages in between on this, the current trace."""
+async def _traced(trace: tracing.Trace, lines):
+    """The reply stream (async lines), passed through unchanged apart from a first "trace" event (its id, so
+    the page can add its own stages); javid.py marks the stages in between on this, the current trace."""
     tracing.activate(trace)
     try:
         yield _event(type="trace", id=trace.id)
-        for line in gen:
+        async for line in lines:
             if line.startswith('{"type": "delta"'):
                 trace.mark("reply_out")
             yield line
     finally:
         tracing.finish(trace)
+
+
+def _this_machine(request: Request) -> None:
+    """The server listens on 127.0.0.1; the Host check also stops a web page reaching it through DNS rebinding."""
+    if request.headers.get("host", "") not in ("localhost:8000", "127.0.0.1:8000"):
+        raise HTTPException(403, "Only from this machine.")
+
+
+@app.get("/telegram")
+def telegram_page(request: Request):
+    """Telegram setup: paste the bot token, then scan the pairing QR code with the phone."""
+    _this_machine(request)
+    return FileResponse("telegram.html")
+
+
+@app.get("/telegram/status")
+def telegram_status(request: Request):
+    """Whether the bot is set up, running and paired; while it isn't paired, the code and its link as a QR code."""
+    _this_machine(request)
+    status = telegram_bot.status()
+    if status["pair_link"]:
+        status["qr_svg"] = segno.make(status["pair_link"], error="m").svg_inline(scale=6, border=2, dark="#0b1020",
+                                                                                  light="#ffffff")
+    return status
+
+
+class TokenBody(BaseModel):
+    token: str
+
+
+@app.post("/telegram/token")
+def telegram_token(body: TokenBody, request: Request):
+    """Saves the bot token to .env once Telegram accepts it, and starts the bot (only from the Javid page)."""
+    _local_page_only(request)
+    try:
+        return telegram_bot.set_token(body.token)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
 
 
 @app.get("/greeting")
@@ -188,7 +267,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
     trace.label = transcript[:60]
     request = transcript
 
-    def ignored():
+    async def ignored():
         yield _event(type="ignored", text=transcript)
 
     if mode in ("wake", "followup"):
@@ -200,7 +279,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             request = transcript  # follow-up: no wake word needed
         elif not request or is_noise(request):
             # Just "Hey Javid" — acknowledge and open a follow-up window.
-            def ack():
+            async def ack():
                 yield _event(type="transcript", text=transcript)
                 yield _event(type="delta", text=phrase("ack"))
                 yield _event(type="done", tasks=None, memory=None, lang=get_language())
@@ -208,13 +287,13 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 
     if mode == "push" and strip_wake_word(request) == "":
         # Just "Javid": acknowledge, as in hands-free.
-        def ack_push():
+        async def ack_push():
             yield _event(type="transcript", text=transcript)
             yield _event(type="delta", text=phrase("ack"))
             yield _event(type="done", tasks=None, memory=None, lang=get_language())
         return _ndjson(_traced(trace, ack_push()))
 
-    def events():
+    async def events():
         yield _event(type="transcript", text=transcript)
         # One word is usually a clipped recording, but a plain yes/no (memory approval) or a
         # greeting ("Hello") is a real message.
@@ -225,7 +304,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             yield _event(type="delta", text=phrase("not_caught"))
             yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
             return
-        yield from _reply_stream(request)
+        async for line in _reply_stream(request, session):
+            yield line
 
     return _ndjson(_traced(trace, events()))
 
@@ -233,7 +313,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 @app.post("/type")
 def type_message(body: ChatBody):
     _use_session(body.session)
-    return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text)))
+    return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text, body.session)))
 
 
 @app.get("/history")
@@ -251,8 +331,9 @@ def history(session: str | None = None, before: int | None = None, limit: int = 
 
 @app.post("/reset")
 def reset():
-    reset_conversation()
-    return {"ok": True, "session": current_session()}
+    with hold_turn():       # never clears `messages` under a turn running for another tab or Telegram
+        reset_conversation()
+        return {"ok": True, "session": current_session()}
 
 
 # ---------- chat sessions (the Chats panel) ----------
@@ -268,12 +349,14 @@ def sessions(q: str = ""):
 
 @app.post("/sessions")
 def sessions_new():
-    return new_session()
+    with hold_turn():
+        return new_session()
 
 
 @app.post("/sessions/{sid}/open")
 def sessions_open(sid: str):
-    _ok_or_404(open_session(sid))
+    with hold_turn():
+        _ok_or_404(open_session(sid))
     return {"ok": True, "session": sid}
 
 
@@ -289,8 +372,9 @@ def sessions_update(sid: str, body: SessionPatch, request: Request):
 def sessions_delete(sid: str, request: Request):
     """Deletes the chat and its messages for good (asked twice in the page)."""
     _local_page_only(request)
-    _ok_or_404(delete_session(sid))
-    return {"ok": True, "active": current_session()}
+    with hold_turn():
+        _ok_or_404(delete_session(sid))
+        return {"ok": True, "active": current_session()}
 
 
 @app.get("/calendar")

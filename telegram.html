@@ -111,8 +111,16 @@ button:disabled { opacity: 0.55; cursor: progress; }
         <div class="done">
             <div class="tick">✓</div>
             <p>Paired with <b id="done-bot">your bot</b>. Talk to Javid there: type or send a voice message.
-               Send <code>/help</code> for the commands.</p>
+               Send <code>/help</code> for the commands. Changes to your tasks, calendar or memory wait for you to
+               tap <b>Approve</b> in Telegram.</p>
         </div>
+    </section>
+
+    <section class="step" id="step-lock" hidden>
+        <h2>Remote control</h2>
+        <p id="lock-text"></p>
+        <form id="lock-form"><button id="lock-btn"></button></form>
+        <p class="error" id="lock-error" role="alert"></p>
     </section>
 
     <a class="back" href="/">← Back to Javid</a>
@@ -121,23 +129,39 @@ button:disabled { opacity: 0.55; cursor: progress; }
 <script>
 const $ = id => document.getElementById(id);
 let timer = null;
+let locked = false;
 
 function show(step) {
     for (const s of ['token', 'pair', 'done']) $('step-' + s).hidden = s !== step;
+}
+
+function showLock(st) {
+    locked = st.locked;
+    $('step-lock').hidden = !st.configured;
+    $('lock-text').textContent = st.locked
+        ? `Locked from the phone${st.locked_at ? ' at ' + new Date(st.locked_at * 1000).toLocaleString() : ''}. ` +
+          'Javid ignores Telegram (and sends no reminders there) until you unlock it here.'
+        : 'On. Send /lock to the bot if your phone is lost: only this page can turn it back on.';
+    $('lock-btn').textContent = st.locked ? 'Unlock' : 'Lock now';
 }
 
 async function refresh() {
     let st;
     try { st = await (await fetch('/telegram/status')).json(); }
     catch { $('state').textContent = 'Javid isn’t answering. Is the server running?'; return; }
+    showLock(st);
     if (!st.configured) {
         $('state').textContent = 'Not set up yet.';
         show('token');
     } else if (st.paired) {
-        $('state').textContent = 'Connected.';
+        $('state').textContent = st.locked ? 'Connected · 🔒 locked' : 'Connected.';
         $('done-bot').textContent = st.bot || 'your bot';
         show('done');
-        clearInterval(timer);
+    } else if (st.pairing_closed) {
+        $('state').textContent = 'Pairing closed after too many wrong codes. Restart Javid to pair.';
+        show('pair');
+        $('qr').innerHTML = '';
+        $('pair-code').textContent = '';
     } else if (st.pair_link) {
         $('state').textContent = 'Waiting for your phone…';
         $('bot-name').textContent = st.bot;
@@ -170,8 +194,25 @@ $('token-form').addEventListener('submit', async e => {
     }
 });
 
+$('lock-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    $('lock-btn').disabled = true;
+    $('lock-error').textContent = '';
+    try {
+        const res = await fetch('/telegram/lock', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ locked: !locked }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || 'Something went wrong.');
+        showLock(await res.json());
+    } catch (err) {
+        $('lock-error').textContent = err.message;
+    } finally {
+        $('lock-btn').disabled = false;
+    }
+});
+
 refresh();
-timer = setInterval(refresh, 2000);     // flips to "Connected" once the phone taps Start
+timer = setInterval(refresh, 2000);     // flips to "Connected" once the phone taps Start, and shows a /lock
 </script>
 </body>
 </html>

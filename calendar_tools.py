@@ -305,6 +305,49 @@ def _side_notes(ev: dict) -> str:
     return (" " + " ".join(notes)) if notes else ""
 
 
+def _at(t: datetime, all_day: bool) -> str:
+    return t.strftime("%A, %B %d") + (" (all day)" if all_day else f" at {_fmt_time(t)}")
+
+
+def _move_target(ev: dict, new_day: str, new_time: str):
+    """(new start, new end, patch body) for moving `ev`, keeping its length, or a sentence why it can't move."""
+    start, end, all_day = _event_times(ev)
+    target = _parse_day(new_day) if new_day else start.date()
+    if all_day:
+        if new_time:
+            return f"{_describe(ev)} is an all-day event, so it can only move to another day."
+        new_start = datetime.combine(target, datetime.min.time(), _tz())
+        new_end = new_start + (end - start)
+        return new_start, new_end, {"start": {"date": target.isoformat()}, "end": {"date": new_end.date().isoformat()}}
+    hour, minute = _parse_time(new_time) if new_time else (start.hour, start.minute)
+    new_start = datetime.combine(target, datetime.min.time(), _tz()).replace(hour=hour, minute=minute)
+    new_end = new_start + (end - start)
+    body = {"start": {"dateTime": new_start.isoformat()}, "end": {"dateTime": new_end.isoformat()}}
+    for key in ("start", "end"):
+        if ev[key].get("timeZone"):
+            body[key]["timeZone"] = ev[key]["timeZone"]
+    return new_start, new_end, body
+
+
+def _move(ev: dict, new_day: str, new_time: str, day: str = "") -> str:
+    planned = _move_target(ev, new_day, new_time)
+    if isinstance(planned, str):
+        return planned
+    new_start, new_end, body = planned
+    start, _, all_day = _event_times(ev)
+    if new_start == start:
+        return f"{_describe(ev)} is already then. Nothing changed."
+    _service().events().patch(calendarId=CALENDAR_ID, eventId=ev["id"], body=body).execute()
+    clashes = [e.get("summary", "(no title)") for e in _fetch(new_start, new_end)
+               if e["id"] != ev["id"] and not _event_times(e)[2]] if not all_day else []
+    note = f" Heads up: it overlaps with {', '.join(clashes)}." if clashes else ""
+    ends = "" if all_day else f", ending at {_fmt_time(new_end)}"
+    if day and _parse_day(day) != start.date():
+        note += f" Note: it was on {start.strftime('%A, %B %d')}, not {day}."
+    return (f"Moved '{ev.get('summary', '(no title)')}' from {_at(start, all_day)} to {_at(new_start, all_day)}{ends}."
+            f"{note}{_side_notes(ev)}")
+
+
 @_guard
 def move_event(title: str, new_day: str = "", new_time: str = "", day: str = "", time: str = "") -> str:
     """Reschedule an event to another day and/or time, keeping its length."""
@@ -313,37 +356,7 @@ def move_event(title: str, new_day: str = "", new_time: str = "", day: str = "",
     ev, problem = _pick(title, day, time)
     if problem:
         return problem
-    start, end, all_day = _event_times(ev)
-    target = _parse_day(new_day) if new_day else start.date()
-    if all_day:
-        if new_time:
-            return f"{_describe(ev)} is an all-day event, so it can only move to another day."
-        new_start = datetime.combine(target, datetime.min.time(), _tz())
-        new_end = new_start + (end - start)
-        body = {"start": {"date": target.isoformat()}, "end": {"date": new_end.date().isoformat()}}
-    else:
-        hour, minute = _parse_time(new_time) if new_time else (start.hour, start.minute)
-        new_start = datetime.combine(target, datetime.min.time(), _tz()).replace(hour=hour, minute=minute)
-        new_end = new_start + (end - start)
-        body = {"start": {"dateTime": new_start.isoformat()}, "end": {"dateTime": new_end.isoformat()}}
-        for key in ("start", "end"):
-            if ev[key].get("timeZone"):
-                body[key]["timeZone"] = ev[key]["timeZone"]
-    if new_start == start:
-        return f"{_describe(ev)} is already then. Nothing changed."
-
-    def at(t: datetime) -> str:
-        return t.strftime("%A, %B %d") + (" (all day)" if all_day else f" at {_fmt_time(t)}")
-
-    _service().events().patch(calendarId=CALENDAR_ID, eventId=ev["id"], body=body).execute()
-    clashes = [e.get("summary", "(no title)") for e in _fetch(new_start, new_end)
-               if e["id"] != ev["id"] and not _event_times(e)[2]] if not all_day else []
-    note = f" Heads up: it overlaps with {', '.join(clashes)}." if clashes else ""
-    ends = "" if all_day else f", ending at {_fmt_time(new_end)}"
-    if day and _parse_day(day) != start.date():
-        note += f" Note: it was on {start.strftime('%A, %B %d')}, not {day}."
-    return (f"Moved '{ev.get('summary', '(no title)')}' from {at(start)} to {at(new_start)}{ends}."
-            f"{note}{_side_notes(ev)}")
+    return _move(ev, new_day, new_time, day)
 
 
 @_guard
@@ -362,6 +375,69 @@ def delete_event(title: str, day: str = "", time: str = "", confirm: bool = Fals
                 "delete_event again with the same arguments and confirm=true.")
     _service().events().delete(calendarId=CALENDAR_ID, eventId=ev["id"]).execute()
     _pending_delete = None
+    return f"Deleted {_describe(ev)}.{_side_notes(ev)}"
+
+
+# ---------- for actions that wait for a button (approvals.py, Telegram) ----------
+# The event is found by title words now (as above, never a model-supplied id), shown, and only its id is kept:
+# approving acts on exactly that event. These aren't tools: the model can't name an event id.
+def _get(event_id: str) -> dict:
+    return _service().events().get(calendarId=CALENDAR_ID, eventId=event_id).execute()
+
+
+@_guard
+def lookup_event(title: str, day: str = "", time: str = ""):
+    """The one event meant (its dict), or a sentence why not."""
+    ev, problem = _pick(title, day, time)
+    return problem or ev
+
+
+def describe_event(ev: dict) -> str:
+    notes = (" (one occurrence of a repeating event)" if ev.get("recurringEventId") else "") + \
+            (" (it has guests; they won't be told)" if any(not a.get("self") for a in ev.get("attendees", [])) else "")
+    return _describe(ev) + notes
+
+
+@_guard
+def describe_add(title: str, day: str, time: str, duration_minutes: int = 60, location: str = ""):
+    """What add_event would add, with the day and time resolved now ("tomorrow" approved after midnight still
+    means the day it meant): {"text", "args"}, or a sentence why not."""
+    hour, minute = _parse_time(time)
+    begin = datetime.combine(_parse_day(day), datetime.min.time(), _tz()).replace(hour=hour, minute=minute)
+    end = begin + timedelta(minutes=int(duration_minutes))
+    where = f" at {location}" if location else ""
+    return {"text": f"Add '{title}' on {begin.strftime('%A, %B %d')} from {_fmt_time(begin)} to {_fmt_time(end)}{where}",
+            "args": {"title": title, "day": begin.date().isoformat(), "time": begin.strftime("%H:%M"),
+                     "duration_minutes": int(duration_minutes), "location": location}}
+
+
+@_guard
+def describe_move(ev: dict, new_day: str = "", new_time: str = ""):
+    """What moving `ev` would do, its target resolved to a date and a clock time: {"text", "new_day",
+    "new_time"}, or a sentence why it can't move."""
+    if not (new_day or new_time):
+        return "Tell me where to move it: a new day, a new time, or both."
+    planned = _move_target(ev, new_day, new_time)
+    if isinstance(planned, str):
+        return planned
+    new_start = planned[0]
+    start, _, all_day = _event_times(ev)
+    if new_start == start:
+        return f"{_describe(ev)} is already then. Nothing changed."
+    return {"text": f"Move '{ev.get('summary', '(no title)')}' from {_at(start, all_day)} to {_at(new_start, all_day)}"
+                    + describe_event(ev)[len(_describe(ev)):],
+            "new_day": new_start.date().isoformat(), "new_time": "" if all_day else new_start.strftime("%H:%M")}
+
+
+@_guard
+def move_event_id(event_id: str, new_day: str, new_time: str = "") -> str:
+    return _move(_get(event_id), new_day, new_time)
+
+
+@_guard
+def delete_event_id(event_id: str) -> str:
+    ev = _get(event_id)
+    _service().events().delete(calendarId=CALENDAR_ID, eventId=event_id).execute()
     return f"Deleted {_describe(ev)}.{_side_notes(ev)}"
 
 

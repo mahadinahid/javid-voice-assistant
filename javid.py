@@ -494,6 +494,14 @@ def log_message(role: str, text: str, **extra) -> None:
     _save_sessions(data)
 
 
+def record_turn(user_text: str, reply: str) -> None:
+    """A turn answered without think_stream (Telegram's reply to a forwarded message), kept in the open chat and
+    its log like any other, so the next turn can refer to it. Call under hold_turn."""
+    messages.extend([{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}])
+    log_message("user", user_text)
+    log_message("assistant", reply)
+
+
 def read_history(session: str | None = None) -> list[dict]:
     """One chat's messages (the open one by default)."""
     sid = session or current_session()
@@ -911,6 +919,19 @@ TOOL_MAP = {
     **markets.TOOL_MAP,
     **agents.TOOL_MAP,
 }
+# Tools that change Mahadi's data. On a channel whose writes need a button press (Telegram), think_stream gets a
+# `gate`: for that turn these don't run, and gate(name, args) records the exact action and says what the model is
+# told instead (approvals.py). Wrapped here in TOOL_MAP itself, so an agent's or a skill's call is gated too.
+WRITE_TOOLS = ("add_task", "complete_task", "delete_task", "add_event", "move_event", "delete_event", "propose_memory")
+_write_gate = None
+
+
+def _gated(name: str, run):
+    return lambda args: _write_gate(name, args) if _write_gate else run(args)
+
+
+for _name in WRITE_TOOLS:
+    TOOL_MAP[_name] = _gated(_name, TOOL_MAP[_name])
 # Agents run their own requests through the same model chain and tools. The lambdas look the names up when
 # called, so regression.py's request counter (it replaces _stream_completion) and its tool spies see them too.
 agents.configure(complete=lambda *a: _stream_completion(*a), tools=TOOLS, tool_map=TOOL_MAP,
@@ -1193,7 +1214,7 @@ def _note_headers(model: str, headers) -> None:
         _model_info.setdefault(model, {})["limits"] = limits
 
 
-_KEY_SHAPE = re.compile(r"(?:gsk_|AIza|sk-|ya29\.)[A-Za-z0-9_\-.*\u2022]{6,}")
+_KEY_SHAPE = re.compile(r"(?<![A-Za-z0-9])(?:gsk_|AIza|sk-|ya29\.)[A-Za-z0-9_\-.*\u2022]{6,}")   # not "risk-free"
 
 
 def _redact(text: str) -> str:
@@ -1552,9 +1573,10 @@ def _write_env(name: str, value: str | None) -> None:
     if value is not None:
         kept.append(f"{name}={value}")
     tmp = ENV_FILE + ".tmp"
-    with open(tmp, "w") as f:
+    # Owner-only from the moment it exists (open() then chmod left the keys readable by anyone in between).
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         f.write("\n".join(kept) + "\n")
-    os.chmod(tmp, 0o600)     # a secrets file is owner-only, whatever the old file's mode was
+    os.chmod(tmp, 0o600)     # O_CREAT keeps the mode of a .tmp left behind by a crash
     os.replace(tmp, ENV_FILE)
 
 
@@ -1885,7 +1907,7 @@ def _relay(answer, lang: str):
         yield (kind, value)
 
 
-def think_stream(user_text: str):
+def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     """Yield ("tool", name), ("say", text), ("sources", links), ("lang", code) and ("delta", text)
     events as the reply is produced. "say" is spoken but isn't part of the reply ("Searching…");
     "lang" means the message switched the reply language.
@@ -1893,7 +1915,12 @@ def think_stream(user_text: str):
     Each round's text is held until the round ends: if the model also called
     tools, that text was a guess made before seeing the results (e.g. a made-up
     time before get_datetime), so it is dropped instead of spoken.
+
+    gate: for this turn, WRITE_TOOLS go to gate(name, args) instead of running (Telegram's Approve buttons), and a
+    typed yes doesn't decide a memory proposal. blocked: tools this turn never gets or runs, whatever the model
+    asks for (Telegram: the web tools for a message with a link).
     """
+    global _write_gate
     _start_turn_usage()
     calendar_tools.new_turn()   # lets delete_event tell "next message" from "same turn"
     web_tools.new_turn()
@@ -1924,8 +1951,10 @@ def think_stream(user_text: str):
     via_agent = None      # an agent's answer ({agent, spoken, screen}) when one handled the turn
     lang = get_language()
     try:
-        # A yes/no right after a memory proposal decides it here: the model can't save memory.
-        decided = memory_store.answer_from_reply(user_text)
+        _write_gate = gate
+        # A yes/no right after a memory proposal decides it here: the model can't save memory. Not on a gated
+        # channel: there only a button saves, and a typed yes there must not approve a card on the web page.
+        decided = None if gate else memory_store.answer_from_reply(user_text)
         if decided:
             outcome, proposal = decided
             tracing.mark("routing_done")
@@ -1998,7 +2027,7 @@ def think_stream(user_text: str):
             tool_calls = {}
             # Last round: no tools, so the model has to answer with what it has instead of
             # ending the turn on "I got stuck".
-            round_tools = tools if round_no < rounds - 1 else []
+            round_tools = [t for t in tools if t["function"]["name"] not in blocked] if round_no < rounds - 1 else []
             req = _request_messages(turn_start, lang)
             for at, extra in reversed(notes):   # later notes first, so earlier cut points stay put
                 cut = len(req) - (len(messages) - at)
@@ -2110,6 +2139,10 @@ def think_stream(user_text: str):
                 ],
             })
             for call in calls:
+                if call["name"] in blocked:     # never run, never shown as running
+                    messages.append({"role": "tool", "tool_call_id": call["id"],
+                                     "content": f"{call['name']} isn't available for this message; answer without it."})
+                    continue
                 if call["name"] in ("web_search", "news_headlines") and not said_searching:
                     said_searching = True
                     yield ("say", phrase("searching", lang))   # spoken while the search runs
@@ -2158,6 +2191,7 @@ def think_stream(user_text: str):
         yield ("delta", reply)
 
     finally:
+        _write_gate = None
         # Runs on normal finish and when the client aborts mid-stream,
         # so history always gets whatever was actually said.
         messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {})})

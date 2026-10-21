@@ -240,6 +240,17 @@ def telegram_token(body: TokenBody, request: Request):
         raise HTTPException(400, str(e))
 
 
+class LockBody(BaseModel):
+    locked: bool
+
+
+@app.post("/telegram/lock")
+def telegram_lock(body: LockBody, request: Request):
+    """Remote control on or off. /lock on the phone turns it off; only this page turns it back on."""
+    _local_page_only(request)
+    return telegram_bot.set_locked(body.locked)
+
+
 @app.get("/greeting")
 def greeting():
     return {"text": startup_greeting()}

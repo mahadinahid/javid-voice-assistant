@@ -1246,6 +1246,9 @@ PLAN_SCREEN = (f"{TOMORROW:%A}, {TOMORROW:%B} {TOMORROW.day} · thunderstorms li
 # Garbled but with every event and the weekday in it, so the planner's own must-show check doesn't catch it.
 PLAN_GARBLED = (f"{TOMORROW:%A} ... ... ...\n1:00 PM - 2:30 PM  Lunch with Sam ... ... ...\n"
                 "2:30 PM - 3:30 PM  Project review ... ... ...")
+# Just tomorrow's two events: on a Thursday FRIDAY is tomorrow, the dentist joined them, and must-show asked
+# for a rewrite the script doesn't have.
+PLAN_EVENTS = [e for e in EVENTS if e["id"] in ("review", "lunch")]
 
 CASES = [
     # --- tasks ---
@@ -1683,7 +1686,8 @@ CASES = [
     # The screen part: Javid's own loop only ever saw an agent's spoken part, so a garbled screen went straight up.
     Case("garble: an agent's garbled screen part is asked for again", ["Plan my day tomorrow."],
          [agent_ran("planner"), screen_has("project review"), screen_lacks(r"\.\.\.|…"), no_cal_writes, model_requests(2)],
-         tasks=T3, script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_GARBLED, PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
+         tasks=T3, events=PLAN_EVENTS,
+         script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_GARBLED, PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
     # ---------- questions about Javid itself: answered from about.py, never the model ----------
     Case("self: why the voice changes (the 2026-10-13 question)",
          ["I wanted to ask about one thing. When you are talking as a Javid, the voice is one and when you are "

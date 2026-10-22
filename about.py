@@ -105,9 +105,10 @@ _SPOKEN = {
               "edge-tts দিয়ে। অন্য কোনো ভয়েস নেই: সার্ভিসটা কাজ না করলে উত্তর লেখা হিসেবে দেখাই, অন্য ভয়েসে কখনো না।"},
     "hearing": {
         "en": "I hear you through Groq's Whisper speech recognition. I only listen when you press talk, or in "
-              "hands-free mode, where I answer only what starts with 'Javid', plus a few seconds right after I reply.",
-        "bn": "আমি Groq-এর Whisper দিয়ে তোমার কথা শুনি। তুমি টক বোতাম চাপলে শুনি, আর হ্যান্ডস-ফ্রি মোডে শুধু 'জাভেদ' "
-              "দিয়ে শুরু হওয়া কথার উত্তর দিই।"},
+              "hands-free mode, where a conversation starts with 'Javid' and then goes on without my name until "
+              "you've been quiet for 30 seconds.",
+        "bn": "আমি Groq-এর Whisper দিয়ে তোমার কথা শুনি। তুমি টক বোতাম চাপলে শুনি, আর হ্যান্ডস-ফ্রি মোডে কথা শুরু "
+              "হয় 'জাভেদ' দিয়ে, তারপর ৩০ সেকেন্ড চুপ না থাকা পর্যন্ত নাম ছাড়াই চলতে থাকে।"},
     "model": {
         "en": "My replies are written by a language model, {model} right now{backup}. Your tasks, calendar, "
               "weather, prices and sums come from tools in code, not from the model's memory.",

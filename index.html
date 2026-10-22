@@ -2215,9 +2215,11 @@ async function onStop() {
 // ── Hands-free ────────────────────────────────────────────────────────────
 // Mic stays open; a simple energy-based voice detector finds where speech
 // starts and stops, then sends that clip to /talk. The server only answers if
-// it starts with "Javid" — except during a short follow-up window after Javid
-// replies. Listening pauses while Javid talks so he never hears himself.
-const FOLLOWUP_MS = 8000;
+// it starts with "Javid" — except in the follow-up window after each reply, so a
+// conversation goes on without the name until FOLLOWUP_MS of silence. (At 8 s,
+// Mahadi's next question usually came after it closed and was dropped: 15 clips
+// in one evening, 2026-10-22.) Listening pauses while Javid talks so he never hears himself.
+const FOLLOWUP_MS = 30000;
 const VAD = {
     preRollSec: 0.45,   // audio kept from before speech was detected
     startFrames: 3,     // consecutive loud frames (~20ms each) to start

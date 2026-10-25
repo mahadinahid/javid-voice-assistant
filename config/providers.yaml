@@ -1,0 +1,230 @@
+# Javid's outside providers, one entry each. providers.py reads this file, and reads it again when it changes.
+#
+#   name         the id used in code and in the usage ledger (data/providers.db)
+#   label        how the Providers panel names it
+#   kind         llm | search | extract | rerank | tts | storage
+#   env          the .env variable holding its key (a list when it needs several); any of them missing = off
+#   enabled      false turns the provider off even with a key
+#   priority     lower goes first among providers of the same kind. Language models are tried in the model
+#                order shown in the Providers panel (it is per model), so for llm it only documents that order.
+#   allowance    the FREE allowance, in the provider's own unit, never converted to tokens:
+#                  amount     a number; null = not published (counted, but only the provider's own errors stop it);
+#                             0 = no free tier, so the provider stays off
+#                  unit       credits, requests, usd, neurons, characters, calls...
+#                  per        minute, day or month (what the amount is per)
+#                  per_model  true when each model has its own allowance (Groq, Gemini)
+#                  from       headers (the provider reports what's left in its responses) or api (asked from its API)
+#                  verified   false = from the provider's pricing page as noted here, not checked against the account
+#   reset        when the allowance refills: daily_utc, daily_pacific, monthly_utc (the 1st, 00:00 UTC),
+#                rolling_24h, headers, api
+#   rate_limit   a short-window limit next to the allowance (amount, unit, per: minute): a call over it waits
+#   costs        what one call costs, in the allowance's unit, when the provider doesn't say it in its response
+#   timeout_ms   per request
+#   personal_ok  may it receive calendar, memory, chat history or tasks? false until Mahadi has read the
+#                provider's data policy and set it here himself. Without it, a provider gets requests with those
+#                stripped out, and a turn that needs them goes only to providers with personal_ok: true.
+#
+# Budget guard (providers.py): at 80 % of an allowance a provider is "reserve" (used only when the others fail);
+# at 95 % it is off until its reset. A call that would go past a free allowance is never made. On a 429, 402 or a
+# quota error the provider (or that model, for per_model providers) cools down until its retry-after time.
+
+providers:
+
+  # ---------- language models ----------
+  - name: groq
+    label: Groq
+    kind: llm
+    env: GROQ_API_KEY
+    enabled: true
+    priority: 1
+    allowance:
+      from: headers        # each model: requests per day and tokens per minute (x-ratelimit-*), tokens per day (its 429s)
+      per_model: true
+    reset: headers         # Groq's daily limits refill continuously, not at midnight
+    timeout_ms: 60000
+    personal_ok: false     # Groq also does speech recognition (Whisper), which isn't routed: every voice clip goes there
+
+  - name: gemini
+    label: Google Gemini
+    kind: llm
+    env: GEMINI_API_KEY
+    enabled: true
+    priority: 3
+    allowance:
+      amount: 20           # gemini-3.7-flash on this key, measured 2026-10-13; other Gemini models differ
+      unit: requests
+      per: day
+      per_model: true
+      verified: false
+    reset: daily_pacific
+    timeout_ms: 30000
+    personal_ok: false
+
+  - name: openrouter
+    label: OpenRouter (free models)
+    kind: llm
+    env: OPENROUTER_API_KEY
+    enabled: true
+    priority: 4
+    allowance:
+      amount: 50           # free models (ids ending ":free"); 1,000 a day once $10 of credits were bought
+      unit: requests
+      per: day
+      verified: false
+    rate_limit:
+      amount: 20
+      unit: requests
+      per: minute
+    reset: daily_utc
+    timeout_ms: 30000
+    personal_ok: false
+
+  - name: cloudflare
+    label: Cloudflare Workers AI
+    kind: llm
+    env: [CLOUDFLARE_ACCOUNT_ID, CLOUDFLARE_AI_TOKEN]
+    enabled: true
+    priority: 5
+    allowance:
+      amount: 10000
+      unit: neurons
+      per: day
+      verified: false
+    reset: daily_utc       # 00:00 UTC
+    timeout_ms: 30000
+    personal_ok: false
+
+  - name: deepseek
+    label: DeepSeek
+    kind: llm
+    env: DEEPSEEK_API_KEY
+    enabled: false         # paid only
+    priority: 6
+    allowance:
+      amount: 0            # no free tier: the budget guard keeps it off (never past a free allowance)
+      unit: usd
+      per: month
+      verified: false
+    reset: monthly_utc
+    timeout_ms: 30000
+    personal_ok: false
+
+  - name: ifm
+    label: IFM K2 Horizon
+    kind: llm
+    env: IFM_API_KEY
+    enabled: true
+    priority: 7
+    allowance:
+      amount: null         # not published: requests are counted, and only IFM's own 402/429 stop it
+      unit: requests
+      per: day
+      verified: false
+    reset: daily_utc
+    timeout_ms: 30000
+    personal_ok: false
+
+  # ---------- web search ----------
+  - name: tavily
+    label: Tavily
+    kind: search           # also reads pages (extract) for web answers
+    env: TAVILY_API_KEY
+    enabled: true
+    priority: 1
+    allowance:
+      amount: 1000
+      unit: credits
+      per: month
+      verified: false
+    costs:
+      search_basic: 1
+      search_advanced: 2
+      extract_basic: 1     # Tavily reports a call's real credits in its response; that's what is counted
+    reset: monthly_utc
+    timeout_ms: 30000
+    personal_ok: false
+
+  - name: exa
+    label: Exa
+    kind: search
+    env: EXA_API_KEY
+    enabled: true
+    priority: 2
+    allowance:
+      amount: 10
+      unit: usd
+      per: month
+      verified: false
+    costs:
+      search: 0.005        # Exa reports each call's cost (costDollars); that's what is counted
+    reset: monthly_utc
+    timeout_ms: 20000
+    personal_ok: false
+
+  - name: brave
+    label: Brave Search
+    kind: search
+    env: BRAVE_SEARCH_API_KEY
+    enabled: true
+    priority: 3
+    allowance:
+      amount: 5
+      unit: usd
+      per: month
+      verified: false
+    costs:
+      search: 0.005        # $5 per 1,000 requests
+    reset: monthly_utc
+    timeout_ms: 20000
+    personal_ok: false
+
+  # ---------- page reading ----------
+  - name: firecrawl
+    label: Firecrawl
+    kind: extract
+    env: FIRECRAWL_API_KEY
+    enabled: true
+    priority: 1
+    allowance:
+      amount: 1000
+      unit: credits
+      per: month
+      verified: false
+    costs:
+      scrape: 1
+    reset: monthly_utc
+    timeout_ms: 30000
+    personal_ok: false
+
+  # ---------- reranking ----------
+  - name: cohere
+    label: Cohere
+    kind: rerank
+    env: COHERE_API_KEY
+    enabled: true
+    priority: 1
+    allowance:
+      amount: 1000
+      unit: calls
+      per: month
+      verified: false
+    costs:
+      rerank: 1
+    reset: monthly_utc
+    timeout_ms: 15000
+    personal_ok: false
+
+  # ---------- voice ----------
+  - name: elevenlabs
+    label: ElevenLabs
+    kind: tts
+    env: ELEVENLABS_API_KEY
+    enabled: true          # balance only: Javid's voice stays edge-tts (locked, see CLAUDE.md)
+    priority: 1
+    allowance:
+      from: api            # character_count / character_limit from GET /v1/user/subscription
+      unit: characters
+      per: month
+    reset: api
+    timeout_ms: 10000
+    personal_ok: false

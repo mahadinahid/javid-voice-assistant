@@ -1,0 +1,5 @@
+{
+ "source": "ElevenLabs' documented GET /v1/user/subscription response (not recorded: no ELEVENLABS_API_KEY yet), trimmed",
+ "status": 200,
+ "body": {"tier": "free", "character_count": 4210, "character_limit": 10000, "can_extend_character_limit": false, "allowed_to_extend_character_limit": false, "next_character_count_reset_unix": 1793404800, "voice_limit": 3, "status": "free"}
+}

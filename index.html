@@ -500,8 +500,9 @@ header h1 {
 .m-dot.ready { background: var(--cyan); }
 .m-dot.cooling { background: var(--amber); }
 .m-dot.missing { background: var(--text-4); }
-.m-dot.low { background: #ff9a5c; }
-.m-dot.reserved { background: var(--violet); }
+.m-dot.reserve { background: var(--violet); }
+.m-dot.off { background: var(--red); }
+.m-dot.disabled { background: #343a52; }
 .m-dot.nokey { background: #343a52; }
 
 /* ── Dialogs (models, latency) ── */
@@ -566,9 +567,11 @@ header h1 {
     color: var(--text-2);
 }
 .model-card.serving { border-color: rgba(62, 224, 168, 0.45); box-shadow: 0 0 0 1px rgba(62, 224, 168, 0.12), 0 10px 30px rgba(62, 224, 168, 0.08); }
-.model-card.cooling,
-.model-card.low { border-color: rgba(255, 190, 85, 0.4); }
+.model-card.cooling { border-color: rgba(255, 190, 85, 0.4); }
+.model-card.off { border-color: rgba(255, 92, 122, 0.4); }
+.model-card.reserve { border-color: rgba(139, 124, 255, 0.4); }
 .model-card.missing,
+.model-card.disabled,
 .model-card.nokey { opacity: 0.65; }
 .mc-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; row-gap: 8px; }
 .mc-name { flex: 1 1 calc(100% - 20px); font-size: 13.5px; font-weight: 600; color: var(--text); overflow-wrap: anywhere; }
@@ -584,9 +587,15 @@ header h1 {
 }
 .pill.serving { color: #8ff5d0; border-color: rgba(62, 224, 168, 0.45); background: rgba(62, 224, 168, 0.08); }
 .pill.ready { color: var(--cyan-soft); border-color: rgba(63, 208, 255, 0.4); background: rgba(63, 208, 255, 0.07); }
-.pill.reserved { color: var(--violet-soft); border-color: rgba(139, 124, 255, 0.45); background: rgba(139, 124, 255, 0.08); }
-.pill.cooling,
-.pill.low { color: #ffd38a; border-color: rgba(255, 190, 85, 0.4); background: rgba(255, 190, 85, 0.08); }
+.pill.reserve { color: var(--violet-soft); border-color: rgba(139, 124, 255, 0.45); background: rgba(139, 124, 255, 0.08); }
+.pill.cooling { color: #ffd38a; border-color: rgba(255, 190, 85, 0.4); background: rgba(255, 190, 85, 0.08); }
+.pill.off { color: #ff9cab; border-color: rgba(255, 92, 122, 0.4); background: rgba(255, 92, 122, 0.08); }
+.prov-kind { margin: 18px 0 10px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
+#prov-cards > .prov-kind:first-child { margin-top: 0; }
+#prov-cards .model-cards { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }   /* a lone card keeps its width */
+.models-off { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--text-4); }
+.unverified { color: #ffd38a; }
+.mc-dim { color: var(--text-4); }
 .mc-state { font-size: 12.5px; color: var(--text); }
 .meter-label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .meter-label b { font-weight: 600; color: var(--text); }
@@ -1825,6 +1834,7 @@ html[data-theme="overdrive"] .modal-head h2 { color: var(--od-hot); font-family:
 html[data-theme="overdrive"] .btn-ghost { border-radius: 0; border-color: var(--od-dim); background: #0d0606; }
 html[data-theme="overdrive"] .btn-ghost:hover { border-color: var(--od-red); }
 html[data-theme="overdrive"] .model-card { border-radius: 0; border-color: var(--od-line); background: #0d0606; }
+html[data-theme="overdrive"] .prov-kind { color: var(--od-amber); font-family: var(--od-font); }
 html[data-theme="overdrive"] .toast { border-radius: 0; border-color: var(--od-red); background: #140303; color: #ffb3a8; font-family: var(--od-mono); }
 html[data-theme="overdrive"] .ring {
     border-radius: 0;
@@ -2007,7 +2017,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
             <div id="memory-list"><p class="empty">Nothing stored yet.</p></div>
         </div>
         <div class="panel" id="models-panel">
-            <div class="panel-title">Models <button id="models-open" class="link-btn" title="Token usage, limits and fallback order">Details</button></div>
+            <div class="panel-title">Providers <button id="models-open" class="link-btn" title="Free allowances, usage, model order and keys">Details</button></div>
             <div id="models-summary" class="models-summary">Checking…</div>
             <div id="models-list"></div>
         </div>
@@ -2075,18 +2085,24 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 </div>
 
 <div id="models-modal" class="modal" hidden>
-    <div class="modal-card" role="dialog" aria-label="Language models">
+    <div class="modal-card" role="dialog" aria-label="Providers">
         <div class="modal-head">
-            <h2>Language models</h2>
-            <button id="models-ping" class="btn-ghost" title="Sends a tiny request (~20 tokens) to each model">Test all now</button>
+            <h2>Providers</h2>
+            <button id="models-ping" class="btn-ghost" title="Sends a tiny request (~20 tokens) to each model that may take one">Test models</button>
             <button id="models-close" class="btn-ghost" aria-label="Close">✕</button>
         </div>
         <div id="models-headline" class="models-headline"></div>
+        <div id="prov-cards"></div>
+        <h3 class="prov-kind">Models, in the order they’re tried</h3>
         <div id="models-cards" class="model-cards"></div>
         <div id="models-controls" class="models-controls"></div>
-        <p class="modal-foot">Token counts are Groq's own numbers for requests made through Javid; other apps sharing the
-        key aren't included. A daily limit appears once Groq has reported it. Models are tried in the order shown; one that
-        is rate-limited is skipped until its timer ends. Your model order is saved in <code>llm_chain.json</code>.</p>
+        <p class="modal-foot">Allowances are in each provider’s own unit, from <code>config/providers.yaml</code>; the ones
+        not checked against your account say “unverified”. At 80% of an allowance a provider is kept in reserve (used only
+        when the others fail), at 95% it’s off until its reset, and a provider that answered with a rate limit rests until
+        its retry-after time. Your calendar, tasks, memory and past chats only go to providers marked
+        <code>personal_ok: true</code> there. Every call is counted in <code>data/providers.db</code>. Token counts are
+        Groq’s own numbers for requests made through Javid; other apps sharing a key aren’t included. Your model order is
+        saved in <code>llm_chain.json</code>.</p>
     </div>
 </div>
 
@@ -3503,13 +3519,14 @@ setInterval(() => {
 }, 200);
 
 
-// ── Models: which LLMs can serve right now, with token usage ──────────────
-let llmStatus = null, llmFetchedAt = 0, llmPings = {};
+// ── Providers: every outside service, what it has used of its free allowance (in its own unit), the model chain ──
+let provStatus = null, llmStatus = null, llmFetchedAt = 0, llmPings = {};
 
 const fmtN = n => n == null ? '—' : Number(n).toLocaleString();
 const fmtK = n => n == null ? '—' : n >= 10000 ? (n / 1000).toFixed(0) + 'k' : n >= 1000 ? (n / 1000).toFixed(1) + 'k' : String(n);
 function fmtWait(sec) {
     sec = Math.max(0, Math.round(sec));
+    if (sec >= 86400) return `${Math.floor(sec / 86400)}d ${Math.floor(sec % 86400 / 3600)}h`;
     if (sec >= 3600) return `${Math.floor(sec / 3600)}h ${Math.floor(sec % 3600 / 60)}m`;
     return sec >= 60 ? `${Math.floor(sec / 60)}m ${String(sec % 60).padStart(2, '0')}s` : `${sec}s`;
 }
@@ -3518,89 +3535,173 @@ function fmtAgo(ts) {
     const s = Math.max(0, Date.now() / 1000 - ts);
     return s < 90 ? 'just now' : s < 5400 ? `${Math.round(s / 60)} min ago` : s < 129600 ? `${Math.round(s / 3600)} h ago` : `${Math.round(s / 86400)} d ago`;
 }
+function fmtWhen(ts) {     // "14:05" today, else "Nov 1, 06:00" (the viewer's time)
+    if (!ts) return '';
+    const d = new Date(ts * 1000), time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    return d.toDateString() === new Date().toDateString() ? time
+        : `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })}, ${time}`;
+}
+const UNIT_SHORT = { credits: 'cr', requests: 'req', calls: 'calls', neurons: 'neurons', characters: 'chars', tokens: 'tok' };
+function fmtUnits(n, unit) {
+    if (n == null) return '—';
+    if (unit === 'usd') return '$' + Number(n).toFixed(2);
+    return n >= 10000 ? fmtK(Math.round(n)) : (Math.round(n * 10) / 10).toLocaleString();
+}
+const perText = per => ({ day: 'today', month: 'this month', minute: 'this minute' }[per] || '');
 // state as of *now* (the server's countdown, minus time since we fetched it)
 function liveModel(m) {
     const left = m.retry_in_s - (Date.now() - llmFetchedAt) / 1000;
     if (m.state === 'cooling' && left <= 0) return { ...m, state: 'ready', retry_in_s: 0 };
     return { ...m, retry_in_s: Math.max(0, left) };
 }
-const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', cooling: 'Rate-limited', low: 'Low on daily tokens', reserved: 'Reserved for web & reasoning', missing: 'Not on this key', nokey: 'No API key' };
+const liveProvState = p => p.state === 'cooldown' && p.until && p.until <= Date.now() / 1000 ? 'ready' : p.state;
+const provDot = s => ({ cooldown: 'cooling', unknown: 'nokey' }[s] || s);
+const STATE_TEXT = { serving: 'Serving now', ready: 'Ready · standby', reserve: 'Reserve · only if others fail', off: 'At its free limit',
+                     cooling: 'Rate-limited', missing: 'Not on this key', nokey: 'No API key', disabled: 'Turned off' };
+const PROV_STATE = { ready: 'Ready', reserve: 'Reserve', off: 'Off', cooldown: 'Resting', nokey: 'No key', disabled: 'Turned off', unknown: 'Unknown' };
+const KIND_TITLE = { llm: 'Language models', search: 'Web search', extract: 'Page reading', rerank: 'Reranking', tts: 'Voice', storage: 'Storage' };
+const pctOf = share => share == null ? null : Math.round(share * 100);
+// Why a provider rests (providers.error_kind), in words.
+const REST_WHY = { rate_limited: 'rate-limited', quota: 'at its quota', payment: 'out of balance', auth: 'key rejected',
+                   missing: 'model not found', unavailable: 'not reachable' };
+const restWhy = why => REST_WHY[why] || why || 'after an error';
+
+// A model provider's sidebar row: what its serving (or first) model has used of its daily tokens, or its state.
+function modelMeta(p) {
+    const ms = llmStatus.models.map(liveModel).filter(m => m.provider === p.name);
+    const m = ms.find(m => m.state === 'serving') || ms.find(m => m.state === 'ready' || m.state === 'reserve') || ms[0];
+    if (!m) return 'not in the chain';
+    if (m.state === 'cooling') return '⏳ ' + fmtWait(m.retry_in_s);
+    if (m.state === 'off') return '⛔ at limit';
+    const tok = m.tpd_limit ? `${fmtK(m.est_used_24h ?? m.tokens_24h.total)}/${fmtK(m.tpd_limit)} tok` : `${fmtK(m.tokens_24h.total)} tok`;
+    return (m.state === 'reserve' ? '🛡 ' : '') + tok;
+}
+
+function provMeta(p) {
+    const s = liveProvState(p), a = p.allowance;
+    if (s === 'cooldown') return '⏳ ' + fmtWait(p.until - Date.now() / 1000);
+    if (s === 'nokey') return 'no key';
+    if (s === 'disabled') return 'turned off';
+    if (a.from === 'headers') return modelMeta(p);
+    if (s === 'off') return '⛔ ' + (pctOf(p.share) != null ? pctOf(p.share) + '%' : 'off');
+    const unit = a.unit === 'usd' ? '' : ' ' + (UNIT_SHORT[a.unit] ?? a.unit);
+    const used = fmtUnits(p.used ?? 0, a.unit);
+    return (s === 'reserve' ? '🛡 ' : '') + (a.amount ? `${used}/${fmtUnits(a.amount, a.unit)}${unit}` : used + unit);
+}
 
 function renderModelsPanel() {
     const sum = document.getElementById('models-summary'), list = document.getElementById('models-list');
-    if (!llmStatus) { sum.textContent = 'Unavailable'; list.innerHTML = ''; return; }
+    if (!provStatus || !llmStatus) { sum.textContent = 'Unavailable'; list.innerHTML = ''; return; }
+    const ps = provStatus.providers, on = ps.filter(p => p.on);
     const ms = llmStatus.models.map(liveModel);
-    const ready = ms.filter(m => m.state === 'serving' || m.state === 'ready').length;
-    const serving = ms.find(m => m.state === 'serving') || ms.find(m => m.state === 'ready');
-    sum.textContent = ready
-        ? `${ready} of ${ms.length} ready · next answer: ${serving.name}`
-        : `No model can serve right now`;
-    document.getElementById('status-pill').classList.toggle('down', !ready);
-    document.getElementById('status-text').textContent = ready ? serving.name : 'No model ready';
-    list.innerHTML = ms.map(m => `
-        <div class="model-row" title="${esc(m.id)} — ${STATE_TEXT[m.state]}">
-            <span class="m-dot ${m.state}"></span>
-            <span class="m-name">${esc(m.name)}</span>
-            <span class="m-meta">${m.state === 'cooling' ? '⏳ ' + fmtWait(m.retry_in_s) : m.state === 'low' ? '⚠ ' + fmtK(m.remaining_24h) + ' left' : m.state === 'reserved' ? '🛡 ' + fmtK(m.remaining_24h) + ' left' : m.state === 'nokey' ? 'no key' : fmtK(m.tokens_24h.total) + ' tok'}</span>
-        </div>`).join('') + webRow(llmStatus.web);
+    const serving = ms.find(m => m.state === 'serving') || ms.find(m => m.state === 'ready' || m.state === 'reserve');
+    sum.textContent = `${on.length} of ${ps.length} providers on · ` + (serving ? `next answer: ${serving.name}` : 'no model can answer now');
+    document.getElementById('status-pill').classList.toggle('down', !serving);
+    document.getElementById('status-text').textContent = serving ? serving.name : 'No model ready';
+    const rows = on.map(p => `
+        <div class="model-row" title="${esc(p.label)} — ${esc(PROV_STATE[liveProvState(p)] || p.state)}${p.why ? ': ' + esc(p.why) : ''}">
+            <span class="m-dot ${provDot(liveProvState(p))}"></span>
+            <span class="m-name">${esc(p.label)}</span>
+            <span class="m-meta">${provMeta(p)}</span>
+        </div>`).join('');
+    const off = ps.filter(p => !p.on);
+    list.innerHTML = rows + (off.length ? `<div class="models-off">Not on: ${off.map(p => esc(p.label)).join(', ')}</div>` : '');
 }
 
-function webState(w) {
-    return !w.has_key ? 'nokey' : w.used_today >= w.cap ? 'cooling' : w.used_today >= w.cap * 0.75 ? 'low' : 'ready';
-}
-
-function webRow(w) {
-    if (!w) return '';
-    const st = webState(w);
-    return `
-        <div class="model-row" title="Tavily web search — ${w.used_today} of ${w.cap} credits used today">
-            <span class="m-dot ${st}"></span>
-            <span class="m-name">web search</span>
-            <span class="m-meta">${w.has_key ? `${w.used_today}/${w.cap} cr` : 'no key'}</span>
-        </div>`;
-}
-
-function webCard(w) {
-    if (!w) return '';
-    const st = webState(w);
-    const state = !w.has_key ? 'No Tavily key yet — add <b>TAVILY_API_KEY</b> to <code>.env</code> and restart'
-        : st === 'cooling' ? 'Daily budget used up · resets at midnight' : st === 'low' ? 'Running low on today’s budget' : 'Ready';
-    return `
-        <div class="model-card ${st}">
-            <div class="mc-head"><span class="m-dot ${st}"></span><span class="mc-name">Web search</span>
-                <span class="pill ${st}">Tavily</span></div>
-            <div class="mc-state">${state}</div>
-            ${meter('Credits today', `${fmtN(w.used_today)} / ${fmtN(w.cap)}`, w.used_today, w.cap)}
-            <div class="mc-line"><b>${fmtN(w.searches)}</b> search${w.searches === 1 ? '' : 'es'} · <b>${fmtN(w.reads)}</b> page read${w.reads === 1 ? '' : 's'} · <b>${fmtN(w.cache_hits)}</b> reused from cache (free, ${w.cache_minutes} min)</div>
-            <div class="mc-line">Last used <b>${fmtAgo(w.last_used)}</b> · basic search, up to 5 results</div>
-            ${w.last_error ? `<div class="mc-err">Last problem ${fmtAgo(w.last_error.at)}: ${esc(w.last_error.kind)}</div>` : ''}
-        </div>`;
-}
-
-function meter(label, valueText, used, total) {
+function meter(label, valueText, used, total, warnAt = 0.7, critAt = 0.9) {
     if (!total) return '';
     const pct = Math.min(100, Math.max(0, used / total * 100));
-    const cls = pct >= 90 ? 'crit' : pct >= 70 ? 'warn' : '';
+    const cls = pct >= critAt * 100 ? 'crit' : pct >= warnAt * 100 ? 'warn' : '';
     return `<div><div class="meter-label"><span>${label}</span><b>${valueText}</b></div>
             <div class="meter"><i class="${cls}" style="width:${pct.toFixed(1)}%"></i></div></div>`;
 }
 
-function renderModelsModal() {
-    if (!llmStatus) return;
-    const ms = llmStatus.models.map(liveModel);
-    const ready = ms.filter(m => m.state === 'serving' || m.state === 'ready');
-    const next = ms.find(m => m.state === 'serving') || ready[0];
-    document.getElementById('models-headline').innerHTML = ready.length
-        ? `<b>${ready.length} of ${ms.length}</b> models can serve right now · the next request goes to <b>${esc(next.name)}</b>.`
-        : `<b>None</b> of the ${ms.length} models can serve right now — Javid will try the one that recovers first.`;
+function resetText(p) {
+    const left = p.next_reset ? ` (in ${fmtWait(p.next_reset - Date.now() / 1000)})` : '';
+    return { daily_utc: `Resets daily at 00:00 UTC${left}`, daily_pacific: `Resets daily at midnight Pacific time${left}`,
+             monthly_utc: `Resets on the 1st at 00:00 UTC${p.next_reset ? ' (' + fmtWhen(p.next_reset) + ')' : ''}`,
+             rolling_24h: 'Counted over the last 24 hours', headers: 'Refills continuously; the provider reports what’s left',
+             api: p.next_reset ? `Resets ${fmtWhen(p.next_reset)}, as its API reports` : 'Its API reports when it resets' }[p.reset] || esc(p.reset);
+}
 
-    const cardsHtml = ms.map(m => {
-        const t = m.tokens_24h, lim = m.limits, ping = llmPings[m.id];
+function allowanceText(p) {     // for a provider that's off: what it would have
+    const a = p.allowance;
+    if (a.from) return `Free allowance: reported by ${a.from === 'headers' ? 'its response headers' : 'its API'}`;
+    if (a.amount === 0) return 'No free tier';
+    if (a.amount == null) return 'Free allowance not published';
+    return `Free allowance: <b>${fmtUnits(a.amount, a.unit)}</b> ${a.unit === 'usd' ? '' : esc(a.unit) + ' '}a ${esc(a.per || 'period')}${a.verified ? '' : ' <span class="unverified">(unverified)</span>'}`;
+}
+
+function allowanceHtml(p) {
+    const a = p.allowance;
+    if (a.from === 'headers') return `<div class="mc-line">Each model has its own allowance, which ${esc(p.label)} reports in its responses: see the models below.</div>`;
+    if (a.from === 'api') return p.used != null
+        ? meter(`Free ${esc(a.unit)} ${perText(a.per)} · from its API`, `${fmtUnits(p.used, a.unit)} / ${fmtUnits(a.amount, a.unit)}`,
+                p.used, a.amount, provStatus.reserve_at, provStatus.off_at)
+        : '<div class="mc-line">Its balance is asked from its API…</div>';
+    if (a.amount === 0) return '<div class="mc-line">No free tier, so Javid keeps it off: it never spends past a free allowance.</div>';
+    if (a.amount == null) return `<div class="mc-line">Free allowance not published · <b>${fmtUnits(p.used ?? 0, a.unit)}</b> ${esc(a.unit)} counted ${perText(a.per)}; only its own limit errors stop it</div>`;
+    const label = `Free ${a.unit === 'usd' ? 'credit' : esc(a.unit)} ${perText(a.per)}${a.per_model ? ' (each model)' : ''}${a.verified ? '' : ' · <span class="unverified">unverified</span>'}`;
+    return meter(label, `${fmtUnits(p.used ?? 0, a.unit)} / ${fmtUnits(a.amount, a.unit)}`, p.used ?? 0, a.amount, provStatus.reserve_at, provStatus.off_at);
+}
+
+function provStateLine(p) {
+    const s = liveProvState(p), pct = pctOf(p.share);
+    if (s === 'reserve') return `Reserve · ${pct}% of its free allowance used, so it’s used only when the others fail`;
+    if (s === 'off') return p.why === 'no free tier' ? 'Off · no free tier'
+        : `Off${p.until ? ' until <b>' + fmtWhen(p.until) + '</b>' : ''} · ${esc(p.why)}`;
+    if (s === 'cooldown') return `Resting · back in <b>${fmtWait(p.until - Date.now() / 1000)}</b> (${esc(restWhy(p.why))})`;
+    if (s === 'nokey') return `Not set up · add <code>${p.env.map(esc).join('</code> and <code>')}</code> to <code>.env</code>`;
+    if (s === 'disabled') return 'Turned off in <code>config/providers.yaml</code>';
+    return 'Ready';
+}
+
+function provCard(p) {
+    const s = liveProvState(p), dot = provDot(s), idle = s === 'nokey' || s === 'disabled';
+    const web = p.name === 'tavily' && llmStatus && llmStatus.web;
+    const err = p.last_error ? `<div class="mc-err">Last problem ${fmtAgo(p.last_error.at)}: ${esc(p.last_error.kind)}${p.last_error.message ? ' · ' + esc(p.last_error.message) : ''}</div>` : '';
+    return `
+        <div class="model-card ${dot}">
+            <div class="mc-head"><span class="m-dot ${dot}"></span><span class="mc-name">${esc(p.label)}</span>
+                <span class="pill ${dot}">${PROV_STATE[s] || esc(s)}</span></div>
+            <div class="mc-state">${provStateLine(p)}</div>
+            ${idle ? `<div class="mc-line">${allowanceText(p)}</div>` : allowanceHtml(p)}
+            ${p.rate_limit ? `<div class="mc-line">Also at most <b>${fmtN(p.rate_limit.amount)}</b> ${esc(p.rate_limit.unit)} a minute</div>` : ''}
+            ${web && !idle ? `<div class="mc-line">Today <b>${fmtN(web.used_today)}</b> of Javid’s own <b>${fmtN(web.cap)}</b> credits a day · ${fmtN(web.searches)} search${web.searches === 1 ? '' : 'es'} · ${fmtN(web.reads)} page read${web.reads === 1 ? '' : 's'} · ${fmtN(web.cache_hits)} from cache</div>` : ''}
+            <div class="mc-line">${esc(p.uses)}</div>
+            ${idle ? '' : `<div class="mc-line">${resetText(p)}</div>`}
+            <div class="mc-line">Personal data: <b>${p.personal_ok ? 'allowed' : 'never sent'}</b> <span class="mc-dim">(personal_ok: ${p.personal_ok})</span></div>
+            ${idle ? '' : `<div class="mc-line">Last call <b>${fmtAgo(p.last_used)}</b>${p.calls != null ? ` · ${fmtN(p.calls)} call${p.calls === 1 ? '' : 's'} ${perText(p.allowance.per)}` : ''} · timeout ${Math.round(p.timeout_ms / 1000)} s</div>`}
+            ${err}
+        </div>`;
+}
+
+function setHtml(el, html) {    // don't rebuild identical cards: a click could land mid-rebuild
+    if (el.dataset.html !== html) { el.innerHTML = html; el.dataset.html = html; }
+}
+
+function renderModelsModal() {
+    if (!provStatus || !llmStatus) return;
+    const ps = provStatus.providers, on = ps.filter(p => p.on);
+    const ms = llmStatus.models.map(liveModel);
+    const canServe = ms.some(m => ['serving', 'ready', 'reserve'].includes(m.state));
+    document.getElementById('models-headline').innerHTML =
+        `<b>${on.length} of ${ps.length}</b> providers are on · ` + (canServe
+            ? `the next answer comes from <b>${esc(provStatus.next_model)}</b>.`
+            : `<b>no</b> language model can answer right now; Javid says so instead of sending anything.`)
+        + (provStatus.errors.length ? `<div class="mc-err">${esc(provStatus.registry)}: ${provStatus.errors.map(esc).join(' · ')}</div>` : '');
+    const groups = Object.keys(KIND_TITLE).map(k => [k, ps.filter(p => p.kind === k)]).filter(([, g]) => g.length);
+    setHtml(document.getElementById('prov-cards'), groups.map(([k, g]) =>
+        `<h3 class="prov-kind">${KIND_TITLE[k]}</h3><div class="model-cards">${g.map(provCard).join('')}</div>`).join(''));
+
+    setHtml(document.getElementById('models-cards'), ms.map(m => {
+        const t = m.tokens_24h, lim = m.limits, ping = llmPings[m.id], pct = pctOf(m.share);
         const stateLine = m.state === 'cooling'
-            ? `Rate-limited · back in <b>${fmtWait(m.retry_in_s)}</b>`
-            : m.state === 'low' ? `Almost out of daily tokens · about <b>${fmtN(m.remaining_24h)}</b> left, a reply needs ~${fmtN(llmStatus.min_request_tokens)}`
-            : m.state === 'reserved' ? `Under ${Math.round(m.reserve_below * 100)}% of its daily tokens (about <b>${fmtN(m.remaining_24h)}</b> left, refilling ~${fmtN(Math.round(m.tpd_limit / 24))}/hour) · kept for web and reasoning turns while other models can answer`
+            ? `${m.guard_why === 'rate_limited' ? 'Rate-limited' : 'Resting (' + esc(restWhy(m.guard_why)) + ')'} · back in <b>${fmtWait(m.retry_in_s)}</b>`
+            : m.state === 'off' ? `At ${pct != null ? pct + '% of ' : ''}its free allowance · off${m.off_until ? ' until <b>' + fmtWhen(m.off_until) + '</b>' : ' until it refills'}`
+            : m.state === 'reserve' ? `${pct}% of its free allowance used (from ${Math.round(llmStatus.reserve_at * 100)}% it’s in reserve) · answers only when the models above can’t`
             : m.state === 'nokey' ? `No ${esc(m.provider_label)} API key yet — add it under <b>API keys</b> below`
+            : m.state === 'disabled' ? 'Its provider is turned off in <code>config/providers.yaml</code>'
             : m.state === 'missing' ? 'This model isn’t available to your API key' : STATE_TEXT[m.state];
         const role = m.role === 'primary' ? 'Primary' : `Fallback ${m.order}`;
         let daily;
@@ -3609,11 +3710,12 @@ function renderModelsModal() {
         if (m.tpd_limit) {
             const used = m.est_used_24h ?? t.total;
             daily = since + meter((partial ? 'Tokens counted so far' : 'Tokens in the last 24 h') + (m.reported ? ' (est.)' : ''),
-                          `${fmtN(used)} / ${fmtN(m.tpd_limit)}`, used, m.tpd_limit)
+                          `${fmtN(used)} / ${fmtN(m.tpd_limit)}`, used, m.tpd_limit, llmStatus.reserve_at, llmStatus.off_at)
                   + (m.reported ? `<div class="mc-line">Groq reported <b>${fmtN(m.reported.used)}</b> used at ${fmtAgo(m.reported.at)}.</div>` : '');
         } else {
             daily = since + `<div class="mc-line"><b>${fmtN(t.total)}</b> tokens ${partial ? 'counted so far' : 'in the last 24 h'} · daily limit not reported yet</div>`;
         }
+        const idle = m.state === 'nokey' || m.state === 'disabled';
         return `
         <div class="model-card ${m.state}">
             <div class="mc-head">
@@ -3628,23 +3730,18 @@ function renderModelsModal() {
             </div>
             <div class="mc-state">${stateLine}</div>
             ${m.provider !== 'groq' ? `<div class="mc-line">Requests go to <b>${esc(m.provider_label)}</b>, not Groq, when this model answers.</div>` : ''}
-            ${m.state === 'nokey' ? '' : daily}
-            ${m.state === 'nokey' ? '' : `<div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>`}
+            ${idle ? '' : daily}
+            ${idle ? '' : `<div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>`}
             ${m.per_turn ? `<div class="mc-line">Per turn (avg of last ${m.per_turn.turns}): in <b>${fmtN(m.per_turn.prompt)}</b>${m.per_turn.cached ? ` (${fmtN(m.per_turn.cached)} cached)` : ''} · out <b>${fmtN(m.per_turn.completion)}</b> · <b>${fmtN(m.per_turn.total)}</b> total · ${m.per_turn.requests} req</div>` : ''}
             ${lim ? meter('Tokens this minute', `${fmtN(lim.tpm_remaining)} left of ${fmtN(lim.tpm_limit)}`,
                           (lim.tpm_limit || 0) - (lim.tpm_remaining || 0), lim.tpm_limit) : ''}
             ${lim && lim.rpd_limit ? meter('Requests today', `${fmtN(lim.rpd_remaining)} left of ${fmtN(lim.rpd_limit)}`,
-                          lim.rpd_limit - lim.rpd_remaining, lim.rpd_limit) : ''}
+                          lim.rpd_limit - lim.rpd_remaining, lim.rpd_limit, llmStatus.reserve_at, llmStatus.off_at) : ''}
             <div class="mc-line">Last used <b>${fmtAgo(m.last_used)}</b>${m.sends_reasoning_effort ? ' · reasoning: low' : ' · default reasoning'}</div>
             ${ping ? `<div class="mc-line mc-ping ${ping.ok ? 'ok' : 'bad'}">${ping.ok ? `✓ answered in ${ping.ms} ms` : '✗ ' + esc(ping.error || 'failed')}</div>` : ''}
             ${m.last_error ? `<div class="mc-err">Last problem ${fmtAgo(m.last_error.at)}: ${esc(m.last_error.kind)}${m.last_error.window ? ' (' + m.last_error.window + ')' : ''}</div>` : ''}
         </div>`;
-    }).join('') + webCard(llmStatus.web);
-    const cardsEl = document.getElementById('models-cards');
-    if (cardsEl.dataset.html !== cardsHtml) {   // don't rebuild identical cards: a click could land mid-rebuild
-        cardsEl.innerHTML = cardsHtml;
-        cardsEl.dataset.html = cardsHtml;
-    }
+    }).join(''));
 
     renderModelsControls(false);
 }
@@ -3716,6 +3813,7 @@ async function saveChain(ids) {
         llmStatus = await llmApi('PUT', '/llm/chain', { chain: ids });
         llmFetchedAt = Date.now();
         renderModelsPanel(); renderModelsModal(); renderModelsControls(true);
+        refreshModels();
     } catch (e) { showToast(e.message); }
 }
 
@@ -3735,6 +3833,7 @@ async function saveKey(provider, btn) {
         keyMsg[provider] = { ok: false, text: e.message };
     }
     renderModelsPanel(); renderModelsModal(); renderModelsControls(true);
+    refreshModels();
 }
 
 async function removeKey(provider) {
@@ -3744,6 +3843,7 @@ async function removeKey(provider) {
         keyMsg[provider] = { ok: true, text: 'Key removed.' };
     } catch (e) { keyMsg[provider] = { ok: false, text: e.message }; }
     renderModelsPanel(); renderModelsModal(); renderModelsControls(true);
+    refreshModels();
 }
 
 document.getElementById('models-cards').addEventListener('click', e => {
@@ -3777,9 +3877,10 @@ document.getElementById('models-controls').addEventListener('keydown', e => {
 
 async function refreshModels() {
     try {
-        llmStatus = await (await fetch('/llm')).json();
+        provStatus = await (await fetch('/providers')).json();
+        llmStatus = provStatus.llm;
         llmFetchedAt = Date.now();
-    } catch { llmStatus = null; }
+    } catch { provStatus = llmStatus = null; }
     renderModelsPanel();
     if (!modelsModal.hidden) renderModelsModal();
 }
@@ -3792,8 +3893,9 @@ async function pingModels() {
         llmPings = Object.fromEntries(data.pings.map(p => [p.id, p]));
         llmStatus = data.status; llmFetchedAt = Date.now();
         renderModelsPanel(); renderModelsModal();
+        refreshModels();
     } catch { showToast('Model test failed — is the server running?'); }
-    btn.disabled = false; btn.textContent = 'Test all now';
+    btn.disabled = false; btn.textContent = 'Test models';
 }
 
 const modelsModal = document.getElementById('models-modal');

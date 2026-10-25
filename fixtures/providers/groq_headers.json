@@ -1,0 +1,18 @@
+{
+ "recorded": "2026-10-25",
+ "model": "openai/gpt-oss-20b",
+ "status": 200,
+ "headers": {
+  "x-ratelimit-limit-requests": "1000",
+  "x-ratelimit-limit-tokens": "8000",
+  "x-ratelimit-remaining-requests": "999",
+  "x-ratelimit-remaining-tokens": "7917",
+  "x-ratelimit-reset-requests": "1m26.4s",
+  "x-ratelimit-reset-tokens": "622ms"
+ },
+ "usage": {
+  "prompt_tokens": 75,
+  "completion_tokens": 8,
+  "total_tokens": 83
+ }
+}

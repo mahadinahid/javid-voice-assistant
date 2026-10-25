@@ -193,16 +193,17 @@ def _brain(groq_probe: tuple[bool, str]) -> dict:
         left = (f", {round(100 * m['remaining_24h'] / m['tpd_limit'])}% of today's tokens left"
                 if m.get("tpd_limit") and m.get("remaining_24h") is not None else "")
         state = {"serving": "answering", "ready": "ready", "cooling": f"resting {m['retry_in_s'] // 60 + 1} min",
-                 "low": "out of today's tokens", "reserved": "kept for heavy questions", "nokey": "no key",
-                 "missing": "not on this key"}.get(m["state"], m["state"])
+                 "off": "at its free limit", "reserve": "in reserve", "nokey": "no key",
+                 "missing": "not on this key", "disabled": "turned off"}.get(m["state"], m["state"])
         parts.append(f"{m['name']} ({state}{left})")
     if not serving:
         problem = "None of my language models can answer right now: they're all resting or out of today's quota."
         bn = "এখন কোনো ল্যাঙ্গুয়েজ মডেলই উত্তর দিতে পারছে না: সবগুলো বিশ্রামে বা আজকের কোটা শেষ।"
     elif primary and serving["id"] != primary["id"]:
         why = {"cooling": f"is resting for about {primary['retry_in_s'] // 60 + 1} minutes after a limit or an error",
-               "low": "has used up today's free tokens", "reserved": "is low on today's tokens, so I save it for heavy questions",
-               "nokey": "has no key"}.get(primary["state"], "isn't available")
+               "off": "is at 95 percent of its free allowance, so it's off until that refills",
+               "reserve": "is past 80 percent of its free allowance, so it only answers when the others can't",
+               "nokey": "has no key", "disabled": "is turned off in the providers file"}.get(primary["state"], "isn't available")
         problem = f"My main model, {primary['name']}, {why}, so {serving['name']} is answering."
         bn = f"আমার মূল মডেল {primary['name']} এখন পাওয়া যাচ্ছে না, তাই {serving['name']} উত্তর দিচ্ছে।"
     if not groq_probe[0]:
@@ -241,6 +242,8 @@ def _news(now: float, probe: tuple[bool, str]) -> dict:
     recent_err = err if err and now - err["at"] < 3 * 3600 else None
     line = (f"Google News {'reachable, ' + probe[1] if probe[0] else 'unreachable: ' + probe[1]} · Tavily web search: "
             f"{web['used_today']} of {web['cap']} credits today"
+            + (f", {web['month']['used']:,} of {web['month']['amount']:,.0f} this month"
+               if (web.get("month") or {}).get("amount") and web["month"].get("used") is not None else "")
             + (f", last error {recent_err['kind']} {_ago(recent_err['at'])}" if recent_err else "")
             + ("" if web["has_key"] else ", no key"))
     problem = bn = None

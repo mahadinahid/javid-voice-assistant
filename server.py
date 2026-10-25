@@ -17,6 +17,7 @@ from pydantic import BaseModel
 import agents
 import calendar_tools
 import memory_store
+import providers
 import selfcheck
 import skills
 import telegram_bot
@@ -26,7 +27,7 @@ import watches
 import web_tools
 from javid import (
     _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
-    clear_provider_key, get_language, is_noise, llm_status, phrase,
+    clear_provider_key, get_language, is_noise, llm_status, phrase, providers_status,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
     active_session, has_session, hold_turn,
@@ -52,6 +53,7 @@ def _check_models():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    print(providers.startup_line())     # which providers are on, names only
     _restore_context()      # reopen the chat that was open (and split an old single log into chats, once)
     print("\nJavid is up. Open http://localhost:8000\n")
     # The first TTS call after startup is slow (cold connection); warm it and regenerate the
@@ -540,7 +542,14 @@ def language_set(body: LanguageBody, request: Request):
     return {"lang": get_language()}
 
 
-# ---------- model chain status (Models panel) ----------
+# ---------- providers and the model chain (Providers panel) ----------
+@app.get("/providers")
+def providers_route():
+    """Every provider in config/providers.yaml: on or off and why, used / allowance in its own unit, reset time, last
+    error; plus the model chain (llm) the panel's model cards and controls use."""
+    return providers_status()
+
+
 @app.get("/llm")
 def llm():
     return llm_status()

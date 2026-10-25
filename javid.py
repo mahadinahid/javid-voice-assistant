@@ -34,6 +34,7 @@ import calendar_tools
 import markets
 import memory_store
 import news
+import providers
 import rates
 import selfcheck
 import skills
@@ -97,7 +98,7 @@ CONTEXT_TURNS = 20      # past messages Javid reloads into context on restart
 HISTORY_TURNS = 6       # past turns sent in full with each request; older ones only as a short summary
 
 load_dotenv()
-client = Groq()
+client = Groq(timeout=providers.timeout_s("groq", 60.0))
 
 
 # ---------- reply language (English / Bangla) ----------
@@ -142,7 +143,19 @@ PHRASES = {
                        "bn": "ছুটির তারিখগুলো নিশ্চিত করতে পারিনি। আবার জিজ্ঞেস করো।"},
     "stt_failed": {"en": "I couldn't make that out: the speech recognition service didn't answer. Try again in a moment.",
                    "bn": "কথাটা বুঝতে পারিনি: কথা চেনার সার্ভিস সাড়া দেয়নি। একটু পরে আবার বলো।"},
+    "no_personal": {"en": "That needs your calendar, tasks, memory or past chats, and none of my language models is "
+                          "cleared for personal data yet, so I haven't sent it anywhere.",
+                    "bn": "এর জন্য তোমার ক্যালেন্ডার, কাজ, মেমরি বা আগের চ্যাট লাগবে, কিন্তু আমার কোনো ল্যাঙ্গুয়েজ "
+                          "মডেলকে এখনো ব্যক্তিগত তথ্য দেওয়ার অনুমতি নেই, তাই কোথাও পাঠাইনি।"},
+    "no_model":   {"en": "None of my language models can answer right now: they're resting after a limit or at their "
+                         "free allowance. Try again in a few minutes.",
+                   "bn": "এখন কোনো ল্যাঙ্গুয়েজ মডেল উত্তর দিতে পারছে না: সবগুলো বিশ্রামে বা ফ্রি সীমায় পৌঁছেছে। "
+                         "কয়েক মিনিট পরে আবার চেষ্টা করো।"},
 }
+# Shown under "no_personal" (never spoken: a file name read aloud helps nobody).
+NO_PERSONAL_SCREEN = ("Personal data (calendar, tasks, memory, past chats) only goes to providers marked personal_ok: true "
+                      "in config/providers.yaml. Set it for a model provider once you've read its data policy; Javid "
+                      "picks the change up within a few seconds.")
 
 
 def phrase(key: str, lang: str | None = None) -> str:
@@ -936,6 +949,12 @@ TOOL_MAP = {
 # `gate`: for that turn these don't run, and gate(name, args) records the exact action and says what the model is
 # told instead (approvals.py). Wrapped here in TOOL_MAP itself, so an agent's or a skill's call is gated too.
 WRITE_TOOLS = ("add_task", "complete_task", "delete_task", "add_event", "move_event", "delete_event", "propose_memory")
+# Tools that read or write Mahadi's personal data: calendar, memory, chat history, tasks. Privacy rule (the model
+# router, _open_stream): a request that carries their results, or a turn that needs them, goes only to providers with
+# personal_ok: true in config/providers.yaml; any other provider gets the request without them (_public_request).
+PERSONAL_TOOLS = frozenset({"add_task", "list_tasks", "delete_task", "complete_task", "propose_memory",
+                            "search_history", "morning_briefing", "list_events", "find_free_time", "add_event",
+                            "move_event", "delete_event"})
 _write_gate = None
 
 
@@ -948,6 +967,7 @@ for _name in WRITE_TOOLS:
 # Agents run their own requests through the same model chain and tools. The lambdas look the names up when
 # called, so regression.py's request counter (it replaces _stream_completion) and its tool spies see them too.
 agents.configure(complete=lambda *a: _stream_completion(*a), tools=TOOLS, tool_map=TOOL_MAP,
+                 personal_tools=PERSONAL_TOOLS,
                  context=lambda: context_block("", get_language()), memory=memory_store.block,
                  api_errors=API_ERRORS, garbled=_is_garbled)
 
@@ -1013,12 +1033,18 @@ _SMALL_TALK = re.compile(r"^(hi|hey|hello|yo|thanks|thank you|thx|ok(ay)?|cool|g
 _NOT_IN_FALLBACK = {"delegate", "get_weather", "set_timer", "timers", "calculate", "market_price"}
 
 
-def select_tools(user_text: str, previous_tools: set[str] = frozenset()) -> list[dict]:
+def _matched_tools(user_text: str, previous_tools: set[str] = frozenset()) -> set[str]:
+    """The tools of every group the words point at, plus the groups the previous turn used (no fallback)."""
     text = user_text.lower()
     names = set()
     for group, pattern in TOOL_GROUPS:
         if re.search(pattern, text) or previous_tools & set(group):
             names.update(group)
+    return names
+
+
+def select_tools(user_text: str, previous_tools: set[str] = frozenset()) -> list[dict]:
+    names = _matched_tools(user_text, previous_tools)
     if not names:
         return [] if _SMALL_TALK.match(user_text.strip()) else [t for t in TOOLS if t["function"]["name"] not in _NOT_IN_FALLBACK]
     return [t for t in TOOLS if t["function"]["name"] in names]
@@ -1056,12 +1082,19 @@ def transcribe(wav: bytes, filename: str = "speech.wav", bias_name: bool = True,
     """
     lang = lang or get_language()
     kwargs = {"prompt": "জাভেদ" if lang == "bn" else "Javid"} if bias_name else {}
-    result = client.audio.transcriptions.create(
-        file=(filename, wav),
-        model=STT_MODEL,
-        language=lang,
-        **kwargs,
-    )
+    t0 = time.time()
+    try:
+        result = client.audio.transcriptions.create(
+            file=(filename, wav),
+            model=STT_MODEL,
+            language=lang,
+            **kwargs,
+        )
+    except API_ERRORS as e:
+        providers.record("groq", 0, model=STT_MODEL, op="stt", unit="requests", latency_ms=(time.time() - t0) * 1000,
+                         status=providers.error_kind(e), detail=type(e).__name__)
+        raise
+    providers.record("groq", 1, model=STT_MODEL, op="stt", unit="requests", latency_ms=(time.time() - t0) * 1000)
     return _IVAC.sub("IVAC", result.text.strip())
 
 
@@ -1117,7 +1150,6 @@ def is_noise(text: str) -> bool:
 
 
 # ---------- 3. BRAIN: text -> reply ----------
-_model_cooldown: dict[str, float] = {}   # model -> time.time() after which it may be tried again
 llm_usage: dict[str, int] = {}           # model -> requests served (handy for tests and logs)
 
 
@@ -1311,18 +1343,32 @@ def _split(model_id: str) -> tuple[str, str]:
     return (provider, name) if sep and provider in PROVIDERS else ("groq", model_id)
 
 
+def _key_env(provider: str) -> str:
+    """The .env variable holding a model provider's key: the one config/providers.yaml names, else the built-in."""
+    names = providers.env_names(provider)
+    return names[0] if names else PROVIDERS[provider].get("key_env", "GROQ_API_KEY")
+
+
 def _provider_client(provider: str):
     if provider == "groq":
         return client
     if provider not in _provider_clients:
-        key = os.environ.get(PROVIDERS[provider]["key_env"], "").strip()
+        key = os.environ.get(_key_env(provider), "").strip()
         _provider_clients[provider] = _openai.OpenAI(
-            api_key=key, base_url=PROVIDERS[provider]["base_url"], timeout=30.0, max_retries=0) if key else None
+            api_key=key, base_url=PROVIDERS[provider]["base_url"], timeout=providers.timeout_s(provider, 30.0),
+            max_retries=0) if key else None
     return _provider_clients[provider]
 
 
 def _has_key(model_id: str) -> bool:
-    return _provider_client(_split(model_id)[0]) is not None
+    provider = _split(model_id)[0]
+    return providers.has_key(provider) and _provider_client(provider) is not None
+
+
+def _usable(model_id: str) -> bool:
+    """Its provider is on (enabled in config/providers.yaml, key in .env) and has a client."""
+    provider = _split(model_id)[0]
+    return providers.is_on(provider) and _provider_client(provider) is not None
 
 
 def _model_kwargs(model_id: str) -> dict:
@@ -1340,7 +1386,9 @@ def _messages_for(provider: str, msgs: list) -> list:
     """Gemini hands back an `extra_content` blob on tool calls that it wants echoed; other
     providers don't know the field, so it's stripped when failing over to them. IFM 400s
     on a follow-up turn unless every assistant message has a thinking field; "" is accepted
-    (checked 2026-10-17), and history replies (other models, chat_log) have none to replay."""
+    (checked 2026-10-17), and history replies (other models, chat_log) have none to replay. The privacy tags
+    (_public, _personal, _needs_personal) never leave Javid."""
+    msgs = [{k: v for k, v in m.items() if not k.startswith("_")} for m in msgs]
     if provider == "ifm":
         msgs = [{**m, "reasoning_content": m.get("reasoning_content") or ""}
                 if m["role"] == "assistant" else m for m in msgs]
@@ -1373,36 +1421,39 @@ def _is_unavailable(err: Exception) -> bool:
     return isinstance(err, UNAVAILABLE) or getattr(err, "status_code", None) == 402
 
 
-def _cooldown_for(err: Exception) -> float:
-    if getattr(err, "status_code", None) == 402 or isinstance(err, NOT_FOUND + BAD_KEY):
-        return 3600.0       # model not on this key / key rejected: don't hammer it
-    if isinstance(err, RATE_LIMITED):
-        return _retry_after(err)
-    return 30.0             # overloaded or unreachable
+def _cooldown_for(err: Exception, provider: str = "groq") -> float:
+    """How long a model rests after an error (providers.cooldown_seconds): a 429 until its retry-after, a 402 or a
+    quota error until its retry-after or its allowance's reset, a rejected key or a missing model an hour, an outage
+    30 s."""
+    return providers.cooldown_seconds(provider, err) or 30.0
 
 
 def _retry_after(err: Exception, default: float = 60.0) -> float:
-    """Seconds until a rate-limited model is usable again (header, else 'try again in 7m11s')."""
-    header = getattr(getattr(err, "response", None), "headers", {}).get("retry-after")
-    try:
-        if header:
-            return max(1.0, float(header))
-    except ValueError:
-        pass
-    # Groq: "try again in 7m11.1s"; Google: "Please retry in 6h21m37.1s" or retryDelay: '41s'
-    m = re.search(r"(?:try again in|retry in|retryDelay['\"]?:\s*['\"]?)\s*"
-                  r"(?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?", str(err), re.I)
-    if m and any(m.groups()):
-        h, mins, secs = (float(g) if g else 0.0 for g in m.groups())
-        return max(1.0, h * 3600 + mins * 60 + secs)
-    return default
+    """Seconds until a rate-limited model is usable again (header, else Groq's 'try again in 7m11s', Google's 'retry
+    in 6h21m37s')."""
+    return providers.explicit_wait(err) or default
 
 
-# ---------- daily token budget and the quota guard ----------
+def _cool(model_id: str, err: Exception) -> float:
+    """Rest a model after an error that makes it unavailable, in providers.py (so a restart respects it): only that
+    model when its provider's allowances are per model (Groq, Gemini) and the error is the model's (a 429, a missing
+    model, an outage); the whole provider for a rejected key or an empty balance. Returns the seconds."""
+    provider = _split(model_id)[0]
+    wait = _cooldown_for(err, provider)
+    kind = providers.error_kind(err)
+    # a 403 for one model is that model's (access to it); a 401 is the key's, so the whole provider rests
+    own = providers.per_model(provider) and (kind in ("rate_limited", "quota", "missing", "unavailable")
+                                             or (kind == "auth" and getattr(err, "status_code", None) == 403))
+    providers.cool(provider, wait, kind, model=model_id if own else "")
+    return wait
+
+
+# ---------- daily token budget and the budget guard ----------
 # Groq's daily limit is a bucket that refills continuously (limit/24h per second: a 429 for 800 tokens
 # says "try again in 5m45s"), not a midnight reset. daily_left() replays our usage log through that bucket,
 # starting from Groq's last "Used N" report when there is one (that also covers other clients on the key).
-QUOTA_RESERVE = 0.20     # below this share left, a model is kept for web and reasoning turns
+# The guard itself is providers.py's: at 80 % of an allowance a model is "reserve" (tried only when the others
+# fail), at 95 % it is off until it refills, and a model resting after a 429 isn't tried until its retry-after.
 
 
 def _tpd_limit(model: str) -> tuple[int, dict | None] | None:
@@ -1433,36 +1484,63 @@ def daily_left(model: str, now: float | None = None) -> int | None:
     return max(0, int(min(limit, bucket + rate * (now - t))))
 
 
-def _reserved(model: str) -> bool:
-    known, left = _tpd_limit(model), daily_left(model)
-    return bool(known) and left is not None and left < QUOTA_RESERVE * known[0]
+def _duration(text) -> float | None:
+    """Groq's reset durations ("2m59.56s", "7.66s", "1h2m3s", "450ms") in seconds."""
+    m = re.fullmatch(r"\s*(?:(\d+)h)?(?:(\d+)m(?!s))?(?:([\d.]+)s)?(?:(\d+)ms)?\s*", str(text or ""))
+    if not m or not any(m.groups()):
+        return None
+    h, mins, secs, ms = (float(g) if g else 0.0 for g in m.groups())
+    return h * 3600 + mins * 60 + secs + ms / 1000
 
 
-_REASONING = re.compile(r"\b(why|explain|compare|difference|analy[sz]|calculate|plan|pros and cons|"
-                        r"how (do|does|can|should|would)|step by step|summari[sz]e|translate|write)\b|"
-                        r"কেন|ব্যাখ্যা|তুলনা|হিসাব|পরিকল্পনা", re.I)
-_turn_heavy = False     # set per turn by think_stream: web or reasoning, which may use reserved models
-
-
-def is_heavy_turn(user_text: str, tools: list) -> bool:
-    names = {t["function"]["name"] for t in tools}
-    return bool(names & {"web_search", "read_page"}) or bool(_REASONING.search(user_text)) \
-        or len(user_text.split()) > 40
-
-
-def _models_to_try() -> list[str]:
-    chain = [m for m in current_chain() if _has_key(m)] or default_chain()[:1]
+def _groq_usage(model: str) -> dict | None:
+    """Groq's own numbers for one model, for the budget guard: tokens per day (its 429s and our log, through
+    daily_left) and requests per day (its x-ratelimit headers; a reading older than its reset time counts as full
+    again). The fuller of the two is the model's share."""
+    if not model:
+        return None
     now = time.time()
-    ready = [m for m in chain if _model_cooldown.get(m, 0) <= now]
-    if not _turn_heavy:
-        # Quota guard: a model under QUOTA_RESERVE of its daily tokens is saved for web and reasoning
-        # turns. Simple turns go to the others first; it is still tried last rather than failing the turn.
-        spare = [m for m in ready if not _reserved(m)]
-        if spare and len(spare) < len(ready):
-            print(f"[llm] reserving {[m for m in ready if m not in spare]} for web/reasoning turns")
-            ready = spare + [m for m in ready if m not in spare]
-    # Everything is cooling down: still try the one that recovers first rather than give up.
-    return ready or [min(chain, key=lambda m: _model_cooldown.get(m, 0))]
+    parts = []
+    known, left = _tpd_limit(model), daily_left(model, now)
+    if known and left is not None:
+        parts.append({"unit": "tokens", "used": known[0] - left, "amount": known[0]})
+    lim = _model_info.get(model, {}).get("limits") or {}
+    if lim.get("rpd_limit") and lim.get("rpd_remaining") is not None:
+        reset = _duration(lim.get("rpd_reset"))
+        if reset is None or now - lim.get("at", now) < reset:
+            parts.append({"unit": "requests", "used": lim["rpd_limit"] - lim["rpd_remaining"], "amount": lim["rpd_limit"],
+                          "next_reset": lim.get("at", now) + reset if reset else None})
+    if not parts:
+        return None
+    worst = max(parts, key=lambda p: p["used"] / p["amount"])
+    return {**worst, "per": "day", "parts": parts}
+
+
+providers.set_reporter("groq", _groq_usage)
+
+
+def _model_state(model_id: str, now: float | None = None) -> dict:
+    """The budget guard's view of one model (providers.state): its provider's switch and key, cooldowns, and its
+    allowance (Groq's and Gemini's are per model)."""
+    return providers.state(_split(model_id)[0], model_id, now=now)
+
+
+def _models_to_try(personal: bool = False) -> list[str]:
+    """The models to try, in chain order: the ready ones, then those in reserve (at 80 % of an allowance: used only
+    when the others fail). A model resting after an error, or off (95 % of an allowance, no free tier, no key, turned
+    off in config/providers.yaml), isn't tried. personal: the request carries calendar, memory, chat history or tasks,
+    so only providers with personal_ok may take it (PrivacyBlocked when no model in the chain has it)."""
+    chain = [m for m in current_chain() if _usable(m)]
+    if personal:
+        chain = [m for m in chain if providers.personal_ok(_split(m)[0])]
+        if not chain:
+            raise providers.PrivacyBlocked("no model provider in the chain has personal_ok: true")
+    states = {m: _model_state(m)["state"] for m in chain}
+    ready = [m for m in chain if states[m] == "ready"]
+    reserve = [m for m in chain if states[m] == "reserve"]
+    if ready and reserve:
+        print(f"[llm] {', '.join(reserve)} in reserve: used only if the others fail")
+    return ready + reserve
 
 
 _NON_CHAT = ("whisper", "orpheus", "tts", "guard", "embed", "image", "imagen", "veo", "live", "audio")
@@ -1471,21 +1549,27 @@ _key_models: dict[str, dict] = {}
 
 def _models_on_provider(provider: str) -> list[str] | None:
     """Chat-capable model ids (chain notation) this provider's key can use. Cached 10 min;
-    None if the provider is unreachable or has no key."""
-    c = _provider_client(provider)
+    None if the provider is unreachable, has no key or is turned off."""
+    c = _provider_client(provider) if providers.is_on(provider) else None
     if c is None:
         return None
     cache = _key_models.setdefault(provider, {"at": 0.0, "ids": None})
     if time.time() - cache["at"] > 600:
+        t0 = time.time()
         try:
-            raw_ids = sorted(m.id.removeprefix("models/") for m in c.models.list().data)
+            listed = c.models.list().data
+            providers.record(provider, 0, op="models", latency_ms=(time.time() - t0) * 1000)
+            raw_ids = sorted(m.id.removeprefix("models/") for m in listed)
             keep = [i for i in raw_ids if not any(k in i for k in _NON_CHAT)]
             if provider in ("gemini", "deepseek"):
                 keep = [i for i in keep if provider in i]
             elif provider == "ifm":
                 keep = [i for i in keep if "K2-" in i]   # also lists Jais (Arabic) and Jais-ASR
             cache.update(at=time.time(), ids=[i if provider == "groq" else f"{provider}:{i}" for i in keep])
-        except Exception:
+        except Exception as e:
+            providers.record(provider, 0, op="models", latency_ms=(time.time() - t0) * 1000,
+                             status=providers.error_kind(e) if isinstance(e, API_ERRORS) else "error",
+                             detail=type(e).__name__)
             cache["at"] = time.time() - 540     # retry in a minute
     return cache["ids"]
 
@@ -1518,57 +1602,72 @@ def llm_status() -> dict:
         if quota:
             remaining = daily_left(model, now)       # refilling bucket, see daily_left
             est_used = quota["tpd_limit"] - remaining
-        cooling_for = max(0.0, _model_cooldown.get(model, 0) - now)
         provider = _split(model)[0]
         on_key = on_key_by_provider[provider]
-        if not _has_key(model):
+        guard = _model_state(model, now)
+        cooling_for = max(0.0, (guard["until"] or now) - now) if guard["state"] == "cooldown" else 0.0
+        if guard["state"] in ("disabled", "unknown"):
+            state = "disabled"  # turned off (or missing) in config/providers.yaml
+        elif not _has_key(model):
             state = "nokey"
         elif on_key is not None and model not in on_key:
             state = "missing"
-        elif cooling_for > 0:
+        elif guard["state"] == "cooldown":
             state = "cooling"
-        elif remaining is not None and remaining < LLM_MIN_REQUEST_TOKENS:
-            state = "low"       # answers a tiny ping, but a real reply won't fit in what's left
-        elif remaining is not None and remaining < QUOTA_RESERVE * quota["tpd_limit"]:
-            state = "reserved"  # quota guard: only web and reasoning turns use it while others can serve
+        elif guard["state"] in ("off", "reserve"):
+            state = guard["state"]  # budget guard: 95 % of an allowance (or no free tier) / 80 %: only if others fail
         else:
             state = "ready"
+        share = (guard["usage"] or {}).get("share")
         models.append({
             "id": model, "name": _split(model)[1].split("/")[-1], "order": order,
             "provider": provider, "provider_label": PROVIDERS[provider]["label"],
-            "key_env": PROVIDERS[provider].get("key_env"),
+            "key_env": _key_env(provider), "personal_ok": providers.personal_ok(provider),
             "role": "primary" if order == 0 else "fallback", "state": state,
+            "guard_why": guard["why"], "share": share, "off_until": guard["until"] if state == "off" else None,
             "retry_in_s": round(cooling_for), "tokens_24h": day, "per_turn": per_turn,
             "session_requests": llm_usage.get(model, 0),
             "last_used": max((e["ts"] for e in mine), default=None),
             "limits": info.get("limits"),
             "tpd_limit": quota["tpd_limit"] if quota else None,
-            "est_used_24h": est_used, "remaining_24h": remaining, "reserve_below": QUOTA_RESERVE,
+            "est_used_24h": est_used, "remaining_24h": remaining,
             "reported": ({"used": quota["reported_used"], "at": quota["reported_at"]}
                          if quota and quota["reported_at"] else None),
             "last_error": info.get("last_error"),
             "sends_reasoning_effort": "gpt-oss" in model,
         })
-    serving = next((m for m in models if m["state"] == "ready"), None)
+    serving = (next((m for m in models if m["state"] == "ready"), None)
+               or next((m for m in models if m["state"] == "reserve"), None))
     if serving:
         serving["state"] = "serving"
-    providers = {}
+    keys = {}
     for name, cfg in PROVIDERS.items():
-        key = os.environ.get(cfg.get("key_env", "GROQ_API_KEY"), "").strip()
-        providers[name] = {"label": cfg["label"], "key_env": cfg.get("key_env", "GROQ_API_KEY"),
-                           "has_key": bool(key), "key_hint": key[-4:] if len(key) >= 8 else "",
-                           "editable": name != "groq"}   # the Groq key also drives speech, set it in .env
+        key = os.environ.get(_key_env(name), "").strip()
+        keys[name] = {"label": cfg["label"], "key_env": _key_env(name),
+                      "has_key": bool(key), "key_hint": key[-4:] if len(key) >= 8 else "",
+                      "editable": name != "groq"}   # the Groq key also drives speech, set it in .env
     return {
-        "providers": providers, "is_default_chain": chain == default_chain(),
+        "providers": keys, "is_default_chain": chain == default_chain(),
         "now": now, "serving": serving["id"] if serving else None,
         "chain_size": len(chain), "tracking_since": tracking_since,
-        "ready_count": sum(m["state"] in ("serving", "ready") for m in models),
+        "ready_count": sum(m["state"] in ("serving", "ready", "reserve") for m in models),
         "min_request_tokens": LLM_MIN_REQUEST_TOKENS,
+        "reserve_at": providers.RESERVE_AT, "off_at": providers.OFF_AT,
         "models": models,
         "web": web_tools.status(),
         "on_key": [{"id": i, "in_chain": i in chain, "provider": p}
                    for p, ids in on_key_by_provider.items() for i in ids or []],
     }
+
+
+def providers_status() -> dict:
+    """The Providers panel: every provider in config/providers.yaml (status, used / allowance in its own unit, reset
+    time, last error), the language models of the chain (llm_status) and Tavily's day."""
+    llm = llm_status()
+    out = providers.status()
+    for row in out["providers"]:
+        row["models"] = [m["id"] for m in llm["models"] if m["provider"] == row["name"]]
+    return {**out, "llm": llm, "next_model": next_model()}
 
 
 _KEY_FORMAT = re.compile(r"^[A-Za-z0-9._\-]{8,300}$")
@@ -1597,9 +1696,9 @@ def _forget_provider(provider: str) -> None:
     """After a key change: rebuild the client and drop cooldowns/errors from the old key."""
     _provider_clients.pop(provider, None)
     _key_models.pop(provider, None)
+    providers.clear_cooldown(provider)
     for m in set(current_chain()) | set(default_chain()):
         if _split(m)[0] == provider:
-            _model_cooldown.pop(m, None)
             _model_info.get(m, {}).pop("last_error", None)
 
 
@@ -1626,15 +1725,19 @@ def set_provider_key(provider: str, key: str) -> None:
     key = key.strip()
     if not _KEY_FORMAT.match(key):
         raise ValueError("That doesn't look like an API key (letters, digits, - _ . only, no spaces).")
+    t0 = time.time()
     try:
         _verify_key(provider, _openai.OpenAI(api_key=key, base_url=cfg["base_url"], timeout=15.0, max_retries=0))
     except API_ERRORS as e:
+        providers.record(provider, 0, op="verify", latency_ms=(time.time() - t0) * 1000,
+                         status=providers.error_kind(e), detail=type(e).__name__)
         if getattr(e, "status_code", None) in (400, 401, 403):
             raise ValueError(f"{cfg['label']} rejected this key. Nothing was saved.") from None
         raise ValueError(f"Couldn't reach {cfg['label']} to check the key ({type(e).__name__}). "
                          "Nothing was saved; try again.") from None
-    _write_env(cfg["key_env"], key)
-    os.environ[cfg["key_env"]] = key
+    providers.record(provider, 0, op="verify", latency_ms=(time.time() - t0) * 1000)
+    _write_env(_key_env(provider), key)
+    os.environ[_key_env(provider)] = key
     _forget_provider(provider)
 
 
@@ -1642,34 +1745,42 @@ def clear_provider_key(provider: str) -> None:
     cfg = PROVIDERS.get(provider, {})
     if not cfg.get("key_env"):
         raise ValueError("That provider's key can't be changed here.")
-    _write_env(cfg["key_env"], None)
-    os.environ.pop(cfg["key_env"], None)
+    _write_env(_key_env(provider), None)
+    os.environ.pop(_key_env(provider), None)
     _forget_provider(provider)
 
 
 def ping_models(only_provider: str | None = None) -> list[dict]:
     """Send a tiny no-tools request to every model in the chain (or one provider's), in parallel.
-    Shows which ones answer right now and how fast; a success clears that model's cooldown."""
+    Shows which ones answer right now and how fast; a success clears that model's cooldown. A model the budget
+    guard keeps off (95 % of an allowance) or that is resting after a 429 isn't pinged: a ping is a real request."""
     from concurrent.futures import ThreadPoolExecutor
 
     def ping(model: str) -> dict:
         t0 = time.time()
         ms = lambda: round((time.time() - t0) * 1000)
+        provider = _split(model)[0]
         if not _has_key(model):
-            return {"id": model, "ok": False, "ms": 0,
-                    "error": f"No API key: set {PROVIDERS[_split(model)[0]]['key_env']} in .env"}
+            return {"id": model, "ok": False, "ms": 0, "error": f"No API key: set {_key_env(provider)} in .env"}
+        guard = _model_state(model)
+        if guard["state"] in ("disabled", "unknown", "off", "cooldown"):
+            return {"id": model, "ok": False, "ms": 0, "skipped": True,
+                    "error": f"Not tested: {guard['why'] or guard['state']}"}
         try:
             raw = _create(model, [{"role": "user", "content": "ping"}], max_tokens=8)
             _note_headers(model, raw.headers)
             done = raw.parse()
             if done.usage:
                 _record_usage(model, done.usage)
-            _model_cooldown.pop(model, None)
+            providers.clear_cooldown(provider, model)
+            providers.record(provider, _call_units(provider, done.usage), model=model, op="ping", latency_ms=ms())
             return {"id": model, "ok": True, "ms": ms()}
         except Exception as e:
+            kind = providers.error_kind(e) if isinstance(e, API_ERRORS) else "error"
             if isinstance(e, API_ERRORS) and _is_unavailable(e):
-                _model_cooldown[model] = time.time() + _cooldown_for(e)
+                _cool(model, e)
                 _note_error(model, e)
+            providers.record(provider, 0, model=model, op="ping", latency_ms=ms(), status=kind, detail=type(e).__name__)
             return {"id": model, "ok": False, "ms": ms(), "error": f"{type(e).__name__}: {_redact(str(e))[:140]}"}
 
     chain = [m for m in current_chain() if only_provider in (None, _split(m)[0])]
@@ -1677,19 +1788,55 @@ def ping_models(only_provider: str | None = None) -> list[dict]:
         return list(pool.map(ping, chain))
 
 
+class NoModelReady(Exception):
+    """No model in the chain may take a request now: all resting after an error, off at their free limit, without a
+    key or turned off. Nothing is sent (think_stream says so)."""
+
+
+def _needs_personal(msgs: list) -> bool:
+    """The request carries (or its turn needs) Mahadi's calendar, memory, chat history or tasks."""
+    return any(m.get("_needs_personal") for m in msgs)
+
+
+def _public_request(msgs: list, tools: list) -> tuple[list, list]:
+    """The request as a provider without personal_ok gets it: chat history and earlier drafts dropped ("_personal"),
+    each message's personal-free text where it has one ("_public": the system prompt without the memory block, the
+    [Context] note without the older-chat summary and the calendar facts), and no personal tools."""
+    out = [({**m, "content": m["_public"]} if "_public" in m else m) for m in msgs if not m.get("_personal")]
+    return out, [t for t in tools if t["function"]["name"] not in PERSONAL_TOOLS]
+
+
+def _call_units(provider: str, usage) -> float:
+    """One request in its provider's own unit: tokens for Groq, one for per-request allowances. A unit the response
+    doesn't give (usd, neurons) is left at 0 until that provider's own count is wired in."""
+    unit = providers.unit_of(provider)
+    if unit == "tokens":
+        return float(getattr(usage, "total_tokens", 0) or 0) if usage else 0.0
+    return 1.0 if unit in ("requests", "calls") else 0.0
+
+
 def _open_stream(msgs: list, tools: list):
-    """Start a streaming completion on the first model in the chain that accepts it.
-    Returns (model, stream)."""
+    """Start a streaming completion on the first model in the chain that may take this request (the budget guard:
+    ready ones first, reserve ones only after them). The privacy rule: a request that needs personal data goes only to
+    providers with personal_ok; every other provider gets it without its personal parts (_public_request).
+    Returns (model, stream, start time)."""
+    candidates = _models_to_try(personal=_needs_personal(msgs))
+    if not candidates:
+        raise NoModelReady("no model in the chain can take a request now")
     last_error = None
-    for model in _models_to_try():
+    for model in candidates:
+        provider = _split(model)[0]
+        send, send_tools = (msgs, tools) if providers.personal_ok(provider) else _public_request(msgs, tools)
+        t0 = time.time()
         try:
-            raw = _create(model, msgs, tools=tools, stream=True)
+            raw = _create(model, send, tools=send_tools, stream=True)
         except API_ERRORS as e:
+            providers.record(provider, 0, model=model, op="chat", latency_ms=(time.time() - t0) * 1000,
+                             status=providers.error_kind(e), detail=type(e).__name__)
             if not _is_unavailable(e):
                 raise       # e.g. malformed tool call: think_stream retries those
             # 429: out of quota for now. 5xx/network: overloaded. 402/404/401/403: can't serve.
-            wait = _cooldown_for(e)
-            _model_cooldown[model] = time.time() + wait
+            wait = _cool(model, e)
             _note_error(model, e)
             print(f"[llm] {model} unavailable ({type(e).__name__}), skipping it for {wait:.0f}s")
             last_error = e
@@ -1698,22 +1845,28 @@ def _open_stream(msgs: list, tools: list):
         if model != current_chain()[0]:
             print(f"[llm] answering with fallback {model}")
         llm_usage[model] = llm_usage.get(model, 0) + 1
-        return model, raw.parse()
+        return model, raw.parse(), t0
     raise last_error
 
 
 def _stream_completion(tool_calls: dict, msgs: list, tools: list):
-    """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`."""
+    """Stream one completion. Yields content deltas; collects tool calls into `tool_calls`. The request goes in the
+    usage ledger in its provider's own unit, with its latency."""
     span = tracing.llm_start()
-    model = None
+    model, t0, done = None, time.time(), {}
     try:
-        model, stream = _open_stream(msgs, tools)
-        yield from _read_stream(model, stream, tool_calls, span)
+        model, stream, t0 = _open_stream(msgs, tools)
+        yield from _read_stream(model, stream, tool_calls, span, done)
     finally:
         tracing.llm_end(span, model)
+        if model:
+            provider = _split(model)[0]
+            providers.record(provider, _call_units(provider, done.get("usage")), model=model, op="chat",
+                             latency_ms=(time.time() - t0) * 1000, status="ok" if done.get("complete") else "aborted")
 
 
-def _read_stream(model: str, stream, tool_calls: dict, span):
+def _read_stream(model: str, stream, tool_calls: dict, span, done: dict | None = None):
+    done = {} if done is None else done
     counted = False
     for chunk in stream:
         tracing.llm_first(span)
@@ -1721,6 +1874,7 @@ def _read_stream(model: str, stream, tool_calls: dict, span):
             usage = getattr(chunk, "usage", None) or getattr(getattr(chunk, "x_groq", None), "usage", None)
             if usage:   # arrives on the final chunk
                 _record_usage(model, usage)
+                done["usage"] = usage
                 counted = True
         if not chunk.choices:
             continue
@@ -1742,6 +1896,7 @@ def _read_stream(model: str, stream, tool_calls: dict, span):
                 slot["name"] += tc.function.name
             if tc.function and tc.function.arguments:
                 slot["arguments"] += tc.function.arguments
+    done["complete"] = True
 
 
 MAX_TOOL_ROUNDS = 4
@@ -1830,7 +1985,10 @@ def _request_messages(turn_start: int, lang: str = "en") -> list:
     past = _past_turns(messages[1:turn_start])
     recent, older = past[-HISTORY_TURNS:], past[:-HISTORY_TURNS]
     # The memory files ride in the system message as a fixed block: it only changes when an entry does.
-    out = [{"role": "system", "content": messages[0]["content"] + "\n\n" + memory_store.block()}]
+    # Privacy tags (see _public_request): "_public" is the text a provider without personal_ok gets instead, and
+    # "_personal" messages (chat history) it doesn't get at all.
+    out = [{"role": "system", "content": messages[0]["content"] + "\n\n" + memory_store.block(),
+            "_public": messages[0]["content"]}]
     # The previous reply's screen part (a skill's or agent's full version) rides along for one turn only, so a
     # follow-up can use it: "yes, add those blocks" after the planner, "tell me more about the third one".
     last = next((m for m in reversed(messages[1:turn_start]) if m["role"] == "assistant" and not m.get("tool_calls")), None)
@@ -1838,12 +1996,12 @@ def _request_messages(turn_start: int, lang: str = "en") -> list:
         if i == len(recent) - 1 and last and last.get("screen") and reply == last["content"]:
             reply += f"\n[Shown on screen, not spoken: {_clip(last['screen'], SCREEN_CHARS)}]"
         if user:
-            out.append({"role": "user", "content": user})
+            out.append({"role": "user", "content": user, "_personal": True})
         if reply:
-            out.append({"role": "assistant", "content": reply})
+            out.append({"role": "assistant", "content": reply, "_personal": True})
     current = messages[turn_start:]
     out.append({**current[0], "content": context_block(_summarize(older), lang, _facts_note(turn_start))
-                + current[0]["content"]})
+                + current[0]["content"], "_public": context_block("", lang) + current[0]["content"]})
     return out + current[1:]
 
 
@@ -1879,18 +2037,131 @@ def _model_name(model_id: str) -> str:
 
 
 def next_model() -> str:
-    """The model that would answer now ("gpt-oss-20b on Groq"): chain, keys, cooldowns and the quota guard, no
+    """The model that would answer now ("gpt-oss-20b on Groq"): chain, keys, cooldowns and the budget guard, no
     network (llm_status lists every provider's models)."""
-    return _model_name(_models_to_try()[0])
+    ready = _models_to_try()
+    return _model_name(ready[0]) if ready else "none (every model is resting or at its free limit)"
 
 
 def _self_facts() -> dict:
     """What about.py says about the running Javid: read from the code and settings, never from the model."""
-    chain = [m for m in current_chain() if _has_key(m)] or default_chain()[:1]
+    chain = [m for m in current_chain() if _usable(m)] or default_chain()[:1]
+    cleared = [e["label"] for e in providers.entries() if e["personal_ok"] and providers.is_on(e["name"])]
     return {"model": _model_name(chain[0]), "backups": [_model_name(m) for m in chain[1:]],
             "provider": PROVIDERS[_split(chain[0])[0]]["label"], "stt": STT_MODEL,
+            "personal_en": ", ".join(cleared) or "none yet", "personal_bn": ", ".join(cleared) or "এখনো কেউ না",
             "voice_en": EDGE_VOICE, "voice_bn": EDGE_VOICE_BN,
             "skills": [s["name"] for s in skills.all_skills()], "agents": [a["name"] for a in agents.all_agents()]}
+
+
+_turn_text = {"text": ""}   # the message being answered (think_stream)
+
+# ---------- privacy: what a web search may carry ----------
+_STOP = frozenset("""the and for with from that this what when where which who how why about into onto over under near
+are was were has have had not but you your our his her its they them their can could would should will just than then
+there here also some any all more most less very much many one two three today tonight tomorrow yesterday now new
+news latest best top time times open opening hours please find search look show tell give bring get make take""".split())
+_PUBLIC_WORDS = frozenset(re.findall(r"[a-z0-9]+", SYSTEM_PROMPT.lower())) | {"mahadi", "javid", "bangladesh", "dhaka"}
+
+
+def _words_of(text: str) -> list[str]:
+    return [w for w in re.findall(r"[a-z0-9ঀ-৿]+", (text or "").lower()) if len(w) >= 3 and w not in _STOP]
+
+
+def _names_in(text: str) -> set[str]:
+    """Capitalized words that don't start a sentence: names ("Nadia", "Rafi", "Gulshan")."""
+    out, first = set(), True
+    for m in re.finditer(r"[A-Za-z][A-Za-z'-]*|[.!?:;]", text or ""):
+        token = m.group()
+        if token in ".!?:;":
+            first = True
+            continue
+        if not first and token[0].isupper() and len(token) >= 3 and not token.isupper():
+            out.add(token.lower().strip("'-"))
+        first = False
+    return out - _STOP
+
+
+def _personal_items() -> list[tuple[str, str]]:
+    """(where it's from, text) for each piece of Mahadi's personal data a search query could carry: his tasks, his
+    memory lines, and the calendar and task results in Javid's context."""
+    items = [("your tasks", _task_parts(line)[2]) for line in _read_lines()]
+    entries = memory_store.all_entries()
+    items += [("your memory", e) for f in entries for e in entries[f]]
+    for m in messages:
+        if m.get("role") == "tool" and m.get("_needs_personal"):
+            items += [("your calendar or tasks", line) for line in str(m.get("content") or "").splitlines() if line.strip()]
+    return items
+
+
+def _personal_leak(text: str) -> str | None:
+    """Where the personal data in `text` (a web search query) comes from, or None: two words in a row from a task, a
+    memory line or a calendar/task result, or a name from one. Best effort, and chat history isn't checked. Words
+    Mahadi used in this message don't count (he said them to be searched), nor Javid's own (the system prompt)."""
+    query = _words_of(text)
+    if not query:
+        return None
+    said = set(_words_of(_turn_text["text"])) | _PUBLIC_WORDS
+    pairs, asked = set(zip(query, query[1:])), set(query)
+    for where, item in _personal_items():
+        words = _words_of(item)
+        if any((a, b) in pairs and not {a, b} <= said for a, b in zip(words, words[1:])):
+            return where
+        if (_names_in(item) & asked) - said:
+            return where
+    return None
+
+
+web_tools.privacy_check = _personal_leak
+
+
+def _personal_models() -> list[str]:
+    """Models in the chain whose provider is on and has personal_ok: true."""
+    return [m for m in current_chain() if _usable(m) and providers.personal_ok(_split(m)[0])]
+
+
+# A message that asks for Mahadi's own calendar, tasks, memory or past chats (the privacy rule). Much narrower than the
+# tool groups, which err wide on purpose: "will it rain tomorrow?" or "add 5 and 7" mustn't count. What this misses is
+# caught later: a provider without personal_ok isn't offered the personal tools, and a model that reaches for one makes
+# the turn personal (think_stream).
+_PERSONAL_ASK = re.compile(
+    r"\bmy\s+(?:calendar|schedule|agenda|diary|tasks?|to-?dos?|list|reminders?|meetings?|appointments?|events?|plans?|"
+    r"day|week|weekend|morning|afternoon|evening|memory|notes?|chats?|history)\b|"
+    r"\b(?:am i|are we)\s+(?:free|busy|available)\b|"
+    r"\bwhat(?:'s| is| do i have)\s+on\s+(?:my|for|today|tonight|tomorrow|this|next|monday|tuesday|wednesday|thursday|"
+    r"friday|saturday|sunday)\b|\bdo i have\s+(?:any|anything|a|an)\b|"
+    r"\b(?:add|put|schedule|book|move|push|reschedule|cancel|delete|remove|complete|finish|tick off|mark)\b.{0,40}?"
+    r"\b(?:tasks?|to-?dos?|calendar|events?|meetings?|appointments?|reminders?)\b|"
+    r"\bremind me to\b|\b(?:remember|don'?t forget|keep in mind|note that)\b|"
+    r"\b(?:what(?:'s| is| are| was)|who(?:'s| is| are)|when(?:'s| is| was)|where(?:'s| is| do i))\s+my\b|"
+    r"\bdo you (?:know|remember)\s+(?:my|me|what i)\b|\babout me\b|"
+    r"\b(?:did|have) (?:i|we|you) (?:say|tell|mention|ask|talk|discuss)\b|\bwe (?:talked|discussed|spoke)\b|"
+    r"\bgood (?:morning|afternoon|evening)\b|\bmorning brief|"
+    r"ক্যালেন্ডার|মিটিং|অ্যাপয়েন্টমেন্ট|টাস্ক|আমার কাজ|মনে রাখ|বলেছিলাম", re.I)
+
+
+def _turn_needs_personal(user_text: str, turn_start: int, agent_first: str | None, required: list) -> bool:
+    """Does answering need Mahadi's calendar, memory, chat history or tasks? His words (_PERSONAL_ASK), the tools the
+    turn must call (remember that..., what did I say...), the agent it goes to (the planner reads the calendar), or a
+    short follow-up to a turn that used them ("yes", "the second one", "and on Friday?")."""
+    if _PERSONAL_ASK.search(user_text) or PERSONAL_TOOLS & {tool for tool, _ in required}:
+        return True
+    if agent_first and PERSONAL_TOOLS & set(agents.agent_tools(agent_first)):
+        return True
+    return len(user_text.split()) <= 8 and bool(PERSONAL_TOOLS & _tools_used_in_previous_turn(turn_start))
+
+
+def _personal_call(call: dict) -> bool:
+    """A tool call whose result is personal data: a personal tool, or an agent that uses one (the planner)."""
+    if call["name"] in PERSONAL_TOOLS:
+        return True
+    if call["name"] == "delegate":
+        try:
+            agent = json.loads(call.get("arguments") or "{}").get("agent", "")
+        except (ValueError, AttributeError):
+            return True
+        return bool(PERSONAL_TOOLS & set(agents.agent_tools(str(agent).strip().lower())))
+    return False
 
 
 def _code_answer(user_text: str):
@@ -1947,7 +2218,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     memory_store.new_turn()
     agents.new_turn()
     _new_proposals.clear()
-    global _turn_heavy
+    _turn_text["text"] = user_text      # web_tools' privacy check lets through the words Mahadi said himself
     turn_start = len(messages)
     tools = select_tools(user_text, _tools_used_in_previous_turn(turn_start))
     # A job for a required agent goes straight to it: the turn gets only delegate (the agent has the tools).
@@ -1960,7 +2231,6 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     elif _MARKET_ASK.search(user_text):      # a live price: market_price, no web search (no Tavily credits)
         tools = [t for t in tools if t["function"]["name"] not in WEB_TOOLS]
     widened = False
-    _turn_heavy = is_heavy_turn(user_text, tools) or bool(agent_first)
     messages.append({"role": "user", "content": user_text})
     log_message("user", user_text)
     reply = ""
@@ -2033,6 +2303,13 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
             required.append((tool, f"Mahadi is questioning your earlier answer. Don't just agree or repeat it: "
                                    f"call {tool} again, answer from its result, and if you were wrong earlier, "
                                    f"say so plainly."))
+        # Privacy rule: a turn that needs calendar, tasks, memory or past chats goes only to providers with
+        # personal_ok: true (config/providers.yaml). With none in the chain, nothing is sent and Javid says so.
+        if _turn_needs_personal(user_text, turn_start, agent_first, required):
+            if not _personal_models():
+                print("[privacy] this needs personal data and no model provider has personal_ok: true")
+                raise providers.PrivacyBlocked("no model provider has personal_ok: true")
+            messages[turn_start]["_needs_personal"] = True
         said_searching = False
         # A reply in the wrong language, or a web answer that fails web_tools.check_reply, gets one
         # rewrite each. The rejected draft and the note go only into requests (never `messages`), at
@@ -2070,6 +2347,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                     print(f"[retry] needed a tool outside {[t['function']['name'] for t in tools]}")
                     widened = True
                     tools = [t for t in TOOLS if not (skill_first and t["function"]["name"] in WEB_TOOLS)]
+                    if (wanted := re.search(r"tool '([^']+)'", str(e))) and wanted.group(1) in PERSONAL_TOOLS:
+                        messages[turn_start]["_needs_personal"] = True   # it reached for personal data
                     continue
                 # e.g. "Failed to parse tool call arguments as JSON" — the model
                 # occasionally emits a malformed tool call; one retry usually fixes it.
@@ -2094,14 +2373,14 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 retried_required = True
                 tool, note = missing[0]
                 print(f"[required] answered without {tool}: {text[:60]!r}")
-                notes.append((len(messages), [{"role": "assistant", "content": text}, {"role": "user", "content": note}]))
+                notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True}, {"role": "user", "content": note}]))
                 if not any(t["function"]["name"] == tool for t in tools):
                     tools = tools + [t for t in TOOLS if t["function"]["name"] == tool]
                 continue
             if not tool_calls and not retried_lang and wrong_language(text, lang):
                 retried_lang = True
                 print(f"[lang] not in {lang}, asking for a rewrite: {text[:60]!r}")
-                notes.append((len(messages), [{"role": "assistant", "content": text},
+                notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
                                               {"role": "user", "content": language_note(lang)}]))
                 continue
             if not tool_calls and web_tools.used():
@@ -2109,7 +2388,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 if problems and not retried_web and not via_agent:
                     retried_web = True
                     print(f"[web] answer rejected: {problems}")
-                    notes.append((len(messages), [{"role": "assistant", "content": text},
+                    notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
                                                   {"role": "user", "content": web_tools.correction(problems, bool(skills.active()))}]))
                     continue
             if not tool_calls:
@@ -2120,7 +2399,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 if bad and not retried_holiday:
                     retried_holiday = True
                     print(f"[holiday] dates not in list_holidays: {bad}: {text[:60]!r}")
-                    notes.append((len(messages), [{"role": "assistant", "content": text},
+                    notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
                                                   {"role": "user", "content": calendar_tools.holiday_correction(bad)}]))
                     continue
                 if bad:
@@ -2156,6 +2435,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
             messages.append({
                 "role": "assistant",
                 "content": text or None,
+                **({"_needs_personal": True} if any(_personal_call(c) for c in calls) else {}),
                 "tool_calls": [
                     {"id": c["id"], "type": "function",
                      "function": {"name": c["name"], "arguments": c["arguments"]},
@@ -2198,6 +2478,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                         handoff = via_agent = h
                 if call["name"] == "use_skill" and skills.active():
                     yield ("skill", skills.active()["name"])
+                    if PERSONAL_TOOLS & set(skills.active()["tools"]):   # morning-brief: tasks and calendar
+                        messages[turn_start]["_needs_personal"] = True
                     # Unlock the skill's tools for the rest of the turn (and its follow-up turn).
                     have = {t["function"]["name"] for t in tools}
                     tools = tools + [t for t in TOOLS if t["function"]["name"] in skills.active()["tools"]
@@ -2206,6 +2488,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                     "role": "tool",
                     "tool_call_id": call["id"],
                     "content": result,
+                    **({"_needs_personal": True} if _personal_call(call) else {}),
                 })
         else:
             reply = phrase("stuck", lang)
@@ -2213,6 +2496,15 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
 
     except API_ERRORS:
         reply = phrase("api_failed", lang)
+        yield ("delta", reply)
+    except providers.PrivacyBlocked:
+        screen = NO_PERSONAL_SCREEN
+        yield ("screen", screen)
+        reply = phrase("no_personal", lang)
+        yield ("delta", reply)
+    except NoModelReady:
+        print("[llm] no model in the chain can take a request now")
+        reply = phrase("no_model", lang)
         yield ("delta", reply)
 
     finally:
@@ -2366,6 +2658,7 @@ def _ring_timers() -> None:
 
 
 def main() -> None:
+    print(providers.startup_line())
     _restore_context()
     threading.Thread(target=_ring_timers, daemon=True).start()
     watches.start()     # a watch that fires becomes a timer-style alert, which _ring_timers says

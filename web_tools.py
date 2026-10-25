@@ -10,7 +10,11 @@ Rules enforced here, not left to the prompt:
   - when sources give different figures, the answer must say they disagree;
   - read_page only opens the top READ_TOP results of a search made this turn;
   - the same query within CACHE_SEC reuses the earlier results (no credit spent);
-  - at most DAILY_CREDIT_CAP Tavily credits per day.
+  - Tavily goes through providers.py: its free monthly credits (config/providers.yaml) are guarded at 80/95 %, it
+    rests after a 429 or a plan limit, and every call is in the usage ledger; on top of that, at most
+    DAILY_CREDIT_CAP credits a day;
+  - a query that would carry personal data (a task, a memory line, a calendar result) isn't sent to Tavily
+    unless it has personal_ok (privacy_check, set by javid.py).
 """
 import json
 import os
@@ -22,8 +26,9 @@ from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
 import gnews
+import providers
 
-USAGE_FILE = "tavily_usage.jsonl"    # one line per Tavily call (or cache hit): credits spent
+USAGE_FILE = "tavily_usage.jsonl"    # before the usage ledger: one line per call (imported into it once)
 DAILY_CREDIT_CAP = 40
 CACHE_SEC = 15 * 60
 MAX_RESULTS = 5
@@ -63,6 +68,9 @@ _client_obj = None
 _client_key = ""
 _last_error: dict | None = None
 _cache: dict[tuple, tuple[float, dict]] = {}
+# javid.py sets the real check: where the personal data in a query comes from ("your tasks"), or None.
+privacy_check = lambda text: None
+NOT_SEARCHED = "Not searched:"    # starts a refusal for personal data (no Google News fallback either)
 
 
 def _key() -> str:
@@ -81,34 +89,13 @@ def _client():
     return _client_obj
 
 
-def _log(kind: str, credits: int, cached: bool, what: str) -> None:
-    entry = {"ts": round(time.time(), 1), "kind": kind, "credits": credits, "cached": cached, "what": what[:120]}
-    try:
-        with open(USAGE_FILE, "a") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-    except OSError:
-        pass
+def _midnight() -> float:
+    return datetime.combine(date.today(), datetime.min.time()).timestamp()
 
 
-def _today_log() -> list[dict]:
-    start = datetime.combine(date.today(), datetime.min.time()).timestamp()
-    out = []
-    try:
-        with open(USAGE_FILE) as f:
-            for line in f:
-                try:
-                    e = json.loads(line)
-                except ValueError:
-                    continue
-                if e.get("ts", 0) >= start:
-                    out.append(e)
-    except OSError:
-        pass
-    return out
-
-
-def credits_today() -> int:
-    return sum(e.get("credits", 0) for e in _today_log())
+def credits_today() -> float:
+    """Tavily credits spent since local midnight (the ledger), for DAILY_CREDIT_CAP."""
+    return providers.used("tavily", _midnight(), unit="credits")
 
 
 def _note_error(err: Exception) -> str:
@@ -128,24 +115,67 @@ def _cached(key: tuple) -> dict | None:
     return None
 
 
+def _when(ts: float | None) -> str:
+    if not ts:
+        return "later"
+    d = datetime.fromtimestamp(ts)
+    return f"{d:%B} {d.day}" if d.date() != date.today() else f"{d:%H:%M}"
+
+
+def _paused(st: dict) -> str:
+    """Why Tavily can't be called now, for the model to pass on."""
+    if st["state"] == "nokey":
+        return "Web search isn't set up: add TAVILY_API_KEY to .env and restart Javid."
+    if st["state"] == "disabled":
+        return "Web search is turned off in config/providers.yaml. Tell Mahadi."
+    if st["state"] == "cooldown":
+        wait = max(1, round(((st["until"] or time.time()) - time.time()) / 60))
+        return f"Web search is resting for about {wait} minute{'s' if wait != 1 else ''} ({st['why']}). Tell Mahadi."
+    return (f"Web search is paused until {_when(st['until'])}: Tavily is at its free limit ({st['why']}). "
+            "Tell Mahadi.")
+
+
+def _private(text: str) -> str | None:
+    """The refusal for a query that carries personal data to Tavily without personal_ok, else None."""
+    if providers.personal_ok("tavily") or not (where := privacy_check(text)):
+        return None
+    providers.record("tavily", 0, op="search", status="refused", detail="personal data in the query")
+    print(f"[privacy] a web search with words from {where} wasn't sent to Tavily")
+    return (f"{NOT_SEARCHED} the query has words from {where}, and the web search provider isn't cleared for "
+            "personal data. Search again without those details, or answer without searching.")
+
+
 def _call(kind: str, key: tuple, what: str, request) -> dict | str:
-    """Cached Tavily call within the daily credit cap. Returns the response or a sentence."""
+    """A cached Tavily call that the budget guard allows (providers.py) within the daily credit cap, in the usage
+    ledger. Returns the response or a sentence."""
     hit = _cached(key)
     if hit is not None:
-        _log(kind, 0, True, what)
+        providers.record("tavily", 0, op=kind, status="cached")
         return hit
+    if kind == "search" and (refusal := _private(what)):     # a page read reuses a query already checked
+        return refusal
+    allowed, st = providers.allow("tavily", cost=providers.cost("tavily", f"{kind}_basic", 1.0))
+    if not allowed:
+        return _paused(st)
     client = _client()
     if client is None:
         return "Web search isn't set up: add TAVILY_API_KEY to .env and restart Javid."
     if credits_today() + 1 > DAILY_CREDIT_CAP:
         return (f"The daily web search budget ({DAILY_CREDIT_CAP} Tavily credits) is used up. "
                 "Tell Mahadi it resets at midnight.")
+    t0 = time.time()
     try:
         resp = request(client)
     except Exception as e:
+        kind_ = providers.error_kind(e)
+        providers.record("tavily", 0, op=kind, latency_ms=(time.time() - t0) * 1000, status=kind_,
+                         detail=type(e).__name__)
+        if kind_ in ("rate_limited", "quota", "payment", "auth") and (rest := providers.cooldown_seconds("tavily", e)):
+            providers.cool("tavily", rest, kind_)
         return f"Web search failed ({_note_error(e)}). Tell Mahadi you couldn't search right now."
     credits = (resp.get("usage") or {}).get("credits")
-    _log(kind, credits if isinstance(credits, int) else 1, False, what)
+    providers.record("tavily", credits if isinstance(credits, (int, float)) else providers.cost("tavily", f"{kind}_basic", 1.0),
+                     op=kind, latency_ms=(time.time() - t0) * 1000)
     _cache[key] = (time.time(), resp)
     return resp
 
@@ -265,7 +295,7 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     domains = sorted({d for d in (_domain(d if "//" in d else "https://" + d) for d in domains or [] if str(d).strip())
                       if not _search_engine(d)})
     kw = {"search_depth": "basic", "max_results": MAX_RESULTS, "include_usage": True,
-          "topic": "news" if news else "general"}
+          "topic": "news" if news else "general", "timeout": providers.timeout_s("tavily", 30.0)}
     if days:
         kw["days"] = days
     if domains:
@@ -274,7 +304,10 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     resp = _call("search", key, query, lambda c: c.search(query, **kw))
     if isinstance(resp, str):
         # Tavily down or out of credits: for news, Google News' headlines still answer (2026-10-22: a Tavily
-        # ConnectionError became "I couldn't reach the news sites right now").
+        # ConnectionError became "I couldn't reach the news sites right now"). Not for a query refused for its
+        # personal data: Google would get it instead.
+        if resp.startswith(NOT_SEARCHED):
+            return resp
         return (_google_fallback(query, days) if news and not domains else None) or resp
     results = [r for r in resp.get("results", []) if r.get("url")][:MAX_RESULTS]
     if not results:
@@ -355,7 +388,8 @@ def _add_news_item(item: dict) -> dict:
 def _tavily_news(topic: str, days: int, per_topic: int) -> dict | str:
     """One Tavily news search for a topic Google News couldn't give (a credit): the response or a sentence."""
     query = f"{topic} news"
-    kw = {"search_depth": "basic", "max_results": per_topic + 2, "include_usage": True, "topic": "news", "days": days}
+    kw = {"search_depth": "basic", "max_results": per_topic + 2, "include_usage": True, "topic": "news", "days": days,
+          "timeout": providers.timeout_s("tavily", 30.0)}
     key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, (), per_topic + 2)
     return _call("search", key, query, lambda c: c.search(query, **kw))
 
@@ -448,7 +482,8 @@ def read_page(url: str) -> str:
     query = _turn["query"]
     resp = _call("extract", ("extract", url, query.lower()), url,
                  lambda c: c.extract(urls=[url], extract_depth="basic", query=query or None,
-                                     chunks_per_source=3, include_usage=True))
+                                     chunks_per_source=3, include_usage=True,
+                                     timeout=providers.timeout_s("tavily", 30.0)))
     if isinstance(resp, str):
         return resp
     page = next((r for r in resp.get("results", []) if r.get("url") == url), None) or \
@@ -700,13 +735,22 @@ def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SE
     return " ".join(body[:cap - 1] + [f"{label}: {src['name']}, {src['date_text']}."])
 
 
-# ---------- Models panel ----------
+# ---------- Providers panel ----------
+def _count(n: float | None):
+    return None if n is None else int(n) if float(n).is_integer() else round(n, 1)
+
+
 def status() -> dict:
-    log = _today_log()
+    """Today's Tavily use (the daily cap) and this month's (the free allowance), from the usage ledger."""
+    today = providers.calls("tavily", _midnight(), exclude=())
+    month = providers.usage("tavily") if providers.get("tavily") else {}
     return {
-        "has_key": bool(_key()), "cap": DAILY_CREDIT_CAP, "used_today": sum(e.get("credits", 0) for e in log),
-        "searches": sum(e["kind"] == "search" and not e.get("cached") for e in log),
-        "reads": sum(e["kind"] == "extract" and not e.get("cached") for e in log),
-        "cache_hits": sum(bool(e.get("cached")) for e in log), "cache_minutes": CACHE_SEC // 60,
-        "last_used": max((e["ts"] for e in log), default=None), "last_error": _last_error,
+        "has_key": bool(_key()), "cap": DAILY_CREDIT_CAP, "used_today": _count(credits_today()),
+        "searches": sum(c["op"] == "search" and c["status"] == "ok" for c in today),
+        "reads": sum(c["op"] == "extract" and c["status"] == "ok" for c in today),
+        "cache_hits": sum(c["status"] == "cached" for c in today), "cache_minutes": CACHE_SEC // 60,
+        "last_used": max((c["ts"] for c in today if c["status"] != "refused"), default=None), "last_error": _last_error,
+        "month": {**{k: month.get(k) for k in ("amount", "unit", "next_reset", "verified", "share")},
+                  "used": _count(month.get("used"))},
+        "state": providers.state("tavily")["state"] if providers.get("tavily") else "unknown",
     }

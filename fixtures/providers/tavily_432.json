@@ -1,0 +1,5 @@
+{
+ "source": "Tavily's documented 432 (plan usage limit); tavily-python raises it as ForbiddenError with this detail",
+ "status": 432,
+ "detail": "This request exceeds your plan's set usage limit. Please upgrade your plan or contact support@tavily.com"
+}

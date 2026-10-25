@@ -1,29 +1,35 @@
 """
-Regression check for Javid's agent behaviour: 139 cases, 63 of them prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 156 cases. The default run never calls a real API: 93 of them script the
+model's part and replay recorded fixtures for every provider; the other 63 send prompts through the real LLM and tool
+loop and only run with --llm.
 
-    python regression.py              # run everything once
-    python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
+    python regression.py              # the default: scripted cases and fixtures only, no network, no tokens, seconds
     python regression.py -k delete    # only cases whose name contains "delete"
     python regression.py -v           # print every reply, not just failures
-    python regression.py --use-120b   # on gpt-oss-120b instead of the default gpt-oss-20b
-    python regression.py --offline    # only the 76 scripted cases: no LLM request, no tokens, a few seconds
+    python regression.py --llm        # also the 63 live model cases (real Groq requests: tokens, see below)
+    python regression.py --llm -n 3   # repeat each case 3x (the model is non-deterministic)
+    python regression.py --use-120b   # live cases on gpt-oss-120b instead of the default gpt-oss-20b (implies --llm)
+    python regression.py --live       # smoke test: one real call per provider that is on, then stop
 
-The scripted ("offline") cases fix the model's output to test what code decides whatever the model says: the
-garble guard, questions about Javid itself (about.py), the voice every spoken sentence gets, exchange rates
-and market briefs (answered in code), and the Telegram bot against a fake Bot API. Each case's
-line ends with its average time per turn and tokens: the web, weather and price services are fakes, so the
-time is the model's (plus Javid's own work), not what a real search adds.
+The scripted cases fix the model's output to test what code decides whatever the model says: the garble guard,
+questions about Javid itself (about.py), the voice every spoken sentence gets, exchange rates and market briefs
+(answered in code), the Telegram bot against a fake Bot API, and the provider registry: allowances, the budget guard,
+cooldowns and the privacy rule (providers.py; the client_script cases run the real model router against a fake
+provider). In the default run every socket to anything but this machine is refused: a case that tries to reach the
+network fails. Each case's line ends with its average time per turn and tokens.
 
-Runs on gpt-oss-20b alone by default (no fallback: a model change mid-run would mix results, and the live
+Live model cases run on gpt-oss-20b alone (no fallback: a model change mid-run would mix results, and the live
 chain's 120b is the user's backup, so it is only used with --use-120b).
 
-Safe to run: tasks, memory, chat history and timers go to a temp dir, the Google Calendar is a
-fake in-memory service, and Tavily, the weather services and the price APIs are fakes with fixed
-results (no credits spent, no key needed). Your real data is never touched.
-Needs GROQ_API_KEY. A full live run makes ~175 LLM requests (~210k tokens, measured 2026-10-24): more than Groq's
-free daily budget for this model (200k), so it leaves the live Javid on its backup model for hours. Run the cases
-you touched with -k instead, and --offline for the scripted ones. Exit code: 0 all passed, 1 a check failed, 3 only
-API/network errors (inconclusive).
+Safe to run: tasks, memory, chat history, timers, the provider registry and the usage ledger go to a temp dir, the
+Google Calendar is a fake in-memory service, and Tavily, Google News, the weather services and the price APIs are fakes
+with fixed results (no credits spent, no key needed). Your real data is never touched. Real requests (--llm, --live)
+are counted where real use is: llm_usage.jsonl and data/providers.db.
+Needs GROQ_API_KEY for --llm. A full --llm run makes ~175 LLM requests (~210k tokens, measured 2026-10-24): more than
+Groq's free daily budget for this model (200k), so it leaves the live Javid on its backup model for hours. Run the
+cases you touched with -k instead. --live costs one small request per provider that is on (one of Gemini's 20 a day,
+one Tavily credit, ~100 Groq tokens). Exit code: 0 all passed, 1 a check failed, 3 only API/network errors
+(inconclusive).
 """
 import argparse
 import contextlib
@@ -33,12 +39,16 @@ import json
 import os
 import re
 import signal
+import socket
 import sys
 import time
 import tempfile
 import traceback
+import types
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+
+import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import approvals  # noqa: E402
@@ -47,6 +57,7 @@ import gnews  # noqa: E402
 import javid  # noqa: E402
 import markets  # noqa: E402
 import memory_store  # noqa: E402
+import providers  # noqa: E402
 import rates  # noqa: E402
 import selfcheck  # noqa: E402
 import skills  # noqa: E402
@@ -93,6 +104,8 @@ def _counted_stream_completion(tool_calls, *args):
     if _script is not None:      # an offline case: the model's part is scripted, no request is made
         yield from _scripted_completion(tool_calls)
         return
+    if _fake_llm_on[0]:
+        FAKE_ATTEMPTS[0] += 1
     for attempt in range(6):
         LLM_REQUESTS += 1
         try:
@@ -111,6 +124,7 @@ javid._stream_completion = _counted_stream_completion
 
 # ---------- scripted model: offline cases test what code decides, whatever the model says (no tokens) ----------
 _script: list | None = None     # the running offline case's model outputs, used in order
+_fake_llm_on = [False]          # a client_script case is running: its rounds go to the fake provider
 SCRIPTED_REQUESTS = 0
 
 
@@ -190,6 +204,8 @@ _orig_record_usage = javid._record_usage
 
 
 def _tallied_record_usage(model, usage):
+    if getattr(usage, "fake", False):        # the client_script cases' fake provider: no real tokens
+        return _orig_record_usage(model, usage)
     _orig_record_usage(model, usage)
     RUN_TOKENS["requests"] += 1
     RUN_TOKENS["prompt"] += usage.prompt_tokens or 0
@@ -224,6 +240,132 @@ web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
 timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings or lists the real timers
 watches.WATCHES_FILE = os.path.join(SCRATCH, "watches.json")       # never fires the real watches
 tracing.TRACES_FILE = os.path.join(SCRATCH, "traces.jsonl")        # offline Telegram cases wrote into the real latency log
+# Providers: a scratch copy of config/providers.yaml in which every provider may take personal data (the cases test
+# what Javid does, not Mahadi's personal_ok choices; the privacy cases set their own), and a scratch usage ledger.
+# Real requests (live cases, --live) are counted where real use is (accounting(True)).
+REAL = {"db": providers.DB_FILE, "registry": providers.REGISTRY_FILE, "imports": dict(providers.IMPORT_FILES),
+        "llm_usage": javid.LLM_USAGE_FILE, "llm_quota": javid.LLM_QUOTA_FILE}
+SCRATCH_FILES = {"db": os.path.join(SCRATCH, "providers.db"), "llm_usage": os.path.join(SCRATCH, "llm_usage.jsonl"),
+                 "llm_quota": os.path.join(SCRATCH, "llm_quota.json")}
+with open(REAL["registry"], encoding="utf-8") as _f:
+    BASE_REGISTRY = yaml.safe_load(_f)
+providers.REGISTRY_FILE = os.path.join(SCRATCH, "providers.yaml")
+GUARD = {"on": True}            # the network guard (below): on for everything that isn't a real request
+
+
+def write_registry(changes: dict | None = None) -> None:
+    """The scratch registry: the real one with personal_ok: true everywhere, then `changes` ({name or "*": fields})."""
+    data = copy.deepcopy(BASE_REGISTRY)
+    for e in data["providers"]:
+        e["personal_ok"] = True
+        e.update((changes or {}).get("*", {}))
+        e.update((changes or {}).get(e["name"], {}))
+    with open(providers.REGISTRY_FILE, "w") as f:
+        yaml.safe_dump(data, f)
+    providers.reload()
+
+
+def accounting(real: bool) -> None:
+    """Where usage goes: the real logs and ledger for real requests, scratch ones (emptied per case) for the rest."""
+    providers.DB_FILE = REAL["db"] if real else SCRATCH_FILES["db"]
+    providers.IMPORT_FILES = REAL["imports"] if real else {}
+    providers._db["path"] = None
+    javid.LLM_USAGE_FILE = REAL["llm_usage"] if real else SCRATCH_FILES["llm_usage"]
+    javid.LLM_QUOTA_FILE = REAL["llm_quota"] if real else SCRATCH_FILES["llm_quota"]
+    javid._model_info.clear()       # quota, limits and errors learned so far: a scripted case starts from none
+    if real:
+        javid._load_quota()
+    else:
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            with contextlib.suppress(OSError):
+                os.remove(SCRATCH_FILES["db"] + suffix)
+        for f in (SCRATCH_FILES["llm_usage"], SCRATCH_FILES["llm_quota"]):
+            with contextlib.suppress(OSError):
+                os.remove(f)
+        providers._balance.update(at=0.0, data=None, error=None, busy=False)
+    GUARD["on"] = not real
+
+
+write_registry()
+accounting(False)
+
+
+# ---------- no real APIs in the default run ----------
+NETWORK_ATTEMPTS: list[str] = []      # hosts something tried to reach while the guard was on
+_real_getaddrinfo, _real_connect = socket.getaddrinfo, socket.socket.connect
+
+
+class NetworkBlocked(RuntimeError):
+    """Scripted cases replay fixtures: a connection to anything but this machine is a test bug, so it fails the case
+    (a RuntimeError, not an OSError: code that shrugs off network errors must not hide it)."""
+
+
+def _local(host) -> bool:
+    host = str(host or "")
+    return host in ("", "localhost", "::1", "testserver") or host.startswith("127.")
+
+
+def _guarded_getaddrinfo(host, *args, **kw):
+    if GUARD["on"] and not _local(host):
+        NETWORK_ATTEMPTS.append(str(host))
+        raise NetworkBlocked(f"no network in a scripted case: {host}")
+    return _real_getaddrinfo(host, *args, **kw)
+
+
+def _guarded_connect(sock, address):
+    if GUARD["on"] and sock.family in (socket.AF_INET, socket.AF_INET6) and not _local(address[0]):
+        NETWORK_ATTEMPTS.append(str(address[0]))
+        raise NetworkBlocked(f"no network in a scripted case: {address[0]}")
+    return _real_connect(sock, address)
+
+
+socket.getaddrinfo = _guarded_getaddrinfo
+socket.socket.connect = _guarded_connect
+
+
+FAKE_REQUESTS: dict[str, int] = {}     # model -> requests the fake provider answered (not real, no tokens)
+FAKE_ATTEMPTS = [0]                    # model rounds in the client_script cases: none of them real
+
+
+class FakeLLM:
+    """A model provider at javid._create's level for the client_script cases: it serves the scripted outputs and keeps
+    what each request carried (after javid._messages_for, as it would go over the wire), so the real router runs: the
+    budget guard, cooldowns and the privacy rule."""
+
+    def __init__(self, outputs: list):
+        self.outputs, self.sent = list(outputs), []
+
+    def create(self, model_id, msgs, *, tools=None, stream=False, max_tokens=None):
+        provider = javid._split(model_id)[0]
+        self.sent.append({"model": model_id, "messages": javid._messages_for(provider, msgs),
+                          "tools": [t["function"]["name"] for t in tools or []]})
+        out = self.outputs.pop(0) if self.outputs else "Okay."
+        offered = {t["function"]["name"] for t in tools or []}
+        if isinstance(out, dict) and out["tool"] not in offered:     # Groq validates tool calls against the request
+            import groq
+            import httpx
+            message = f"tool call validation failed: attempted to call tool '{out['tool']}' which was not in request.tools"
+            raise groq.BadRequestError(message, body={"error": {"message": message}},
+                                       response=httpx.Response(400, request=httpx.Request("POST", "https://fake.test")))
+        FAKE_REQUESTS[model_id] = FAKE_REQUESTS.get(model_id, 0) + 1     # answered (javid counts it in llm_usage)
+        return types.SimpleNamespace(headers={}, parse=lambda: self._chunks(out))
+
+    @staticmethod
+    def _chunks(out):
+        ns = types.SimpleNamespace
+        if isinstance(out, dict):
+            fn = ns(name=out["tool"], arguments=json.dumps(out["args"]))
+            delta = ns(content=None, tool_calls=[ns(index=0, id=f"call_{uuid_hex()}", function=fn, model_extra={})])
+        else:
+            delta = ns(content=out, tool_calls=None)
+        yield ns(choices=[ns(delta=delta)], usage=None, x_groq=None)
+        yield ns(choices=[], x_groq=None, usage=ns(prompt_tokens=100, completion_tokens=10, total_tokens=110,
+                                                   prompt_tokens_details=None, fake=True))
+
+
+def uuid_hex() -> str:
+    import uuid
+    return uuid.uuid4().hex[:12]
 TURN_TOKENS: list[tuple[str, dict]] = []   # (case name, javid.last_turn_usage) for every turn run
 
 
@@ -716,6 +858,13 @@ class Case:
     gnews_down: bool = False                     # the fake Google News is down (web_down takes it down too)
     tavily_down: bool = False                    # only the fake Tavily is down (Google News still answers)
     after: object = None                         # run after the turns (a watch's later check); returns r.extra["after"]
+    registry: dict = None                        # changes to the scratch provider registry: {name or "*": fields}
+    client_script: list = None                   # scripted through the real router: a fake provider serves these
+
+    @property
+    def offline(self) -> bool:
+        """Scripted: no real request, no tokens, no network."""
+        return self.script is not None or self.client_script is not None
 
 
 def _ran(r, name, turn=None):
@@ -1359,6 +1508,363 @@ PLAN_GARBLED = (f"{TOMORROW:%A} ... ... ...\n1:00 PM - 2:30 PM  Lunch with Sam .
 # Just tomorrow's two events: on a Thursday FRIDAY is tomorrow, the dentist joined them, and must-show asked
 # for a rewrite the script doesn't have.
 PLAN_EVENTS = [e for e in EVENTS if e["id"] in ("review", "lunch")]
+
+# ---------- providers (providers.py, config/providers.yaml), the budget guard and the privacy rule ----------
+FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "providers")
+NO_PERSONAL = {"*": {"personal_ok": False}}     # the registry as shipped: no provider cleared for personal data
+FAKE_KEYS = {"EXA_API_KEY": "exa-test-0123456789abcdef", "ELEVENLABS_API_KEY": "el-test-0123456789abcdef",
+             "DEEPSEEK_API_KEY": "sk-test-0123456789abcdef", "CLOUDFLARE_ACCOUNT_ID": "acct-test-123456"}
+
+
+def fixture(name: str) -> dict:
+    with open(os.path.join(FIXTURES, name)) as f:
+        return json.load(f)
+
+
+def api_error(sdk, name: str):
+    """The SDK's exception (groq or openai) for a recorded error response."""
+    import httpx
+    fx = fixture(name)
+    request = httpx.Request("POST", "https://api.example.test/v1/chat/completions")
+    response = httpx.Response(fx["status"], headers=fx.get("headers") or {}, json=fx["body"], request=request)
+    cls = {429: sdk.RateLimitError}.get(fx["status"], sdk.APIStatusError)
+    return cls(f"Error code: {fx['status']} - {json.dumps(fx['body'])}", response=response, body=fx["body"])
+
+
+@contextlib.contextmanager
+def env(**values):
+    """Environment variables for one drive (None unsets one), put back afterwards."""
+    saved = {k: os.environ.get(k) for k in values}
+    for k, v in values.items():
+        os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            os.environ.pop(k, None) if v is None else os.environ.__setitem__(k, v)
+
+
+@contextlib.contextmanager
+def chain_of(*models):
+    """A scratch model chain for one drive."""
+    real = javid.LLM_CHAIN_FILE
+    javid.LLM_CHAIN_FILE = os.path.join(SCRATCH, "chain-drive.json")
+    with open(javid.LLM_CHAIN_FILE, "w") as f:
+        json.dump({"chain": list(models)}, f)
+    try:
+        yield
+    finally:
+        javid.LLM_CHAIN_FILE = real
+
+
+def drive_ok(r):
+    """A drive's own findings (r.extra["problems"])."""
+    return "; ".join(r.extra.get("problems", [])) or None
+
+
+def prov_seeded():
+    """config/providers.yaml as shipped: every provider, each allowance in its own unit, nothing personal allowed."""
+    providers.REGISTRY_FILE, scratch = REAL["registry"], providers.REGISTRY_FILE
+    providers.reload()
+    try:
+        es, errors = {e["name"]: e for e in providers.entries()}, providers.errors()
+    finally:
+        providers.REGISTRY_FILE = scratch
+        providers.reload()
+    problems = [f"registry problem: {e}" for e in errors]
+    want = {"groq": ("llm", "tokens", None), "gemini": ("llm", "requests", 20), "openrouter": ("llm", "requests", 50),
+            "cloudflare": ("llm", "neurons", 10000), "deepseek": ("llm", "usd", 0), "ifm": ("llm", "requests", None),
+            "tavily": ("search", "credits", 1000), "exa": ("search", "usd", 10), "brave": ("search", "usd", 5),
+            "firecrawl": ("extract", "credits", 1000), "cohere": ("rerank", "calls", 1000),
+            "elevenlabs": ("tts", "characters", None)}
+    if set(es) != set(want):
+        problems.append(f"providers: {sorted(es)}")
+    for name, (kind, unit, amount) in want.items():
+        e = es.get(name)
+        if not e:
+            continue
+        a = e["allowance"]
+        if (e["kind"], a["unit"], a["amount"]) != (kind, unit, amount):
+            problems.append(f"{name}: {e['kind']}, {a['amount']} {a['unit']}")
+        if e["personal_ok"]:
+            problems.append(f"{name} ships with personal_ok: true")
+        if a["verified"]:
+            problems.append(f"{name}'s allowance is marked verified")
+    if any(e["allowance"]["unit"] == "tokens" for n, e in es.items() if n != "groq"):
+        problems.append("an allowance converted to tokens")
+    if (es["groq"]["allowance"]["from"], es["elevenlabs"]["allowance"]["from"]) != ("headers", "api"):
+        problems.append("Groq's quota isn't from its headers, or ElevenLabs' balance isn't from its API")
+    if es["cloudflare"]["reset"] != "daily_utc" or es["cloudflare"]["env"] != ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_AI_TOKEN"]:
+        problems.append(f"cloudflare: {es['cloudflare']['reset']}, {es['cloudflare']['env']}")
+    if (es["openrouter"]["rate_limit"] or {}).get("amount") != 20:
+        problems.append(f"openrouter's rate limit: {es['openrouter']['rate_limit']}")
+    if (es["tavily"]["costs"].get("search_basic"), es["tavily"]["costs"].get("search_advanced")) != (1, 2):
+        problems.append(f"tavily's costs: {es['tavily']['costs']}")
+    if es["deepseek"]["enabled"]:
+        problems.append("deepseek (paid only) ships enabled")
+    return {"problems": problems}
+
+
+def prov_keys():
+    """A provider is on only with every key it names; the startup line says which, names only."""
+    with env(EXA_API_KEY=FAKE_KEYS["EXA_API_KEY"], CLOUDFLARE_ACCOUNT_ID=FAKE_KEYS["CLOUDFLARE_ACCOUNT_ID"],
+             CLOUDFLARE_AI_TOKEN=None, FIRECRAWL_API_KEY=None):
+        line, problems = providers.startup_line(), []
+        on, off = line.split(" · off: ") if " · off: " in line else (line, "")
+        if not providers.is_on("exa") or "exa" not in on:
+            problems.append(f"exa with its key isn't on: {line}")
+        if providers.is_on("cloudflare") or "cloudflare (no key)" not in off:
+            problems.append(f"cloudflare is on with one of its two keys: {line}")
+        if providers.state("firecrawl")["state"] != "nokey" or "firecrawl (no key)" not in off:
+            problems.append(f"firecrawl without a key: {line}")
+        if "deepseek (disabled)" not in off:
+            problems.append(f"deepseek isn't shown as turned off: {line}")
+        if any(v in line for v in FAKE_KEYS.values()):
+            problems.append("the startup line shows a key")
+    return {"problems": problems}
+
+
+def prov_windows():
+    """Usage counts only inside the allowance's window, and each window resets at its own time."""
+    now, problems = time.time(), []
+    month = providers.window_start("monthly_utc", now)
+    providers.record("tavily", 7, op="search", ts=month - 60)              # last month: not counted
+    providers.record("tavily", 2, op="search", ts=month + 1)
+    providers.record("tavily", 1, op="search", ts=now)
+    day = providers.window_start("daily_pacific", now)
+    providers.record("gemini", 1, model="gemini:gemini-3.7-flash", op="chat", ts=day - 60)
+    providers.record("gemini", 1, model="gemini:gemini-3.7-flash", op="chat", ts=now)
+    providers.record("gemini", 1, model="gemini:other-model", op="chat", ts=now)
+    if (u := providers.usage("tavily", now=now)["used"]) != 3:
+        problems.append(f"tavily this month: {u}")
+    if (u := providers.usage("gemini", "gemini:gemini-3.7-flash", now=now)["used"]) != 1:
+        problems.append(f"gemini-3.7-flash today (Pacific): {u}")
+    first = datetime.fromtimestamp(providers.next_reset("monthly_utc", now), timezone.utc)
+    if (first.day, first.hour, first.minute) != (1, 0, 0) or first.timestamp() <= now:
+        problems.append(f"monthly reset {first}")
+    for rule, tz in (("daily_utc", timezone.utc), ("daily_pacific", providers.PACIFIC)):
+        nxt = providers.next_reset(rule, now)
+        at = datetime.fromtimestamp(nxt, tz)
+        if (at.hour, at.minute) != (0, 0) or not 0 < nxt - now <= 90000:
+            problems.append(f"{rule} resets {at}")
+    return {"problems": problems}
+
+
+def prov_guard():
+    """80 % = reserve (only when the others fail), 95 % = off until the reset, never past a free allowance."""
+    problems = []
+    with env(EXA_API_KEY=FAKE_KEYS["EXA_API_KEY"], DEEPSEEK_API_KEY=FAKE_KEYS["DEEPSEEK_API_KEY"]):
+        providers.record("tavily", 799, op="search")
+        if (st := providers.state("tavily")["state"]) != "ready":
+            problems.append(f"799 of 1,000 credits: {st}")
+        providers.record("tavily", 1, op="search")
+        if (st := providers.state("tavily")["state"]) != "reserve":
+            problems.append(f"800 of 1,000 credits: {st}")
+        if providers.ordered("search")[:2] != ["exa", "tavily"]:
+            problems.append(f"search order with tavily in reserve: {providers.ordered('search')}")
+        providers.record("tavily", 150, op="search")
+        st = providers.state("tavily")
+        if st["state"] != "off" or st["until"] != providers.next_reset("monthly_utc"):
+            problems.append(f"950 of 1,000 credits: {st['state']} until {st['until']}")
+        said = web_tools.web_search("how tall is Mount Everest")
+        if web_tools._client().searches or "paused" not in said:
+            problems.append(f"web search at 95 %: {said[:80]!r}, Tavily got {web_tools._client().searches}")
+        providers.record("exa", 9.40, op="search", unit="usd")
+        if providers.allow("exa", cost=0.70)[0]:
+            problems.append("an Exa call that would pass its $10 was allowed")
+        if not providers.allow("exa", cost=0.50)[0]:
+            problems.append("an Exa call within its $10 was refused")
+        if (st := providers.state("deepseek"))["state"] != "off" or st["why"] != "no free tier":
+            problems.append(f"deepseek (no free tier), enabled and with a key: {st['state']} ({st['why']})")
+    return {"problems": problems}
+
+
+def prov_reserve_model():
+    """A model past 80 % of its tokens is tried only after the others; past 95 % it isn't tried at all."""
+    problems, now = [], time.time()
+    with chain_of(DEFAULT_MODEL, BIG_MODEL):
+        javid._model_info[DEFAULT_MODEL] = {"quota": {"tpd_limit": 200000, "reported_used": 170000, "reported_at": now}}
+        if (order := javid._models_to_try()) != [BIG_MODEL, DEFAULT_MODEL]:
+            problems.append(f"at 85 %: {order}")
+        javid._model_info[DEFAULT_MODEL]["quota"]["reported_used"] = 192000
+        if (order := javid._models_to_try()) != [BIG_MODEL]:
+            problems.append(f"at 96 %: {order}")
+        no_probes()
+        states = {m["id"]: m["state"] for m in javid.llm_status()["models"]}
+        if states != {DEFAULT_MODEL: "off", BIG_MODEL: "serving"}:
+            problems.append(f"the panel's states: {states}")
+    return {"problems": problems}
+
+
+def prov_cooldowns():
+    """A 429, a 402 and a quota error rest the provider (or just that model) until its retry-after, across a restart."""
+    import groq
+    import openai
+    from tavily.errors import ForbiddenError
+    problems, now = [], time.time()
+    wait = javid._cool(DEFAULT_MODEL, api_error(groq, "groq_429.json"))
+    if not 425 <= wait <= 437:
+        problems.append(f"Groq's 429 says 431 s, rested {wait:.0f} s")
+    if providers.cooldown("groq", BIG_MODEL)[0]:
+        problems.append("one model's 429 rested the other Groq model too")
+    javid._cool("gemini:gemini-3.7-flash", api_error(openai, "gemini_429.json"))
+    until, _ = providers.cooldown("gemini", "gemini:gemini-3.7-flash")
+    if not until or abs(until - now - (6 * 3600 + 21 * 60 + 37.1)) > 5:
+        problems.append(f"Gemini's 'retry in 6h21m37.1s': {until and round(until - now)} s")
+    javid._cool("deepseek:deepseek-chat", api_error(openai, "deepseek_402.json"))
+    until, reason = providers.cooldown("deepseek")
+    if not until or abs(until - providers.next_reset("monthly_utc")) > 5 or reason != "payment":
+        problems.append(f"DeepSeek's 402 (no retry-after): until {until}, {reason}")
+    fx = fixture("tavily_432.json")
+    web_tools._client().search = lambda q, **kw: (_ for _ in ()).throw(ForbiddenError(fx["detail"]))
+    web_tools.web_search("how tall is Mount Everest")
+    until, reason = providers.cooldown("tavily")
+    if not until or abs(until - providers.next_reset("monthly_utc")) > 5 or reason != "quota":
+        problems.append(f"Tavily's plan limit (432): until {until}, {reason}")
+    if (providers.last_error("tavily") or {}).get("kind") != "quota":
+        problems.append(f"the ledger's last Tavily error: {providers.last_error('tavily')}")
+    providers._db["path"] = None            # a restart: a new process opens the same ledger
+    if not (providers.cooldown("groq", DEFAULT_MODEL)[0] and providers.cooldown("tavily")[0]):
+        problems.append("a cooldown didn't survive the restart")
+    if DEFAULT_MODEL in javid._models_to_try():
+        problems.append("a model resting after its 429 was still tried")
+    return {"problems": problems}
+
+
+def prov_groq_headers():
+    """Groq's x-ratelimit headers (recorded) are each model's remaining quota; a reading older than its reset isn't."""
+    fx, problems = fixture("groq_headers.json"), []
+    model = fx["model"]
+    javid._note_headers(model, fx["headers"])
+    parts = {p["unit"]: p for p in providers.usage("groq", model).get("parts") or []}
+    if (parts.get("requests") or {}).get("used") != 1 or parts["requests"]["amount"] != 1000:
+        problems.append(f"requests per day: {parts.get('requests')}")
+    lim = javid._model_info[model]["limits"]
+    if (lim["tpm_limit"], lim["tpm_remaining"], lim["rpd_reset"]) != (8000, 7917, "1m26.4s"):
+        problems.append(f"limits: {lim}")
+    lim["at"] -= 3600
+    if any(p["unit"] == "requests" for p in providers.usage("groq", model).get("parts") or []):
+        problems.append("an hour-old reading of a 1m26s reset still counted")
+    return {"problems": problems}
+
+
+def prov_elevenlabs():
+    """ElevenLabs' character balance comes from its API (fixture), with the key only in the request's header."""
+    fx, seen, problems = fixture("elevenlabs_subscription.json"), [], []
+
+    def fake_get(url, headers, timeout):
+        seen.append((url, sorted(headers)))
+        return copy.deepcopy(fx["body"])
+    real_get, providers._get_json = providers._get_json, fake_get
+    try:
+        with env(ELEVENLABS_API_KEY=FAKE_KEYS["ELEVENLABS_API_KEY"]):
+            providers.refresh_balance(wait=True)
+            u = providers.usage("elevenlabs")
+            row = next(p for p in providers.status()["providers"] if p["name"] == "elevenlabs")
+            if (u["used"], u["amount"], u["unit"], u["next_reset"]) != (4210, 10000, "characters",
+                                                                       fx["body"]["next_character_count_reset_unix"]):
+                problems.append(f"balance: {u}")
+            if seen != [("https://api.elevenlabs.io/v1/user/subscription", ["xi-api-key"])]:
+                problems.append(f"asked: {seen}")
+            if (row["state"], row["used"]) != ("ready", 4210):
+                problems.append(f"panel row: {row['state']}, {row['used']}")
+            if [c["op"] for c in providers.calls("elevenlabs")] != ["balance"]:
+                problems.append(f"ledger: {providers.calls('elevenlabs')}")
+            if FAKE_KEYS["ELEVENLABS_API_KEY"] in json.dumps(providers.status()):
+                problems.append("the key is in the status")
+    finally:
+        providers._get_json = real_get
+    return {"problems": problems}
+
+
+def prov_panel():
+    """GET /providers: every provider in its own unit, the model chain, and never a key."""
+    from fastapi.testclient import TestClient   # no `with`: the server's startup (warm-up, pings) doesn't run
+    import server
+    no_probes()
+    with env(EXA_API_KEY=FAKE_KEYS["EXA_API_KEY"]):
+        providers.record("tavily", 12, op="search")
+        data = TestClient(server.app).get("/providers").json()
+    rows, problems = {p["name"]: p for p in data.get("providers", [])}, []
+    if len(rows) != 12:
+        problems.append(f"{len(rows)} providers")
+    t = rows.get("tavily") or {"allowance": {}}
+    if (t.get("used"), t["allowance"].get("amount"), t["allowance"].get("unit"), t.get("reset")) != (12, 1000, "credits", "monthly_utc") \
+            or not t.get("next_reset"):
+        problems.append(f"tavily: {t.get('used')} / {t['allowance']}, {t.get('reset')}, {t.get('next_reset')}")
+    if rows.get("exa", {}).get("state") != "ready" or rows.get("firecrawl", {}).get("state") != "nokey":
+        problems.append(f"exa {rows.get('exa', {}).get('state')}, firecrawl {rows.get('firecrawl', {}).get('state')}")
+    if not rows.get("groq", {}).get("models") or not data.get("llm", {}).get("models") or not data.get("next_model"):
+        problems.append("the model chain is missing")
+    if FAKE_KEYS["EXA_API_KEY"] in json.dumps(data):
+        problems.append("a key in /providers")
+    return {"problems": problems}
+
+
+def net_blocked():
+    """The default run's guard: nothing but this machine can be reached (and the attempt is noted)."""
+    import httpx
+    if not GUARD["on"]:
+        return {"problems": []}
+    n0, problems = len(NETWORK_ATTEMPTS), []
+    for name, attempt in (("a socket", lambda: socket.create_connection(("example.com", 443), timeout=2)),
+                          ("httpx", lambda: httpx.get("https://api.groq.com/openai/v1/models", timeout=2))):
+        try:
+            attempt()
+            problems.append(f"{name} reached the network")
+        except NetworkBlocked:
+            pass
+        except Exception as e:
+            problems.append(f"{name}: {type(e).__name__} instead of NetworkBlocked")
+    if len(NETWORK_ATTEMPTS) - n0 != 2:
+        problems.append(f"attempts noted: {NETWORK_ATTEMPTS[n0:]}")
+    del NETWORK_ATTEMPTS[n0:]       # this case's own attempts don't fail it
+    return {"problems": problems}
+
+
+def sent_text(r, i=None) -> str:
+    """What the fake provider received: request i, or all of them."""
+    sent = r.extra.get("sent") or []
+    return json.dumps(sent if i is None else sent[i]["messages"], ensure_ascii=False) if sent else ""
+
+
+def sent_lacks(pattern, i=None):
+    return lambda r: (f"request {'s' if i is None else i} carried {pattern!r}"
+                      if re.search(pattern, sent_text(r, i), re.I) else None)
+
+
+def sent_has(pattern, i=None):
+    return lambda r: None if re.search(pattern, sent_text(r, i), re.I) else f"request {i} lacks {pattern!r}"
+
+
+def tools_sent_lack(*names):
+    return lambda r: next((f"request {n} offered {t}" for n, s in enumerate(r.extra.get("sent") or [])
+                           for t in s["tools"] if t in names), None)
+
+
+def ledger_has(provider, op, unit, units):
+    def check(r):
+        rows = [c for c in providers.calls(provider) if c["op"] == op]
+        if [(c["unit"], c["units"]) for c in rows] != [(unit, units)] * len(rows) or not rows:
+            return f"ledger {provider}/{op}: {[(c['unit'], c['units'], c['status']) for c in rows]}"
+        return None
+    return check
+
+
+def tavily_searched(r):
+    return None if r.web.searches else "Tavily wasn't searched"
+
+
+def tavily_not_searched(r):
+    return f"Tavily got {r.web.searches}" if r.web.searches else None
+
+
+def refused_for_privacy(r):
+    return None if any(c["status"] == "refused" for c in providers.calls("tavily", exclude=())) else "no refusal in the ledger"
+
+
+TASK_PASSPORT = ["[2026-10-01 09:00] Pick up passport from Gulshan office"]
+
 
 CASES = [
     # --- tasks ---
@@ -2075,8 +2581,69 @@ CASES += [
     Case("agent: 'give me a plan for tomorrow' goes to the planner", ["Yeah, give me a plan for tomorrow."],
          [agent_ran("planner"), screen_has("project review"), model_requests(1)], tasks=T3, events=PLAN_EVENTS,
          script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
+    # ---------- providers: registry, usage ledger, budget guard, cooldowns (providers.py; fixtures/providers) ----------
+    Case("providers: the registry ships every provider in its own unit, none cleared for personal data", [],
+         [drive_ok, model_requests(0)], drive=prov_seeded, script=[]),
+    Case("providers: a provider is on only with every key it names; the startup line shows names, never keys", [],
+         [drive_ok, model_requests(0)], drive=prov_keys, script=[]),
+    Case("providers: usage counts inside its reset window (monthly UTC, daily Pacific, daily UTC)", [],
+         [drive_ok], drive=prov_windows, script=[]),
+    Case("providers: budget guard: reserve at 80 %, off at 95 % until the reset, never past a free allowance", [],
+         [drive_ok, model_requests(0)], drive=prov_guard, registry={"deepseek": {"enabled": True}}, script=[]),
+    Case("providers: a model in reserve answers only when the others fail, and one at 95 % isn't tried", [],
+         [drive_ok, model_requests(0)], drive=prov_reserve_model, script=[]),
+    Case("providers: a 429, a 402 and a quota error rest the provider until its retry-after, across a restart", [],
+         [drive_ok], drive=prov_cooldowns, script=[]),
+    Case("providers: Groq's rate-limit headers (recorded) are each model's remaining quota", [],
+         [drive_ok], drive=prov_groq_headers, script=[]),
+    Case("providers: ElevenLabs' balance comes from its API, with the key only in the request", [],
+         [drive_ok], drive=prov_elevenlabs, script=[]),
+    Case("providers: /providers shows used / allowance in each provider's own unit, never a key", [],
+         [drive_ok], drive=prov_panel, script=[]),
+    Case("tests: the default run can't reach the network", [], [drive_ok], drive=net_blocked, script=[]),
+    # ---------- the privacy rule: calendar, memory, chat history and tasks only go to providers with personal_ok ----------
+    Case("privacy: with no provider cleared for personal data, calendar and planner turns send nothing",
+         ["What's on my calendar tomorrow?", "Plan my day tomorrow."],
+         [lambda r: None if all("cleared for personal data" in x for x in r.replies) else f"replies: {r.replies}",
+          screen_has("personal_ok"), not_called("list_events"), not_called("delegate"), model_requests(0)],
+         registry=NO_PERSONAL, script=[]),
+    Case("privacy: a model provider without personal_ok gets no memory and no chat history",
+         ["Tell me a fun fact.", "Another one, please."],
+         [sent_lacks("Nadia"), sent_lacks("You can.t write memory yourself"), sent_lacks("fun fact", 1), sent_lacks("Octopuses", 1),
+          sent_has("Another one", 1), tools_sent_lack("list_tasks", "list_events", "propose_memory", "search_history"),
+          reply_has("Honey"), ledger_has("groq", "chat", "tokens", 110), model_requests(2)],
+         facts=["Sister's name is Nadia"], registry=NO_PERSONAL,
+         client_script=["Octopuses have three hearts, Mahadi.", "Honey never spoils."]),
+    Case("privacy: with personal_ok, the same provider gets the memory and the chat",
+         ["Tell me a fun fact.", "Another one, please."],
+         [sent_has("Nadia", 0), sent_has("You can.t write memory yourself", 0), sent_has("fun fact", 1),
+          sent_has("Octopuses", 1), model_requests(2)],
+         facts=["Sister's name is Nadia"], client_script=["Octopuses have three hearts, Mahadi.", "Honey never spoils."]),
+    Case("privacy: 'will it rain tomorrow?' isn't personal: answered by a provider without personal_ok, without personal tools",
+         ["Will it rain tomorrow?"],
+         [lambda r: "refused as personal" if "cleared for personal data" in r.last else None, called("get_weather"),
+          tools_sent_lack("list_events", "list_tasks"), reply_has("rain"), model_requests(2)],
+         registry=NO_PERSONAL,
+         client_script=[call("get_weather", place="Dhaka", day="tomorrow"), "Light rain is likely tomorrow afternoon."]),
+    Case("privacy: a model without personal_ok reaching for the calendar makes the turn personal, so nothing more is sent",
+         ["Anything planned for Saturday?"],
+         [reply_has("cleared for personal data"), not_called("list_events"), tools_sent_lack("list_events"),
+          lambda r: None if len(r.extra.get("sent") or []) == 1 else f"{len(r.extra.get('sent') or [])} requests sent"],
+         registry=NO_PERSONAL, client_script=[call("list_events", day="saturday"), "You have nothing on Saturday."]),
+    Case("privacy: a web search carrying a task's words isn't sent to a provider without personal_ok",
+         ["What's on my task list? And look up the opening hours."],
+         [called("list_tasks"), called("web_search"), tavily_not_searched, refused_for_privacy, model_requests(3)],
+         tasks=TASK_PASSPORT, registry={"tavily": {"personal_ok": False}},
+         script=[call("list_tasks"), call("web_search", query="Gulshan passport office opening hours"),
+                 "You have one task: picking up your passport. I didn't search for the office's hours."]),
+    Case("privacy: words Mahadi said himself are searched as usual",
+         ["Look up the opening hours of the Gulshan passport office."],
+         [called("web_search"), tavily_searched, model_requests(2)],
+         tasks=TASK_PASSPORT, registry={"tavily": {"personal_ok": False}},
+         script=[call("web_search", query="Gulshan passport office opening hours"),
+                 "The Gulshan passport office opens at 9 AM, according to its site."]),
 ]
-assert len(CASES) == 139, len(CASES)
+assert len(CASES) == 156, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -2097,7 +2664,10 @@ def print_token_summary() -> None:
 # ---------- runner ----------
 def run_case(case: Case) -> Result:
     global _script
-    # Fresh world for every run.
+    # Fresh world for every run. A scripted case counts its usage in scratch and can't reach the network; a live
+    # case's requests are real, so they're counted where real use is.
+    accounting(real=not case.offline)
+    write_registry(case.registry)
     with open(javid.TASKS_FILE, "w") as f:
         f.write("".join(l + "\n" for l in case.tasks))
     memory_store.write("user", case.facts)
@@ -2139,6 +2709,11 @@ def run_case(case: Case) -> Result:
     tools, replies, by_turn, sources, said, langs, screens, skills_run, agents_run = [], [], [], [], [], [], [""], [], []
     facts_by_turn, voices, seconds, tokens, tool_events = [], [], [], 0, []
     _script = copy.deepcopy(case.script)
+    fake_llm = FakeLLM(case.client_script) if case.client_script is not None else None
+    real_create = javid._create
+    if fake_llm:
+        javid._create = fake_llm.create
+        _fake_llm_on[0] = True
     requests_before = LLM_REQUESTS + SCRIPTED_REQUESTS
     real_map = dict(javid.TOOL_MAP)
     turn = {"i": 0}
@@ -2178,7 +2753,7 @@ def run_case(case: Case) -> Result:
                         agents_run.append(value)
             reply = "".join(deltas).strip()
             seconds.append(time.monotonic() - started - (RATE_WAITS[0] - waited))
-            if javid.last_turn_usage:
+            if javid.last_turn_usage and case.client_script is None:
                 TURN_TOKENS.append((case.name, {**javid.last_turn_usage, "seconds": round(seconds[-1], 2)}))
                 tokens += javid.last_turn_usage["total"]
             if reply.startswith(API_FAILED_REPLY):
@@ -2194,7 +2769,11 @@ def run_case(case: Case) -> Result:
                 extra["after"] = case.after()
     finally:
         javid.TOOL_MAP.update(real_map)
+        javid._create = real_create
+        _fake_llm_on[0] = False
         _script = None
+    if fake_llm:
+        extra["sent"] = fake_llm.sent
 
     with open(javid.TASKS_FILE) as f:
         tasks = [l for l in f.read().splitlines() if l.strip()]
@@ -2203,6 +2782,158 @@ def run_case(case: Case) -> Result:
                   facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json(), voices=voices,
                   seconds=seconds, tokens=tokens, model_requests=LLM_REQUESTS + SCRIPTED_REQUESTS - requests_before,
                   tool_events=tool_events, extra=extra)
+
+
+# ---------- --live: one real call per provider ----------
+_SMOKE_MODEL: dict[str, str] = {}      # provider -> the model its smoke call used (its allowance may be per model)
+
+def _smoke_key(name: str) -> str:
+    return os.environ.get(providers.env_names(name)[0], "").strip()
+
+
+def _smoke_http(method: str, url: str, name: str, **kw) -> dict:
+    import httpx
+    resp = httpx.request(method, url, timeout=providers.timeout_s(name, 20.0), **kw)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def _smoke_llm(provider: str) -> tuple[float, str]:
+    """A ~20-token chat on the provider's first model in the real chain (its first default model if none)."""
+    models = [m for m in javid.current_chain() + javid.default_chain() if javid._split(m)[0] == provider]
+    if not models:
+        raise RuntimeError("none of its models is in the chain")
+    raw = javid._create(models[0], [{"role": "user", "content": "Reply with one word: ok"}], max_tokens=8)
+    javid._note_headers(models[0], raw.headers)
+    done = raw.parse()
+    if done.usage:
+        javid._record_usage(models[0], done.usage)
+    _SMOKE_MODEL[provider] = models[0]
+    return javid._call_units(provider, done.usage), models[0]
+
+
+def _smoke_tavily() -> tuple[float, str]:
+    resp = web_tools._client().search("Javid smoke test", max_results=1, include_usage=True,
+                                      timeout=providers.timeout_s("tavily", 30.0))
+    credits = (resp.get("usage") or {}).get("credits")
+    return (credits if isinstance(credits, (int, float)) else 1.0), f"{len(resp.get('results') or [])} result(s)"
+
+
+def _smoke_exa() -> tuple[float, str]:
+    data = _smoke_http("POST", "https://api.exa.ai/search", "exa", headers={"x-api-key": _smoke_key("exa")},
+                       json={"query": "Javid smoke test", "numResults": 1})
+    cost = (data.get("costDollars") or {}).get("total")
+    return (float(cost) if isinstance(cost, (int, float)) else providers.cost("exa", "search", 0.005),
+            f"{len(data.get('results') or [])} result(s)")
+
+
+def _smoke_brave() -> tuple[float, str]:
+    data = _smoke_http("GET", "https://api.search.brave.com/res/v1/web/search", "brave",
+                       params={"q": "Javid smoke test", "count": 1},
+                       headers={"X-Subscription-Token": _smoke_key("brave"), "Accept": "application/json"})
+    return providers.cost("brave", "search", 0.005), f"{len((data.get('web') or {}).get('results') or [])} result(s)"
+
+
+def _smoke_firecrawl() -> tuple[float, str]:
+    data = _smoke_http("POST", "https://api.firecrawl.dev/v1/scrape", "firecrawl",
+                       headers={"Authorization": f"Bearer {_smoke_key('firecrawl')}"},
+                       json={"url": "https://example.com", "formats": ["markdown"]})
+    page = data.get("data") or {}
+    used = (page.get("metadata") or {}).get("creditsUsed")
+    return (float(used) if isinstance(used, (int, float)) else providers.cost("firecrawl", "scrape", 1.0),
+            f"{len(page.get('markdown') or '')} characters read")
+
+
+def _smoke_cohere() -> tuple[float, str]:
+    data = _smoke_http("POST", "https://api.cohere.com/v2/rerank", "cohere",
+                       headers={"Authorization": f"Bearer {_smoke_key('cohere')}"},
+                       json={"model": "rerank-v3.5", "query": "capital of France", "top_n": 1,
+                             "documents": ["Berlin is in Germany.", "Paris is the capital of France."]})
+    return providers.cost("cohere", "rerank", 1.0), f"best match: document {(data.get('results') or [{}])[0].get('index')}"
+
+
+def _smoke_openrouter() -> tuple[float, str]:
+    listed = _smoke_http("GET", "https://openrouter.ai/api/v1/models", "openrouter").get("data") or []
+    free = next((m["id"] for m in listed if str(m.get("id", "")).endswith(":free")), None)
+    if not free:
+        raise RuntimeError("OpenRouter lists no free model")
+    _smoke_http("POST", "https://openrouter.ai/api/v1/chat/completions", "openrouter",
+                headers={"Authorization": f"Bearer {_smoke_key('openrouter')}"},
+                json={"model": free, "max_tokens": 8, "messages": [{"role": "user", "content": "Reply with one word: ok"}]})
+    return 1.0, free
+
+
+def _smoke_cloudflare() -> tuple[float, str]:
+    account, token = (os.environ.get(v, "").strip() for v in providers.env_names("cloudflare"))
+    _smoke_http("POST", f"https://api.cloudflare.com/client/v4/accounts/{account}/ai/run/@cf/meta/llama-3.2-1b-instruct",
+                "cloudflare", headers={"Authorization": f"Bearer {token}"},
+                json={"max_tokens": 8, "messages": [{"role": "user", "content": "Reply with one word: ok"}]})
+    return 0.0, "@cf/meta/llama-3.2-1b-instruct (its neurons aren't in the response, so they aren't counted)"
+
+
+def _smoke_elevenlabs() -> tuple[float, str]:
+    providers.refresh_balance(wait=True)       # records its own ledger row
+    if providers._balance["error"]:
+        raise RuntimeError(f"balance check failed: {providers._balance['error']['kind']}")
+    b = providers._balance["data"]
+    return 0.0, f"{b['used']:,.0f} of {b['amount']:,.0f} characters used"
+
+
+SMOKE = {"groq": lambda: _smoke_llm("groq"), "gemini": lambda: _smoke_llm("gemini"),
+         "deepseek": lambda: _smoke_llm("deepseek"), "ifm": lambda: _smoke_llm("ifm"), "tavily": _smoke_tavily,
+         "exa": _smoke_exa, "brave": _smoke_brave, "firecrawl": _smoke_firecrawl, "cohere": _smoke_cohere,
+         "openrouter": _smoke_openrouter, "cloudflare": _smoke_cloudflare, "elevenlabs": _smoke_elevenlabs}
+SMOKE_COST = {"tavily": ("search_basic", 1.0), "exa": ("search", 0.005), "brave": ("search", 0.005),
+              "firecrawl": ("scrape", 1.0), "cohere": ("rerank", 1.0)}
+
+
+def _smoke_safe(text: str) -> str:
+    """Error text without keys or the Cloudflare account id (it's in the URL)."""
+    text = javid._redact(text)
+    for name in ("CLOUDFLARE_ACCOUNT_ID",):
+        if (value := os.environ.get(name, "").strip()):
+            text = text.replace(value, "<account>")
+    return text
+
+
+def smoke_test(name_filter: str = "") -> int:
+    """--live: one real call per provider that is on and that the budget guard allows now (the real registry, chain
+    and keys), counted in the real usage ledger. Exit 1 if a call failed."""
+    providers.REGISTRY_FILE = REAL["registry"]
+    providers.reload()
+    accounting(real=True)
+    print(providers.startup_line() + "\n")
+    failed = 0
+    for e in providers.entries():
+        name = e["name"]
+        if name_filter and name_filter.lower() not in name:
+            continue
+        op, cost = SMOKE_COST.get(name, ("", 0.0))
+        allowed, st = providers.allow(name, cost=providers.cost(name, op, cost) if op else 0.0)
+        if not allowed:
+            print(f"SKIP  {name:11} {st['state']}{': ' + st['why'] if st['why'] else ''}")
+            continue
+        t0 = time.time()
+        try:
+            units, note = SMOKE[name]()
+            status = "ok"
+        except Exception as err:
+            units, status = 0.0, providers.error_kind(err)
+            note = f"{type(err).__name__}: {_smoke_safe(str(err))[:160]}"
+            if status != "error" and (rest := providers.cooldown_seconds(name, err)):
+                providers.cool(name, rest, status)
+        ms = round((time.time() - t0) * 1000)
+        if name != "elevenlabs":
+            providers.record(name, units, op="smoke", latency_ms=ms, status=status,
+                             detail="" if status == "ok" else note[:80])
+        u = providers.usage(name, _SMOKE_MODEL.get(name, ""))
+        left = (f"{web_tools._count(u['used'])} of {u['amount']:,.0f} {u['unit']} {'today' if u['per'] == 'day' else 'this ' + u['per']}"
+                if u.get("amount") and u.get("used") is not None else "usage reported by the provider" if u.get("from")
+                else f"{web_tools._count(u.get('used') or 0)} {u['unit']} counted")
+        failed += status != "ok"
+        print(f"{'PASS' if status == 'ok' else 'FAIL'}  {name:11} {ms:>6} ms  {note} · {left}")
+    print("\nEvery call above is in data/providers.db (op 'smoke').")
+    return 1 if failed else 0
 
 
 def main() -> int:
@@ -2214,8 +2945,13 @@ def main() -> int:
     ap.add_argument("--models", default="",
                     help="comma-separated model ids to use as the chain for this run, e.g. gemini:gemini-3.7-flash")
     ap.add_argument("--use-120b", action="store_true", help=f"run on {BIG_MODEL} instead of {DEFAULT_MODEL}")
-    ap.add_argument("--offline", action="store_true", help="only the scripted cases (no LLM requests, no tokens)")
+    ap.add_argument("--offline", action="store_true", help="the default: scripted cases and fixtures, no network")
+    ap.add_argument("--llm", action="store_true", help="also the live model cases (real Groq requests and tokens)")
+    ap.add_argument("--live", action="store_true", help="smoke test: one real call per provider that is on, then stop")
     args = ap.parse_args()
+    if args.live:
+        return smoke_test(args.filter)
+    llm = args.llm or args.use_120b or bool(args.models)
     # One model, no fallback: a fallback would mask that model's failures and mix results.
     chain = ([m.strip() for m in args.models.split(",") if m.strip()] if args.models
              else [BIG_MODEL if args.use_120b else DEFAULT_MODEL])
@@ -2224,15 +2960,17 @@ def main() -> int:
         json.dump({"chain": chain}, f)
     javid.LLM_CHAIN_FILE = chain_file
 
-    cases = [c for c in CASES if args.filter.lower() in c.name.lower() and (c.script is not None or not args.offline)]
+    cases = [c for c in CASES if args.filter.lower() in c.name.lower() and (c.offline or llm)]
     if not cases:
-        print(f"No case matches {args.filter!r}")
+        print(f"No case matches {args.filter!r}" + ("" if llm else " among the scripted cases (live ones need --llm)"))
         return 2
-    live = [c for c in cases if c.script is None]
-    if live and (problem := preflight()):
-        print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")
-        return 3
-    left = javid.daily_left(chain[0])
+    live = [c for c in cases if not c.offline]
+    if live:
+        accounting(real=True)       # the preflight pings are real requests
+        if (problem := preflight()):
+            print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")
+            return 3
+    left = javid.daily_left(chain[0]) if live else None
     need = 2800 * sum(len(c.turns) for c in live) * args.repeat     # 2,785 tokens per turn, measured 2026-10-24
     if left is not None and left < need:
         print(f"warning: {chain[0]} has ~{left:,} of its daily tokens left and this run needs ~{need:,}; "
@@ -2254,10 +2992,13 @@ def main() -> int:
                 if QUOTA_HIT:
                     break
                 signal.alarm(RUN_TIMEOUT_SEC)
+                tried = len(NETWORK_ATTEMPTS)
                 try:
                     r = run_case(case)
                     timing.append((sum(r.seconds) / max(len(r.seconds), 1), r.tokens))
                     problems = [p for chk in case.checks if (p := chk(r))]
+                    if NETWORK_ATTEMPTS[tried:]:
+                        problems.append(f"tried to reach the network: {sorted(set(NETWORK_ATTEMPTS[tried:]))}")
                     detail = " | ".join(f"{t!r} → {a[:110]!r}" for t, a in zip(r.turns, r.replies))
                     tools = ", ".join(r.tool_names) or "-"
                     break
@@ -2292,7 +3033,7 @@ def main() -> int:
         suffix = f"  ({passes}/{args.repeat})" if args.repeat > 1 else ""
         if timing:
             suffix += (f"  [{sum(t for t, _ in timing) / len(timing):.1f} s/turn, "
-                       f"{sum(n for _, n in timing) / len(timing):,.0f} tokens{', offline' if case.script is not None else ''}]")
+                       f"{sum(n for _, n in timing) / len(timing):,.0f} tokens{', offline' if case.offline else ''}]")
         print(f"{status:5} {case.name}{suffix}")
         for n, problems, tools, detail in notes:
             tag = f"run {n}: " if args.repeat > 1 else ""
@@ -2304,9 +3045,12 @@ def main() -> int:
             print(f"\nStopped early: {QUOTA_HIT[0][:300]}")
             break
 
-    served = ", ".join(f"{m}: {n}" for m, n in javid.llm_usage.items()) or "none"
-    print(f"\n{LLM_REQUESTS} LLM requests this run (~1k tokens each against Groq's daily limit); served by {served}")
-    if len(javid.llm_usage) > 1:
+    fake = FAKE_ATTEMPTS[0]
+    real_served = {m: n - FAKE_REQUESTS.get(m, 0) for m, n in javid.llm_usage.items() if n - FAKE_REQUESTS.get(m, 0)}
+    served = ", ".join(f"{m}: {n}" for m, n in real_served.items()) or "none"
+    print(f"\n{LLM_REQUESTS - fake} real LLM requests this run (~1k tokens each against Groq's daily limit); served by "
+          f"{served}" + (f"; {fake} more were the fake provider's (client_script cases)" if fake else ""))
+    if len(real_served) > 1:
         print("note: the primary model hit its limit mid-run, so results mix models — "
               "rerun later for a clean single-model baseline")
     print_token_summary()

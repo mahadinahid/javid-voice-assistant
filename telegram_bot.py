@@ -51,6 +51,7 @@ import httpx
 import approvals
 import javid
 import memory_store
+import providers
 import selfcheck
 import timers
 import tracing
@@ -522,6 +523,7 @@ def _help() -> str:
 def _status_text() -> str:
     state = _load()
     lines = [f"Model: {javid.next_model()}",
+             f"Providers on: {', '.join(e['name'] for e in providers.entries() if providers.is_on(e['name'])) or 'none'}",
              f"Reply language: {'Bangla' if javid.get_language() == 'bn' else 'English'}",
              f"Voice replies: {'always' if state.get('voice') == 'always' else 'to voice messages'}",
              javid.list_tasks().splitlines()[0],

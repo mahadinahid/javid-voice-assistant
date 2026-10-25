@@ -130,11 +130,13 @@ _SPOKEN = {
               "থেকে, আর অন্য ওয়েবের উত্তর Tavily সার্চ থেকে, উৎস আর তারিখসহ।"},
     "memory": {
         "en": "I only remember what you approve: I propose a line, and it's saved to a file on your Mac once you "
-              "say yes, never passwords, keys or ID numbers. Our chats stay on your Mac too, and each message goes "
-              "to the model's provider, {provider} right now, to be answered.",
+              "say yes, never passwords, keys or ID numbers. Our chats stay on your Mac too. Your calendar, tasks, "
+              "memory and past chats only go to providers you've cleared for personal data ({personal_en}); the "
+              "others, {provider} right now, get just your message.",
         "bn": "তুমি অনুমতি দিলেই শুধু মনে রাখি: আমি একটা লাইন প্রস্তাব করি, তুমি হ্যাঁ বললে সেটা তোমার ম্যাকের ফাইলে "
-              "সেভ হয়; পাসওয়ার্ড বা আইডি নম্বর কখনো না। আমাদের চ্যাটও তোমার ম্যাকে থাকে, আর প্রতিটা মেসেজ উত্তরের জন্য "
-              "মডেলের প্রোভাইডার {provider}-এর কাছে যায়।"},
+              "সেভ হয়; পাসওয়ার্ড বা আইডি নম্বর কখনো না। আমাদের চ্যাটও তোমার ম্যাকে থাকে। তোমার ক্যালেন্ডার, কাজ, মেমরি "
+              "আর আগের চ্যাট যায় শুধু সেই প্রোভাইডারদের কাছে যাদের তুমি ব্যক্তিগত তথ্যের অনুমতি দিয়েছ ({personal_bn}); "
+              "বাকিরা, এখন {provider}, পায় শুধু তোমার মেসেজ।"},
     "creator": {
         "en": "Mahadi built me, as his own project: a Python program that runs on his Mac. The words come from a "
               "language model, {model}, and everything else is code.",

@@ -1,0 +1,6 @@
+{
+ "source": "Google's 429 on the OpenAI-compatible endpoint once gemini-3.7-flash's 20 requests a day are used (seen 2026-10-13: 'retry in 6h21m37s'); details trimmed",
+ "status": 429,
+ "headers": {},
+ "body": [{"error": {"code": 429, "message": "You exceeded your current quota, please check your plan and billing details. For more information on this error, head to: https://ai.google.dev/gemini-api/docs/rate-limits. Quota exceeded for metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: 20, model: gemini-3.7-flash. Please retry in 6h21m37.1s.", "status": "RESOURCE_EXHAUSTED"}}]
+}

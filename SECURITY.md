@@ -4,7 +4,8 @@ Javid is a single-user assistant on Mahadi's Mac: a local web server (`server.py
 loop (`javid.py`) and a Telegram bot (`telegram_bot.py`). It holds API keys, a Google Calendar token, tasks,
 memory and every chat. This file lists what it defends against, how, and what is still open.
 
-Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24).
+Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; providers and personal data
+2026-10-25).
 
 ## Threats
 
@@ -60,6 +61,28 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24).
   failures are kept in memory only (never written to disk) and shown only when Mahadi asks what's wrong; the
   last ignored clip's words are on that answer's screen. Its Groq probe lists models (no message content).
 
+## Providers and personal data (added 2026-10-25)
+
+- **Registry** (`config/providers.yaml`): every outside service with a key or an allowance. A provider is called only
+  when it is enabled there and every key it names is in `.env`; the start-up line and the Providers panel show
+  variable names, never values (the model keys' last 4 characters in the key controls are open item 7).
+- **Personal data only where Mahadi allows it**: `personal_ok` is false for every provider until he sets it after
+  reading its data policy. A provider without it gets each request without the memory block, the chat history, the
+  older-chat summary, the carried calendar facts and earlier drafts, and isn't offered the calendar, task, memory or
+  past-chat tools. A turn that needs those (by its words, required tools or agent, a personal tool's result, or a model
+  reaching for a personal tool) goes only to providers with `personal_ok`; with none, nothing is sent and Javid says
+  so. The privacy tags never leave Javid (`_messages_for` strips them). Agents follow the same rule.
+- **Search queries**: a query carrying words from a task, a memory line or a calendar or task result isn't sent to a
+  search provider without `personal_ok`, and isn't handed to the Google News fallback (Mahadi's own words in that
+  message are allowed).
+- **Spending**: a provider is held back at 80 % of its free allowance and off at 95 %; a call whose cost would pass the
+  allowance isn't made; a 429, a 402 or a quota error rests it until its retry-after, across restarts.
+- **The usage ledger** (`data/providers.db`, mode 600) holds provider, model, units, latency, status and an error's
+  class name per call: no query, no message text, no key.
+- Tests: `regression.py -k privacy` (stripped requests, refusals, search queries, a model reaching for the calendar),
+  `-k providers` (keys, windows, guard, cooldowns, the panel's JSON without keys), `-k "tests: the default run"`
+  (no network in the default run).
+
 ## Open (found in the 2026-10-21 audit, not fixed yet)
 
 1. **Local web server**: most routes have no Host/Origin check and there is no API token. Any website can POST a
@@ -72,8 +95,11 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24).
 3. **Prompt injection on the web path**: web results go to the model as raw text, and the dispatcher runs any
    tool the model names, even one it wasn't offered. Planned: wrap web, page and calendar text as untrusted data,
    refuse writes and memory after web content in a turn, and refuse tools that weren't offered.
-4. **Gemini (free tier)** gets memory, chat history and calendar results when it answers. Planned: strip or skip
-   personal data in the router. IFM K2's data terms haven't been checked.
+4. **Personal data to providers**: the router is in place (2026-10-25, above), but no provider has `personal_ok` yet,
+   so calendar, task and memory requests are refused until Mahadi clears one; the data terms of Groq, Gemini and IFM
+   K2 are his to read. Not routed, so not covered: Whisper (voice clips to Groq), edge-tts (spoken replies to
+   Microsoft), Telegram. The search check is best effort and doesn't look at chat history. The dispatcher still runs a
+   tool the model wasn't offered (item 3); a personal tool's result is then only sent to providers with `personal_ok`.
 5. **Dependencies**: `certifi` 2026.7.22 has PYSEC-2026-4320 (fixed in 2026.10.19). The 51 packages pulled in
    by the direct ones aren't pinned, and the unused `ddgs` is installed.
 6. **Logs**: `javid._redact` doesn't know Tavily, Telegram or Google refresh-token shapes, and a few error prints
@@ -85,4 +111,5 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24).
    encrypted, so Telegram sees them. The rate limit resets on restart (the lock doesn't). Any program running as
    Mahadi can edit `.env`, the allowlist included.
 10. **Outside services**: reply text goes to Microsoft's unofficial edge-tts endpoint (the voice is locked; see
-    CLAUDE.md), voice clips to Groq's Whisper, and search queries (written by the model) to Tavily.
+    CLAUDE.md), voice clips to Groq's Whisper, and search queries (written by the model) to Tavily (checked for
+    personal data since 2026-10-25, see above).

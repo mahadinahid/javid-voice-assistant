@@ -210,8 +210,13 @@ def delegate(agent: str = "", task: str = ""):
     meta = a["metadata"]
     limits, counts = _limits(meta), {}
     tools = [t for t in _cfg["tools"] if t["function"]["name"] in a["tools"]]
-    msgs = [{"role": "system", "content": a["body"] + "\n\n" + _cfg["memory"]()},
-            {"role": "user", "content": _cfg["context"]() + f"Mahadi's request: {task}"}]
+    # Privacy tags (javid._public_request): a provider without personal_ok gets the agent's prompt without the memory
+    # block and the task without the chat it came from; an agent with personal tools (the planner reads the calendar
+    # and the tasks) only runs on providers with personal_ok.
+    request = _cfg["context"]() + f"Mahadi's request: {task}"
+    msgs = [{"role": "system", "content": a["body"] + "\n\n" + _cfg["memory"](), "_public": a["body"]},
+            {"role": "user", "content": request, "_public": request.split("\n(Earlier in this chat:")[0],
+             **({"_needs_personal": True} if set(a["tools"]) & _cfg.get("personal_tools", frozenset()) else {})}]
     rounds = _int(meta, "max-rounds", DEFAULT_ROUNDS)
     text = ""
     strayed = False

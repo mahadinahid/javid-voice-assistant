@@ -1,0 +1,6 @@
+{
+ "source": "Groq's 429 for a model's daily token limit, in the format Javid has logged it (javid._note_error); org id replaced",
+ "status": 429,
+ "headers": {"retry-after": "431"},
+ "body": {"error": {"message": "Rate limit reached for model `openai/gpt-oss-20b` in organization `org_test` service tier `on_demand` on tokens per day (TPD): Limit 200000, Used 198720, Requested 2278. Please try again in 7m11.1s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing", "type": "tokens", "code": "rate_limit_exceeded"}}
+}

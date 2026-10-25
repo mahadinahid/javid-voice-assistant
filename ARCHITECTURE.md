@@ -58,13 +58,13 @@ traced too (`source: "cli"`).
 | 3 | Speech-to-text | Whisper in the reply language. Push-to-talk adds a "Javid" spelling hint. In Bangla mode, a short clip gets a second English pass, used only for "speak English" or a bare wake word. | `javid.py`: `transcribe_turn`, `transcribe` | `stt_done` |
 | 4 | Gate | Hands-free needs the wake word unless it's inside the follow-up window. Noise is ignored and not traced. A bare "Javid" gets "Yes?". A one-word push-to-talk clip is "I didn't catch that" unless it's yes/no or a greeting. | `server.py`: `talk`; `javid.py`: `strip_wake_word`, `is_noise` | — |
 | 5 | Routing | A yes/no to a pending memory proposal, language switches, a self-check or "where did that come from?", questions about Javid itself, watches (set, list, cancel), exchange-rate questions, market briefs and news requests are settled in code, with no LLM request (the data ones still fetch their data: Binance, Yahoo, the ECB, Google News). Otherwise: pick tool groups by regex (`select_tools`), decide required tools and whether the turn is heavy, and build the request (static system prompt + memory block, last 6 turns, `[Context]` note with date, older-chat summary and recent tool facts). | `javid.py`: `think_stream`, `select_tools`, `_request_messages`, `context_block`, `_code_answer`; `memory_store.py`; `about.py`; `rates.py`: `request`/`answer`; `markets.py`: `brief_request`/`brief` | `routing_done` |
-| 6 | LLM | Streaming completion on the first model in the chain that can serve (cooldowns, the quota guard holding back a model under 20 % of its daily tokens, provider clients for Groq, Gemini and DeepSeek). Each round's text is held until the round ends. | `javid.py`: `_stream_completion`, `_open_stream`, `_models_to_try`, `_create` | `llm[]` (start, first chunk, end, model) |
+| 6 | LLM | Streaming completion on the first model in the chain the budget guard allows (`providers.py`: ready ones first, those past 80 % of an allowance only after them, none at 95 % or resting after a 429), sent what its provider may receive: a provider without `personal_ok` gets no memory, chat history or personal tools, and a request that needs them goes only to one with it (decision record 1). Provider clients for Groq, Gemini, DeepSeek and IFM. Each round's text is held until the round ends, and each request is a row in the usage ledger. | `javid.py`: `_stream_completion`, `_open_stream`, `_models_to_try`, `_public_request`, `_create`; `providers.py` | `llm[]` (start, first chunk, end, model) |
 | 7 | Tools | Tasks and time (`javid.py`); calendar and public holidays (`calendar_tools.py`, Google Calendar API); headlines (`gnews.py`, Google News RSS, Tavily only as the fallback); web search and page reads (`web_tools.py`, Tavily); skills (`skills.py`); agents (`agents.py`); exchange rates (`rates.py`); live prices (`markets.py`); weather, timers and sums (`weather.py`, `timers.py`, `calc.py`); memory proposals and past-chat search (`memory_store.py`). Results go back to the LLM for another round. A turn has at most `MAX_TOOL_ROUNDS` + 4 rounds (retries and rewrites use them up), and the last one is sent without tools so the model must answer. | `TOOL_MAP` in `javid.py` | `tools[]` (name, start, end) |
 | 8 | Checks | One retry or rewrite each for: an empty, garbled or malformed reply; a missing required tool; the wrong language; holiday dates not in the tool result; web figures without an official or second source. Then the web answer is trimmed and gets its source line, and a skill reply is split into spoken and screen parts. | `javid.py`: `think_stream`; `calendar_tools.check_holiday_reply`; `web_tools.check_reply`/`finalize`; `skills.split_reply` | `llm_done` → `reply_out` |
 | 9 | Stream out | NDJSON events. The reply text arrives as one `delta` once the final round is done (rounds are buffered, see 6). `say` ("Searching…") arrives as a web search starts. | `server.py`: `_traced`, `_reply_stream` | `reply_out`, `server_done` |
 | 10 | Text-to-speech | The page cuts the reply into sentences (`.!?` or `।` followed by a space) and requests each from `/speak` straight away. The server synthesizes with edge-tts, the one locked voice per language, with a cache, at most 3 sentences at once, and up to 3 tries (6, 8 then 10 s for the first audio, 4 s between chunks after that). A failure shows "voice unavailable", never another voice. | `index.html`: `feedSpeech`, `speakChunk`, `fetchAudio`; `server.py`: `speak_text`; `javid.py`: `synthesize` | `tts_first_request` |
 | 11 | Playback | Clips play in order. Stop, Esc, push-to-talk or barge-in cut them off. | `index.html`: `playNext`, `stopSpeech`, `bargeIn` | `first_audio`, `first_answer_audio`, `tts_done` |
-| 12 | Records | The chat log, token and credit usage, and the latency trace. | `javid.py`: `log_message`, `_record_usage`; `web_tools.py`; `tracing.py` | — |
+| 12 | Records | The chat log, token usage, the usage ledger (every provider call in its own unit: `data/providers.db`), and the latency trace. | `javid.py`: `log_message`, `_record_usage`; `providers.py`: `record`; `tracing.py` | — |
 
 ## Current timings
 
@@ -141,8 +141,73 @@ in a background thread (`watches.start()`), outside any turn.
   `mode`, `outcome` (done / interrupted / stopped / superseded / no_client), `label` (the start of the
   message), `t0` (epoch ms), `stages` (ms after t0), `llm[]`, `tools[]`, and `ttfa`. Hands-free clips the
   server ignores aren't traced. The folder is gitignored, because labels quote your messages.
-- **Latency panel** (left sidebar, under Models). The card shows median / p90 time to first audio per
+- **Latency panel** (left sidebar, under Providers). The card shows median / p90 time to first audio per
   type. **Details** opens the stage bars of the last 20 requests (one shared scale, starting at end of speech;
   the white tick marks the first audio), plus the per-type medians for first audio and first answer audio.
 - To refresh the timings in this file, use the Latency panel's medians, or run `tracing.stats()` over
   `data/traces.jsonl` after a few days of normal use.
+
+## Decision records
+
+### 1. A provider registry, a usage ledger, a budget guard and a privacy rule (2026-10-25)
+
+**Context.** Javid called four language-model providers and Tavily with keys from `.env`, and each limit was handled
+on its own: a quota guard for Groq's daily tokens, a 40-credit daily cap for Tavily, cooldowns kept in memory and lost
+on restart. Every request carried the memory block, the last six turns and any calendar or task results to whichever
+model was next in the chain, Gemini's free tier included. More providers are planned (Exa, Brave, Firecrawl, Cohere,
+OpenRouter, Cloudflare Workers AI, ElevenLabs), each with a free allowance in its own unit: credits, dollars, requests,
+neurons, characters. Mahadi wants Javid to stay inside every free allowance, and to decide himself, after reading each
+data policy, which providers may see personal data.
+
+**Decision.**
+1. **One registry**, `config/providers.yaml` (tracked, read again when it changes): per provider its kind, the `.env`
+   variable(s) of its key, `enabled`, `priority`, the free allowance in its own unit (never converted to tokens; seeded
+   from the pricing as given and marked `verified: false`), the reset rule, `timeout_ms` and `personal_ok` (default
+   false). A provider is on only when enabled and every key it names is set; the start-up line lists names only.
+2. **One usage ledger**, SQLite `data/providers.db`: a row per call (provider, model, op, units in the provider's unit,
+   latency, status, an error's class name; never a query or a key). Usage is the sum since the start of the reset
+   window (the 1st at 00:00 UTC, midnight Pacific for Gemini, 00:00 UTC for Cloudflare's neurons), so counters start
+   again with their window and nothing has to reset them. Groq's quota is read from its rate-limit headers and 429s,
+   ElevenLabs' balance from its API.
+3. **A budget guard** (`providers.state`): from 80 % of an allowance a provider is in reserve, used only when the others
+   fail; from 95 % it is off until its reset; a call whose known cost would pass the allowance isn't made; no free tier
+   (DeepSeek) means off. This replaces the quota guard's exception for web and reasoning turns. Javid's own Tavily cap
+   of 40 credits a day stays on top.
+4. **Cooldowns** on a 429, a 402 or a quota error until the provider's retry-after (its header or its text, else the
+   allowance's reset), stored with the ledger so a restart keeps them; per model where allowances are per model. A
+   resting or exhausted model isn't tried as a last resort any more: when none is left, Javid says so.
+5. **The privacy rule** in the model router: requests are built with tags, so a provider without `personal_ok` gets
+   the request without the memory block, the chat history and the calendar facts, and isn't offered the personal tools;
+   a turn that needs calendar, tasks, memory or past chats (by its words, its required tools, its agent, a personal
+   tool's result, or a model reaching for one) goes only to providers with `personal_ok`, and with none nothing is
+   sent. Web search queries carrying a task's, a memory line's or a calendar result's words don't go to a search
+   provider without it.
+6. **Tests that never call a real API by default**: the scripted cases and recorded or documented fixtures
+   (`fixtures/providers/`), with every outbound socket refused; the live model cases need `--llm`, and `--live` makes
+   one real call per provider that is on.
+
+**Consequences.**
+- As shipped (every `personal_ok` false), calendar, task, memory and past-chat requests are refused and other turns go
+  out without memory or history, until Mahadi clears a provider. Code-answered requests (news, rates, market briefs,
+  watches, the self-check, questions about Javid) are unaffected.
+- A model that is past 80 % now waits behind the others on every turn, including web and reasoning turns.
+- Speech recognition (Groq Whisper), speech (edge-tts) and Telegram aren't routed, so the rule doesn't cover them; the
+  search check is best effort and doesn't look at chat history. `SECURITY.md` lists these as open.
+- Groq's tokens are counted twice: `llm_usage.jsonl` still drives its token bucket and the per-turn averages, the
+  ledger has the per-call rows. `tavily_usage.jsonl` is no longer written (the ledger imported it once).
+- The seeded allowances may be wrong until checked against the accounts; the 5 % margin and each provider's own
+  429/402 handling are the backstop. Cloudflare's neurons aren't in its responses, so they can't be counted yet.
+
+**Alternatives considered.**
+- Limits in code, one per provider (as before): rejected; nothing showed them together, and every new provider would
+  add its own.
+- Converting allowances to tokens: rejected; the units measure different things, and a converted limit hides when
+  the real one runs out.
+- Refusing every model request while no provider has `personal_ok`: rejected; Javid would answer only what code
+  answers. Stripping the personal parts keeps general questions working.
+- Deciding "personal" from the tool-group patterns: rejected; they err wide on purpose and matched 39 of Mahadi's 105
+  logged messages, mostly news and weather "today" or "tomorrow". The narrower `_PERSONAL_ASK` matched 6, and a
+  model reaching for a personal tool still makes the turn personal.
+- Recording the live model cases' responses to replay them by default: not done; their checks depend on the date, and
+  recording them costs a full live run (~210k tokens).
+

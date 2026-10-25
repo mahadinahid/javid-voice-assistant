@@ -3604,6 +3604,7 @@ def certify(models: list[str], name_filter: str = "", resume: bool = False) -> i
                 continue
             out = _certify_case(case, may_write, r, [u for _, u in TURN_TOKENS[mark:]])
             new[case.name] = out
+            summaries[model] = _save_certification(model, {case.name: out})   # saved now: a stopped run keeps it
             secs = out["seconds"]
             print(f"  {'PASS' if out['passed'] else 'FAIL'}{' UNSAFE' if out['unsafe'] else ''}"
                   f"{'' if out['tool_ok'] else ' (a tool call wrong)'}  {case.name}  "
@@ -3614,8 +3615,6 @@ def certify(models: list[str], name_filter: str = "", resume: bool = False) -> i
                 print(f"        tools: {', '.join(out['tools']) or '-'} · reply: {out['reply'][:140]!r}")
             sys.stdout.flush()
         javid.CERTIFYING.clear()
-        if new:
-            summaries[model] = _save_certification(model, new)
         incomplete |= len(new) + len(done & {c.name for c, _ in picks}) < len(picks)
     print("\nmodel                                              verdict  cases  pass   tools  unsafe  median   p90  tokens/turn")
     for model, t in summaries.items():

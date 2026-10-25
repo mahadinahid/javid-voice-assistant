@@ -1,0 +1,15 @@
+{
+ "source": "recorded 2026-10-25 from Tavily's extract API (basic, chunks_per_source 5, with a query); raw_content cut to 2,500 characters",
+ "body": {
+  "results": [
+   {
+    "url": "https://en.wikipedia.org/wiki/Demographics_of_Bangladesh",
+    "raw_content": "| Bangladesh population pyramid in 2020 |\n| Population | 173,562,364 (2024 est.) |\n| Density | 1,333 people/km² (2024 est.) |\n| Growth rate | Increase 1.22% (2024 est.) |\n| Birth rate | Decrease 19.99 births/1,000 population (2024 est.) |\n| Death rate | Decrease 5.10 deaths/1,000 population (2024 est.) |\n| Life expectancy | Increase 74.9 years (2024 est.) |\n| • male | Increase 73.3 years (2024 est.) |\n| • female | Increase 76.7 years (2024 est.) |\n| Fertility rate | Decrease 2.1 children born/woman (2024 est.) |\n| Infant mortality | Decrease 16.9 deaths/1,000 live births (2024 est.) |\n| Net migration rate | -4.28 migrant(s)/1,000 population (2025 est.) |\n| Sex ratio |\n| Total | 0.96 male(s)/female (2024 est.) |\n| At birth | 1.04 male(s)/female (2024 est.) | [...] ## Population\n\n[edit]\n\n\n\nThe population of Bangladesh has grown rapidly since 1947, when the region was part of East Pakistan. According to United Nations estimates, the population increased from approximately 44 million in 1950 to around 175.7 million in 2025. Population growth accelerated during the second half of the 20th century before gradually slowing due to declining fertility rates.\n\nAs of mid-2025, the population of Bangladesh was estimated at 175,686,899 people, according to the United Nations World Population Prospects 2024 revision.\n\n### Population growth rate\n\n[edit] [...] | 2025 |  | 3,441,259 | 899,880 | 2,541,379 | 19.6 | 5.1 | 14.5 | 2.11 | [...] Religions in Bangladesh (2022 census)\n\n| Religion | Percent |\n| Muslims |  | 91.04% |\n| Hindus |  | 7.95% |\n| Buddhism |  | 0.61% |\n| Christians |  | 0.30% |\n| Others |  | 0.12% |\n\n## Migration\n\n[edit]\n\n### Immigration\n\n[edit]\n\nAccording to the United Nations Department of Economic and Social Affairs (UNDESA), Bangladesh hosted approximately 2.9 million international migrants in 2024, representing about 1.7% of the country's population. The majority are Rohingya refugees who fled persecution and violence in neighboring Myanmar following the Rohingya genocide and subsequent conflict in Rakhine State.\n\nAs of 2025, Bangladesh was hosting more than 1 million Rohingya refugees, primarily in camps in Cox's Bazar District, making it one of the world's largest refugee-hosting countries. [...] #### Total fertility rate by divisions in 2020\n\n[edit]\n\n| Division | TFR (total fertility rate) | Crude birth rate | Death rate |\n ---  --- |\n| Mymensingh | 2.69 | 21.8 | 5.0 |\n| Barishal | 2.07 | 17.7 | 5.2 |\n| Chittagong | 2.36 | 21.6 | 5.3 |\n| Dhaka | 1.7"
+   }
+  ],
+  "failed_results": [],
+  "usage": {
+   "credits": 0
+  }
+ }
+}

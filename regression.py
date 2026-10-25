@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 156 cases. The default run never calls a real API: 93 of them script the
+Regression check for Javid's agent behaviour: 169 cases. The default run never calls a real API: 106 of them script the
 model's part and replay recorded fixtures for every provider; the other 63 send prompts through the real LLM and tool
 loop and only run with --llm.
 
@@ -59,6 +59,7 @@ import markets  # noqa: E402
 import memory_store  # noqa: E402
 import providers  # noqa: E402
 import rates  # noqa: E402
+import search  # noqa: E402
 import selfcheck  # noqa: E402
 import skills  # noqa: E402
 import telegram_bot  # noqa: E402
@@ -456,7 +457,33 @@ def hit(url, title, content, day=None):
 YESTERDAY = TODAY - timedelta(days=1)
 BBS_URL = "https://bbs.gov.bd/site/page/cpi-september"
 # (query regex, results), first match wins; the euro case must come before the general rate one.
+JS_PAGE = "https://www.epassport.gov.bd/instructions/passport-fees"
 WEB_FIXTURES = [
+    # the search router's cases (search.py); the other engines' answers are in fixtures/search/
+    (r"bangladesh population 2025", [
+        hit("https://worldpopulationreview.com/countries/bangladesh", "Bangladesh Population 2025",
+            "Bangladesh's population is 171.5 million in 2025, making it the eighth most populous country.", YESTERDAY)]),
+    # 2026-10-25, the benchmark's first run: pages about Everest name other peaks, and a confirmed height was answered
+    # "I couldn't confirm a reliable figure" (the measure checks compared it with K2's)
+    (r"everest height|tall is (?:mount )?everest", [
+        hit("https://www.britannica.com/place/Mount-Everest", "Mount Everest | Height, Map, Facts",
+            "Height: 29,032 feet (8,849 meters). K2 stands at 8,611 m and Lhotse at 8,516 m; 14 peaks rise above 8,000 m."),
+        hit("https://education.nationalgeographic.org/resource/mount-everest", "Mount Everest",
+            "Mount Everest is 8,849 meters (29,032 feet) tall, the highest point on Earth."),
+        hit("https://en.wikipedia.org/wiki/Mount_Everest", "Mount Everest - Wikipedia",
+            "In 2005 China announced the height as 8,844.43 m (29,017.16 ft); Nepal and China agreed on 8,848.86 m in 2020."),
+        hit("https://www.peakvisor.com/article/mount-everest-height-compared.html", "How Mount Everest's height compares",
+            "Mount Everest height compared: K2 rises to 8,611 m, Kangchenjunga to 8,586 m and Lhotse to 8,516 m.")]),
+    (r"people live in bangladesh", [
+        hit("https://www.bbc.com/news/world-asia-bangladesh", "Bangladesh profile",
+            "About 171.5 million people live in Bangladesh, one of the most densely populated countries.", YESTERDAY)]),
+    (r"renew.*passport|passport.*renew", [
+        hit("https://www.dip.gov.bd/site/page/passport-renewal", "Passport renewal",
+            "Renew a passport online through the e-passport portal and book a date for fingerprints.", YESTERDAY)]),
+    (r"passport fees?", [
+        hit(JS_PAGE, "e-Passport fees", "The fees for a new or renewed e-passport, by pages and validity.", YESTERDAY),
+        hit("https://www.dip.gov.bd/site/page/fees", "Passport fees", "Fees for passports issued by the department.",
+            YESTERDAY)]),
     (r"metro", [
         hit("https://www.dhakatribune.com/metro-rail-hours", "Metro rail to run until 11pm from November 1",
             "Dhaka Metro Rail Line 6 will run until 11pm from November 1, DMTCL said on Monday.", TODAY),
@@ -659,25 +686,67 @@ def fake_market_get(url):
     raise urllib.error.HTTPError(url, 404, "Not Found", None, None)
 
 
-WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 percent, down from 8.91 percent in August."}
+WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 percent, down from 8.91 percent in August.",
+             JS_PAGE: "Please enable JavaScript to view this site."}
 
 
 class FakeTavily:
-    def __init__(self, down: bool = False):
-        self.searches, self.extracts, self.down = [], [], down
+    def __init__(self, down: bool = False, delay: float = 0.0, recorded: bool = False, honor_domains: bool = False):
+        self.searches, self.extracts, self.down, self.delay, self.recorded = [], [], down, delay, recorded
+        self.honor_domains = honor_domains      # include_domains filters the fixtures (most cases ignore it)
 
     def search(self, query, **kw):
         self.searches.append((query, kw))
+        if self.delay:
+            time.sleep(self.delay)
         if self.down:
             raise ConnectionError("Tavily unreachable (fake)")
+        if self.recorded:
+            return copy.deepcopy(fixture("tavily_search_recorded.json", "search")["body"])
         results = next((r for pat, r in WEB_FIXTURES if re.search(pat, query, re.I)), [])
+        if self.honor_domains and kw.get("include_domains"):
+            results = [r for r in results if any(web_tools._matches(web_tools._domain(r["url"]), d.removeprefix("www."))
+                                                 for d in kw["include_domains"])]
         return {"query": query, "results": copy.deepcopy(results), "usage": {"credits": 1}}
 
     def extract(self, urls, **kw):
         urls = [urls] if isinstance(urls, str) else urls
         self.extracts.append(urls)
+        if self.recorded:
+            return copy.deepcopy(fixture("tavily_extract_recorded.json", "search")["body"])
         return {"results": [{"url": u, "raw_content": WEB_PAGES[u]} for u in urls if u in WEB_PAGES],
                 "failed_results": [{"url": u} for u in urls if u not in WEB_PAGES], "usage": {"credits": 1}}
+
+
+class FakeEngines:
+    """search._request for the engines besides Tavily (Exa, Brave, Firecrawl, Cohere), from fixtures/search: per engine
+    a fixture's name, ("error", status), ("delay", seconds, fixture) or a function of the request. Keeps every call."""
+
+    HOSTS = {"api.exa.ai": "exa", "api.search.brave.com": "brave", "api.firecrawl.dev": "firecrawl",
+             "api.cohere.com": "cohere"}
+
+    def __init__(self, plan: dict | None = None):
+        self.plan, self.calls = dict(plan or {}), []
+
+    def request(self, method, url, *, headers, timeout, json_body=None, params=None):
+        import httpx
+        engine = next((e for host, e in self.HOSTS.items() if host in url), "?")
+        self.calls.append((engine, json_body if json_body is not None else params))
+        how = self.plan.get(engine)
+        if how is None:
+            raise AssertionError(f"{engine} was called, and the case didn't expect it")
+        if callable(how):
+            return how(json_body if json_body is not None else params)
+        if isinstance(how, tuple) and how[0] == "error":
+            raise httpx.HTTPStatusError(f"{how[1]} (fake)", request=httpx.Request(method, url),
+                                        response=httpx.Response(how[1], request=httpx.Request(method, url)))
+        if isinstance(how, tuple) and how[0] == "delay":
+            time.sleep(how[1])
+            how = how[2]
+        return copy.deepcopy(fixture(how, "search")["body"])
+
+    def engines(self) -> list[str]:
+        return [e for e, _ in self.calls]
 
 
 # ---------- fake Google News (gnews.py): RSS built from fixtures, matched on the feed's section or query ----------
@@ -860,6 +929,10 @@ class Case:
     after: object = None                         # run after the turns (a watch's later check); returns r.extra["after"]
     registry: dict = None                        # changes to the scratch provider registry: {name or "*": fields}
     client_script: list = None                   # scripted through the real router: a fake provider serves these
+    env: dict = None                             # environment variables for the case (fake keys turn engines on)
+    engines: dict = None                         # FakeEngines' plan: how Exa, Brave, Firecrawl and Cohere answer
+    tavily_delay: float = 0.0                    # the fake Tavily takes this long to answer a search
+    tavily_recorded: bool = False                # the fake Tavily answers with the recorded responses
 
     @property
     def offline(self) -> bool:
@@ -1516,8 +1589,8 @@ FAKE_KEYS = {"EXA_API_KEY": "exa-test-0123456789abcdef", "ELEVENLABS_API_KEY": "
              "DEEPSEEK_API_KEY": "sk-test-0123456789abcdef", "CLOUDFLARE_ACCOUNT_ID": "acct-test-123456"}
 
 
-def fixture(name: str) -> dict:
-    with open(os.path.join(FIXTURES, name)) as f:
+def fixture(name: str, folder: str = "providers") -> dict:
+    with open(os.path.join(os.path.dirname(FIXTURES), folder, name)) as f:
         return json.load(f)
 
 
@@ -1666,7 +1739,8 @@ def prov_guard():
         st = providers.state("tavily")
         if st["state"] != "off" or st["until"] != providers.next_reset("monthly_utc"):
             problems.append(f"950 of 1,000 credits: {st['state']} until {st['until']}")
-        said = web_tools.web_search("how tall is Mount Everest")
+        with env(EXA_API_KEY=None):         # Tavily the only engine: its 95 % pauses web search
+            said = web_tools.web_search("how tall is Mount Everest")
         if web_tools._client().searches or "paused" not in said:
             problems.append(f"web search at 95 %: {said[:80]!r}, Tavily got {web_tools._client().searches}")
         providers.record("exa", 9.40, op="search", unit="usd")
@@ -1864,6 +1938,191 @@ def refused_for_privacy(r):
 
 
 TASK_PASSPORT = ["[2026-10-01 09:00] Pick up passport from Gulshan office"]
+
+
+# ---------- the search router (search.py): routing, fallbacks, merge, rerank, pages, cache; fixtures/search ----------
+FAKE_KEY = "test-key-0123456789abcdef"
+
+
+def engines_called(*names):
+    return lambda r: (None if set(names) <= set(r.extra.get("engines") or [])
+                      else f"engines called: {r.extra.get('engines')}, wanted {names}")
+
+
+def engines_not_called(*names):
+    return lambda r: (f"{sorted(set(names) & set(r.extra.get('engines') or []))} called"
+                      if set(names) & set(r.extra.get("engines") or []) else None)
+
+
+def source_engines(url_part, *labels):
+    """The source whose URL has `url_part` is credited to exactly these engines."""
+    def check(r):
+        s = next((s for s in r.sources if url_part in s["url"]), None)
+        if not s:
+            return f"no source with {url_part!r}: {[x['url'] for x in r.sources]}"
+        return None if set(s.get("engines") or []) == set(labels) else f"{url_part} credited to {s.get('engines')}"
+    return check
+
+
+def sources_only_from(*labels):
+    return lambda r: (next((f"{s['url']} credited to {s.get('engines')}" for s in r.sources
+                            if set(s.get("engines") or []) != set(labels)), None) if r.sources else "no sources shown")
+
+
+def exa_category(category):
+    return lambda r: (None if any(e == "exa" and (body or {}).get("category") == category
+                                  for e, body in r.extra.get("engine_calls") or [])
+                      else f"Exa was asked {r.extra.get('engine_calls')}")
+
+
+def late_noted(provider):
+    return lambda r: (None if any("too late" in (c["detail"] or "") for c in providers.calls(provider, exclude=()))
+                      else f"{provider}'s ledger rows: {providers.calls(provider, exclude=())}")
+
+
+def exa_almost_spent():
+    providers.record("exa", 9.6, op="search", unit="usd")       # $9.60 of its $10: 96 %, off until the 1st
+
+
+def let_late_answers_land():
+    time.sleep(0.6)                                              # the slow engine's thread records its row
+    return {}
+
+
+def search_rerank():
+    """Cohere's order when it answers (fixture); keyword overlap, with the engine's order as tie-break, when it fails."""
+    hits = [search._hit("tavily", i, f"https://example{i}.com/", title, content, None) for i, (title, content) in
+            enumerate([("Dhaka weather today", "Sunny and warm in Dhaka."),
+                       ("Bangladesh population 2025", "About 171.5 million people."),
+                       ("Passport fees", "A 48-page e-passport costs 4,025 taka.")])]
+    problems = []
+    with env(COHERE_API_KEY=FAKE_KEY):
+        search._request = FakeEngines({"cohere": "cohere_rerank.json"}).request
+        ranked, how = search.rerank("e-passport fee for 48 pages", hits)
+        if how != "cohere" or [h["url"] for h in ranked] != ["https://example2.com/", "https://example0.com/",
+                                                             "https://example1.com/"]:
+            problems.append(f"with Cohere: {how}, {[h['url'] for h in ranked]}")
+        search._request = FakeEngines({"cohere": ("error", 503)}).request
+        ranked, how = search.rerank("e-passport fee for 48 pages", hits)
+        if how != "keyword" or ranked[0]["url"] != "https://example2.com/":
+            problems.append(f"without Cohere: {how}, {[h['url'] for h in ranked]}")
+    if [c["status"] for c in providers.calls("cohere", exclude=())] != ["ok", "unavailable"]:
+        problems.append(f"Cohere's ledger rows: {providers.calls('cohere', exclude=())}")
+    return {"problems": problems}
+
+
+def search_pages():
+    """A page behind JavaScript is read with Firecrawl; only its relevant passages go out; two pages a turn at most."""
+    problems = []
+    javid._turn_text["text"] = "How much is the e-passport fee?"
+    web_tools.new_turn()
+    with env(FIRECRAWL_API_KEY=FAKE_KEY):
+        search._request = FakeEngines({"firecrawl": "firecrawl_scrape.json"}).request
+        web_tools.web_search("e-passport fees in Bangladesh")
+        page = web_tools.read_page(JS_PAGE)
+        second = web_tools.read_page("https://www.dip.gov.bd/site/page/fees")
+        third = web_tools.read_page(JS_PAGE)
+    if "read with Firecrawl" not in page or "4,025 taka" not in page:
+        problems.append(f"the JavaScript page: {page[:160]!r}")
+    if len(page) > web_tools.PASSAGE_CHARS + 200 or page.count("Welcome to the online portal") > 16:
+        problems.append(f"{len(page)} characters went to the model, mostly boilerplate")
+    if "Already read 2 pages" not in third:
+        problems.append(f"a third page was read: {third[:80]!r} (the second: {second[:60]!r})")
+    if not any(c["op"] == "scrape" for c in providers.calls("firecrawl")):
+        problems.append("no Firecrawl row in the ledger")
+    return {"problems": problems}
+
+
+def search_cache():
+    """Results are reused 15 min for news, 24 h for facts; a fact asked "today" keeps the news time."""
+    fake, problems = web_tools._client(), []
+
+    def ask(q, news=False):
+        return search.search(q, tavily=lambda: fake, news_topic=news)
+
+    def age(seconds):
+        with search._cache_lock:
+            for k, (t, keep, res) in list(search._cache.items()):
+                search._cache[k] = (t - seconds, keep, res)
+    ask("metro rail news", True)
+    ask("bangladesh population 2025")
+    asked = len(fake.searches)
+    if not (ask("metro rail news", True)["cached"] and ask("bangladesh population 2025")["cached"]) \
+            or len(fake.searches) != asked:
+        problems.append("a repeat within minutes wasn't reused")
+    age(20 * 60)
+    news, fact = ask("metro rail news", True), ask("bangladesh population 2025")
+    if news["cached"] or not fact["cached"]:
+        problems.append(f"after 20 min: news cached {news['cached']}, fact cached {fact['cached']}")
+    age(24 * 3600)
+    if ask("bangladesh population 2025")["cached"]:
+        problems.append("a fact was reused after 24 h")
+    if (search.ttl("fact", "dollar rate in taka today"), search.ttl("fact", "how tall is everest")) != (900, 86400):
+        problems.append("a fact asked 'today' should keep the news time, a plain one 24 h")
+    if not any(c["status"] == "cached" for c in providers.calls("tavily", exclude=())):
+        problems.append("no cached row in the ledger")
+    return {"problems": problems}
+
+
+def search_model_habits():
+    """What gpt-oss-20b does with the tool, as seen in the 2026-10-25 benchmark: 365 days on a how-to question (not
+    news), a fact limited to sites with one publisher (widened to all sites once), and a search that finds nothing
+    ("no results", not "isn't set up")."""
+    problems, fake = [], FakeTavily(honor_domains=True)
+    web_tools._client = lambda: fake
+    javid._turn_text["text"] = "Look up how to renew a Bangladeshi passport online."
+    web_tools.new_turn()
+    web_tools.web_search("renew Bangladeshi passport online", recency_days=365)
+    kw = fake.searches[-1][1]
+    if kw.get("topic") != "general" or "days" in kw or "time_range" in kw:
+        problems.append(f"a 365-day how-to search went out as {kw}")
+    javid._turn_text["text"] = "What's the population of Bangladesh this year?"
+    web_tools.web_search("population of Bangladesh this year", recency_days=365)
+    if fake.searches[-1][1].get("time_range") != "year":
+        problems.append(f"a question about this year lost its window: {fake.searches[-1][1]}")
+    javid._turn_text["text"] = "Look up how tall Mount Everest is."
+    web_tools.new_turn()
+    out = web_tools.web_search("Mount Everest height", domains=["www.bbc.com", "www.nytimes.com"])
+    if fake.searches[-1][1].get("include_domains") or "since a fact needs two independent publishers" not in out \
+            or "britannica" not in out:
+        problems.append(f"a fact kept the sites the model picked: {fake.searches[-1][1]}, {out[:120]!r}")
+    if "allowing for rounding" not in out:
+        problems.append("the fact line doesn't allow for rounding")
+    web_tools.new_turn()
+    search.clear_cache()
+    before = len(fake.searches)
+    one = web_tools.web_search("Mount Everest height", domains=["mountains.gov.np"])   # official: kept, finds nothing
+    if len(fake.searches) - before != 2 or fake.searches[-2][1].get("include_domains") != ["mountains.gov.np"] \
+            or "had too little, so all sites" not in one or "nationalgeographic" not in one:
+        problems.append(f"an official site with nothing wasn't widened: {one[:160]!r}")
+    javid._turn_text["text"] = "Look up how to renew a passport on bdnews24."
+    web_tools.new_turn()
+    before = len(fake.searches)
+    web_tools.web_search("renew passport", domains=["bdnews24.com"])                 # not a fact: the sites stay
+    if fake.searches[before][1].get("include_domains") != ["bdnews24.com"]:
+        problems.append(f"a how-to lost the site asked for: {fake.searches[before][1]}")
+    javid._turn_text["text"] = "Look up the zorblax festival."
+    nothing = web_tools.web_search("zorblax festival dates")
+    if not nothing.startswith("No results"):
+        problems.append(f"nothing found was reported as {nothing[:80]!r}")
+    return {"problems": problems}
+
+
+def search_recorded():
+    """Tavily's recorded response becomes sources credited to Tavily, with the fact rule; its recorded page reads."""
+    problems = []
+    javid._turn_text["text"] = "What's the population of Bangladesh?"
+    web_tools.new_turn()
+    out = web_tools.web_search("Bangladesh population 2025")
+    shown = web_tools.sources()
+    if "found by Tavily" not in out or "a fact or figure" not in out or out.count("(via Tavily)") < 3:
+        problems.append(f"result: {out[:200]!r}")
+    if not shown or any(s.get("engines") != ["Tavily"] for s in shown) or len(shown) > search.MAX_HITS:
+        problems.append(f"sources: {[(s['url'], s.get('engines')) for s in shown]}")
+    page = web_tools.read_page(web_tools._turn["top"][0])
+    if "read with Tavily" not in page or len(page) > web_tools.PASSAGE_CHARS + 300:
+        problems.append(f"page: {len(page)} characters, {page[:100]!r}")
+    return {"problems": problems}
 
 
 CASES = [
@@ -2642,8 +2901,72 @@ CASES += [
          tasks=TASK_PASSPORT, registry={"tavily": {"personal_ok": False}},
          script=[call("web_search", query="Gulshan passport office opening hours"),
                  "The Gulshan passport office opens at 9 AM, according to its site."]),
+    # ---------- the search router (search.py): Tavily, Exa, Brave, Firecrawl, Cohere; fixtures/search ----------
+    Case("search: news goes to Brave and Tavily at once; a story both found is one source, credited to both",
+         ["What's the latest news about the Dhaka metro rail hours?"],
+         [called("web_search"), engines_called("brave"), tavily_searched, engines_not_called("exa"),
+          source_engines("metro-hours", "Brave", "Tavily"), model_requests(2)],
+         env={"BRAVE_SEARCH_API_KEY": FAKE_KEY, "EXA_API_KEY": FAKE_KEY}, engines={"brave": "brave_metro_news.json"},
+         script=[call("web_search", query="Dhaka metro rail hours news", recency_days=3),
+                 "Metro rail will run until 11pm from November 1, DMTCL said, the Dhaka Tribune reports today."]),
+    Case("search: 'companies like Pathao' goes to Exa, asked for companies",
+         ["Search for companies like Pathao in Bangladesh."],
+         [called("web_search"), engines_called("exa"), engines_not_called("brave"), tavily_not_searched,
+          exa_category("company"), source_engines("obhai", "Exa"), model_requests(2)],
+         env={"EXA_API_KEY": FAKE_KEY, "BRAVE_SEARCH_API_KEY": FAKE_KEY}, engines={"exa": "exa_companies.json"},
+         script=[call("web_search", query="ride sharing companies like Pathao Bangladesh"),
+                 "Companies like Pathao in Bangladesh include Obhai and Shohoz, according to their own sites."]),
+    Case("search: an engine past its budget is skipped: Exa at 96 % of its month, so Tavily answers",
+         ["Search for companies like Pathao in Bangladesh."],
+         [called("web_search"), engines_not_called("exa"), tavily_searched, model_requests(2)],
+         env={"EXA_API_KEY": FAKE_KEY}, engines={"exa": "exa_companies.json"}, drive=exa_almost_spent,
+         script=[call("web_search", query="ride sharing companies like Pathao Bangladesh"),
+                 "I couldn't find companies like Pathao just now."]),
+    Case("search: a fact goes to Tavily and Brave at once; when their figures differ, Javid says they disagree",
+         ["Look up the population of Bangladesh."],
+         [called("web_search"), engines_called("brave"), tavily_searched, reply_has("disagree"), model_requests(3)],
+         env={"BRAVE_SEARCH_API_KEY": FAKE_KEY}, engines={"brave": "brave_population.json"},
+         script=[call("web_search", query="Bangladesh population 2025"),
+                 "Bangladesh has about 171.5 million people, according to World Population Review, October 24.",
+                 "The sources disagree: World Population Review gives 171.5 million people and Statista about 173 million."]),
+    Case("search: a height two publishers give stands, though the pages name other peaks' heights",
+         ["Look up how tall Mount Everest is."],
+         [called("web_search"), reply_lacks(r"couldn.t confirm|disagree"), reply_has("8,849"), model_requests(2)],
+         script=[call("web_search", query="Mount Everest height"),
+                 "Mount Everest is 8,849 meters (29,032 feet) tall, according to Britannica and National Geographic."]),
+    Case("search: one publisher's two sites aren't two sources, so the figure isn't confirmed",
+         ["Look up how many people live in Bangladesh."],
+         [called("web_search"), engines_called("brave"), reply_has("couldn.t confirm"), model_requests(3)],
+         env={"BRAVE_SEARCH_API_KEY": FAKE_KEY}, engines={"brave": "brave_population_bbc.json"},
+         script=[call("web_search", query="how many people live in Bangladesh"),
+                 "About 171.5 million people live in Bangladesh, according to the BBC.",
+                 "About 171.5 million people live there, the BBC says."]),
+    Case("search: Tavily too slow, so Exa starts; Exa fails, so Brave; Tavily's late answer is noted, not used",
+         ["Look up how to renew a Bangladeshi passport online."],
+         [called("web_search"), engines_called("exa", "brave"), sources_only_from("Brave"), late_noted("tavily"),
+          model_requests(2)],
+         env={"EXA_API_KEY": FAKE_KEY, "BRAVE_SEARCH_API_KEY": FAKE_KEY},
+         engines={"exa": ("error", 500), "brave": "brave_passport.json"}, registry={"tavily": {"soft_timeout_ms": 50}},
+         tavily_delay=0.4, after=let_late_answers_land,
+         script=[call("web_search", query="renew Bangladeshi passport online"),
+                 "You can renew it on the e-passport portal and then give your fingerprints, the portal says."]),
+    Case("search: personal data goes only to an engine with personal_ok: Brave gets the query, Tavily doesn't",
+         ["What's on my task list? And look up the opening hours."],
+         [called("list_tasks"), engines_called("brave"), tavily_not_searched, refused_for_privacy, model_requests(3)],
+         tasks=TASK_PASSPORT, env={"BRAVE_SEARCH_API_KEY": FAKE_KEY}, engines={"brave": "brave_passport.json"},
+         registry={"tavily": {"personal_ok": False}, "brave": {"personal_ok": True}},
+         script=[call("list_tasks"), call("web_search", query="Gulshan passport office opening hours"),
+                 "You have one task: picking up your passport. The office opens at 9 AM, the e-passport portal says."]),
+    Case("search: Cohere reranks; when it fails, keyword overlap does", [], [drive_ok], drive=search_rerank, script=[]),
+    Case("search: a JavaScript page is read with Firecrawl, only its relevant passages go out, two pages a turn", [],
+         [drive_ok], drive=search_pages, script=[]),
+    Case("search: the cache keeps news 15 minutes and facts 24 hours", [], [drive_ok], drive=search_cache, script=[]),
+    Case("search: 365 days on a how-to isn't news; a fact on one publisher's sites is widened; nothing found is said",
+         [], [drive_ok], drive=search_model_habits, script=[]),
+    Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
+         [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 156, len(CASES)
+assert len(CASES) == 169, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -2684,9 +3007,13 @@ def run_case(case: Case) -> Result:
     ct._service = lambda: svc
     ct.status = lambda: "connected"
     ct._pending_delete = None
-    fake_web = FakeTavily(down=case.web_down or case.tavily_down)
+    fake_web = FakeTavily(down=case.web_down or case.tavily_down, delay=case.tavily_delay, recorded=case.tavily_recorded)
     web_tools._client = lambda: fake_web
-    web_tools._cache.clear()
+    fake_engines = FakeEngines(case.engines)
+    search._request = fake_engines.request
+    case_env = env(**(case.env or {}))
+    case_env.__enter__()
+    search.clear_cache()
     rates._get_json = fake_rates(case.rates_up, case.ecb_up)
     rates._cache.clear()
     weather._get_json = fake_weather_get
@@ -2768,12 +3095,15 @@ def run_case(case: Case) -> Result:
             with contextlib.redirect_stdout(io.StringIO()):
                 extra["after"] = case.after()
     finally:
+        case_env.__exit__(None, None, None)
         javid.TOOL_MAP.update(real_map)
         javid._create = real_create
         _fake_llm_on[0] = False
         _script = None
     if fake_llm:
         extra["sent"] = fake_llm.sent
+    extra["engines"] = fake_engines.engines()
+    extra["engine_calls"] = fake_engines.calls
 
     with open(javid.TASKS_FILE) as f:
         tasks = [l for l in f.read().splitlines() if l.strip()]
@@ -2932,8 +3262,25 @@ def smoke_test(name_filter: str = "") -> int:
                 else f"{web_tools._count(u.get('used') or 0)} {u['unit']} counted")
         failed += status != "ok"
         print(f"{'PASS' if status == 'ok' else 'FAIL'}  {name:11} {ms:>6} ms  {note} · {left}")
-    print("\nEvery call above is in data/providers.db (op 'smoke').")
+    if not name_filter or name_filter.lower() in "search router":
+        failed += _smoke_router()
+    print("\nEvery call above is in data/providers.db (op 'smoke', or 'search' for the routed one).")
     return 1 if failed else 0
+
+
+def _smoke_router() -> int:
+    """One real routed web search (search.py: whichever engines are on), as web_search runs it. 1 if it failed."""
+    t0 = time.time()
+    javid._turn_text["text"] = "What's the population of Bangladesh?"
+    web_tools.new_turn()
+    out = web_tools.web_search("Bangladesh population 2025")
+    ms = round((time.time() - t0) * 1000)
+    shown = web_tools.sources()
+    engines = sorted({e for s in shown for e in s.get("engines", [])})
+    ok = bool(shown)
+    print(f"{'PASS' if ok else 'FAIL'}  {'search':11} {ms:>6} ms  a routed fact search: {len(shown)} sources found by "
+          f"{', '.join(engines) or 'none'}" + ("" if ok else f" · {out[:120]}"))
+    return 0 if ok else 1
 
 
 def main() -> int:

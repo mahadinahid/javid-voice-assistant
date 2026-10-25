@@ -59,7 +59,7 @@ traced too (`source: "cli"`).
 | 4 | Gate | Hands-free needs the wake word unless it's inside the follow-up window. Noise is ignored and not traced. A bare "Javid" gets "Yes?". A one-word push-to-talk clip is "I didn't catch that" unless it's yes/no or a greeting. | `server.py`: `talk`; `javid.py`: `strip_wake_word`, `is_noise` | — |
 | 5 | Routing | A yes/no to a pending memory proposal, language switches, a self-check or "where did that come from?", questions about Javid itself, watches (set, list, cancel), exchange-rate questions, market briefs and news requests are settled in code, with no LLM request (the data ones still fetch their data: Binance, Yahoo, the ECB, Google News). Otherwise: pick tool groups by regex (`select_tools`), decide required tools and whether the turn is heavy, and build the request (static system prompt + memory block, last 6 turns, `[Context]` note with date, older-chat summary and recent tool facts). | `javid.py`: `think_stream`, `select_tools`, `_request_messages`, `context_block`, `_code_answer`; `memory_store.py`; `about.py`; `rates.py`: `request`/`answer`; `markets.py`: `brief_request`/`brief` | `routing_done` |
 | 6 | LLM | Streaming completion on the first model in the chain the budget guard allows (`providers.py`: ready ones first, those past 80 % of an allowance only after them, none at 95 % or resting after a 429), sent what its provider may receive: a provider without `personal_ok` gets no memory, chat history or personal tools, and a request that needs them goes only to one with it (decision record 1). Provider clients for Groq, Gemini, DeepSeek and IFM. Each round's text is held until the round ends, and each request is a row in the usage ledger. | `javid.py`: `_stream_completion`, `_open_stream`, `_models_to_try`, `_public_request`, `_create`; `providers.py` | `llm[]` (start, first chunk, end, model) |
-| 7 | Tools | Tasks and time (`javid.py`); calendar and public holidays (`calendar_tools.py`, Google Calendar API); headlines (`gnews.py`, Google News RSS, Tavily only as the fallback); web search and page reads (`web_tools.py`, Tavily); skills (`skills.py`); agents (`agents.py`); exchange rates (`rates.py`); live prices (`markets.py`); weather, timers and sums (`weather.py`, `timers.py`, `calc.py`); memory proposals and past-chat search (`memory_store.py`). Results go back to the LLM for another round. A turn has at most `MAX_TOOL_ROUNDS` + 4 rounds (retries and rewrites use them up), and the last one is sent without tools so the model must answer. | `TOOL_MAP` in `javid.py` | `tools[]` (name, start, end) |
+| 7 | Tools | Tasks and time (`javid.py`); calendar and public holidays (`calendar_tools.py`, Google Calendar API); headlines (`gnews.py`, Google News RSS, the search engines only as the fallback); web search and page reads (`web_tools.py` through the search router `search.py`: Tavily, Exa, Brave, Firecrawl, Cohere, by intent; decision record 2); skills (`skills.py`); agents (`agents.py`); exchange rates (`rates.py`); live prices (`markets.py`); weather, timers and sums (`weather.py`, `timers.py`, `calc.py`); memory proposals and past-chat search (`memory_store.py`). Results go back to the LLM for another round. A turn has at most `MAX_TOOL_ROUNDS` + 4 rounds (retries and rewrites use them up), and the last one is sent without tools so the model must answer. | `TOOL_MAP` in `javid.py` | `tools[]` (name, start, end) |
 | 8 | Checks | One retry or rewrite each for: an empty, garbled or malformed reply; a missing required tool; the wrong language; holiday dates not in the tool result; web figures without an official or second source. Then the web answer is trimmed and gets its source line, and a skill reply is split into spoken and screen parts. | `javid.py`: `think_stream`; `calendar_tools.check_holiday_reply`; `web_tools.check_reply`/`finalize`; `skills.split_reply` | `llm_done` → `reply_out` |
 | 9 | Stream out | NDJSON events. The reply text arrives as one `delta` once the final round is done (rounds are buffered, see 6). `say` ("Searching…") arrives as a web search starts. | `server.py`: `_traced`, `_reply_stream` | `reply_out`, `server_done` |
 | 10 | Text-to-speech | The page cuts the reply into sentences (`.!?` or `।` followed by a space) and requests each from `/speak` straight away. The server synthesizes with edge-tts, the one locked voice per language, with a cache, at most 3 sentences at once, and up to 3 tries (6, 8 then 10 s for the first audio, 4 s between chunks after that). A failure shows "voice unavailable", never another voice. | `index.html`: `feedSpeech`, `speakChunk`, `fetchAudio`; `server.py`: `speak_text`; `javid.py`: `synthesize` | `tts_first_request` |
@@ -117,6 +117,29 @@ posted to `/latency/<id>` as `index.html` does. Without a browser:
   `/speak` calls measured against the running server; the rest took 1–2 ms.
 
 Real use replaces all of this: the page measures playback itself.
+
+### 2026-10-25: the search router, before and after
+
+`bench_web.py` ran six web questions (two facts, one news, one "companies like", one how-to, one "when did it open")
+through the real pipeline on the code before the router and on the router, with Groq's gpt-oss-20b and Tavily only
+(the only search key so far), scratch data and edge-tts for the first sentence, alternating which ran first:
+
+| | first audio, median | first answer audio, median (range) | Tavily credits an answer | tokens an answer, median |
+|---|---|---|---|---|
+| before (`b7c156b`) | 0.78 s | 38.4 s (15.8-50.5) | 1.67 | 6,508 |
+| router, first run | 0.99 s | 20.8 s (8.5-58.1) | 1.83 | 5,809 |
+| router, after the fixes below | 0.76 s | 37.8 s (11.3-52.2) | 2.33 | 7,366 |
+
+With Tavily as the only engine the router can't run anything in parallel, and the time went where the model took it:
+2 to 5 model requests and 1 to 4 searches a question, run to run, which is why two runs of nearly the same code differ
+by 17 s in median. Six questions can't separate that from the router. The first run found three things, fixed before
+the second: a confirmed height answered "I couldn't confirm" (the new fact checks compared Everest with K2), a 365-day
+window turning a how-to question into a news search, and "web search isn't set up" when Tavily simply found nothing.
+The second run found the model limiting fact searches to news sites it picked itself; dropping those sites for facts
+came after it and isn't measured yet: the runs had used Javid's own 40 Tavily credits for the day. Rerun
+`python bench_web.py` (and the old code with `--code`) on a fresh day. In real use (traces 2026-10-15 to 10-24) web
+answers had first audio at 1.5 s and the answer's first audio at 11.8 s (medians), with Tavily's search alone taking
+3.8 s.
 
 ### Since 2026-10-24: news in code
 
@@ -210,4 +233,47 @@ data policy, which providers may see personal data.
   model reaching for a personal tool still makes the turn personal.
 - Recording the live model cases' responses to replay them by default: not done; their checks depend on the date, and
   recording them costs a full live run (~210k tokens).
+
+### 2. A search router across engines, by intent (2026-10-25)
+
+**Context.** Web search was Tavily alone: one engine for news, facts and everything else, one index to confirm a figure
+against, and nothing to fall back on when it was slow (median 3.8 s, p90 6.8 s) or down. The registry (decision 1) now
+lists Exa (semantic search), Brave (an independent index with news), Firecrawl (reading pages that need JavaScript) and
+Cohere (reranking), each with its own free allowance.
+
+**Decision.** `search.py` routes each `web_search`:
+1. **By intent, in code** (`classify`): news to Brave and Tavily at once; "companies or papers like X" to Exa; facts and
+   figures to Tavily and Brave at once, whose answers need two independent publishers that agree (or an official
+   source); everything else to Tavily, then Exa, then Brave. Mahadi's message and the model's query are read together.
+2. **Engines in parallel with soft timeouts** (2.5 s, per engine in the registry): when one passes, the next engine
+   starts too and the first usable answer wins. A slow engine isn't cut off unless another answered: with Tavily as the
+   only engine with a key, a hard 2.5 s cut would fail 78 % of searches. Errors, nothing found, the budget guard, the
+   daily cap, a cooldown or the privacy rule all count as a failed engine.
+3. **Merge by URL, rerank, keep 3-5**: Cohere when it's on, keyword overlap otherwise.
+4. **Reading**: at most two pages a turn, Tavily's extract or Firecrawl for a JavaScript page, and only the passages
+   closest to the question (about 750 tokens a page).
+5. **The source rules stay**, with "two sites" made two publishers, measures and counts checked after a fact search, and
+   each source credited to the engines that found it, on screen too.
+6. **Cache by normalized query**: 15 minutes for news and anything asked "today", 24 hours for facts.
+7. **The model's habits are handled in code**: a 365-day window on a how-to isn't news; a fact isn't limited to sites the
+   model picked (it needs two publishers); a restricted search that finds too little is run on all sites once.
+
+**Consequences.**
+- Until Exa, Brave, Cohere or Firecrawl has a key, every search runs on Tavily with the keyword rerank: the routing and
+  the parallel runner are tested against documented response formats, not the engines themselves (`--live` runs one
+  call per engine, and one routed search, once a key is there).
+- Facts and figures are stricter: a figure only one publisher gives is "couldn't confirm"; the model is told that
+  agreement allows for rounding. Fewer confident wrong numbers, some more hedged answers.
+- A widened or parallel search costs more credits (1.67 to about 2 Tavily credits an answer in the benchmark), and an
+  engine asked and then given up on is still billed (the ledger marks it "too late").
+- When web search is unavailable, the model may still answer from memory: in the benchmark, with the daily cap reached,
+  it said the Padma Bridge opened in December 2018 (it opened in June 2022). Not addressed here.
+
+**Alternatives considered.**
+- A hard 2.5 s timeout per engine: rejected while Tavily is alone (most of its searches take longer); 2.5 s decides when
+  the next engine joins instead.
+- Always reading the top pages in `web_search`: rejected; the model reads only when the snippets don't answer it, and an
+  automatic read costs a round of tokens and time every time.
+- Cohere for page passages too: not done; Tavily's extract already returns the chunks closest to the query, and keyword
+  overlap picks among them without another call against Cohere's 1,000 a month.
 

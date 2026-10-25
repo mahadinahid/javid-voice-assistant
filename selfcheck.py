@@ -387,8 +387,9 @@ def provenance(text: str, lang: str, previous: dict | None):
             parts.append(("Google News-এ " + _and(names, lang) + "-এর শিরোনাম") if bn else
                          f"Google News: headlines from {_and(names, lang)}{when}")
         else:
-            parts.append(("Tavily ওয়েব সার্চে " + _and(names, lang) + "-এর খবর") if bn else
-                         f"a web search through Tavily: {_and(names, lang)}{when}")
+            engines = list(dict.fromkeys(e for s in sources for e in s.get("engines") or [])) or ["Tavily"]
+            parts.append((_and(engines, lang) + " ওয়েব সার্চে " + _and(names, lang) + "-এর খবর") if bn else
+                         f"a web search through {_and(engines, lang)}: {_and(names, lang)}{when}")
         web_tools.restore_sources(sources)
         lines = [f"{s['n']}. {s['name']}: {s['title']} ({s.get('date_text', '')})" for s in sources]
     seen = set()

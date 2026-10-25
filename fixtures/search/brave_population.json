@@ -1,0 +1,20 @@
+{
+ "source": "Brave Search API's documented web search response, not recorded; the figure differs from the Tavily fixture's on purpose (a disagreement)",
+ "body": {
+  "type": "search",
+  "web": {
+   "type": "search",
+   "results": [
+    {
+     "title": "Bangladesh population 2025",
+     "url": "https://www.statista.com/statistics/bangladesh-population/",
+     "description": "Bangladesh had a population of about 173 million people in 2025, according to the estimate.",
+     "page_age": "2026-08-01T00:00:00",
+     "meta_url": {
+      "hostname": "statista.com"
+     }
+    }
+   ]
+  }
+ }
+}

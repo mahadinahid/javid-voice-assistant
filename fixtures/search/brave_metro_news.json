@@ -1,0 +1,48 @@
+{
+ "source": "Brave Search API's documented web search response with a news section (result_filter=news,web), not recorded: no BRAVE_SEARCH_API_KEY yet; its first story is the Tavily fixture's under another spelling of the URL (a dedupe test)",
+ "body": {
+  "type": "search",
+  "query": {
+   "original": "Dhaka metro rail latest news"
+  },
+  "news": {
+   "type": "news",
+   "results": [
+    {
+     "title": "Metro rail <strong>hours</strong> extended to 11pm",
+     "url": "https://thedailystar.net/metro-hours/",
+     "description": "The Dhaka Mass Transit Company says the Motijheel to Kamalapur section of MRT Line-6 opens next month.",
+     "age": "3 hours ago",
+     "page_age": "2026-10-25T05:00:00",
+     "meta_url": {
+      "hostname": "thedailystar.net"
+     }
+    },
+    {
+     "title": "MRT Line-1 work begins at Notun Bazar",
+     "url": "https://www.tbsnews.net/bangladesh/transport/mrt-line-1-work-begins",
+     "description": "Construction of Dhaka's first underground metro line, MRT Line-1, has begun at Notun Bazar.",
+     "age": "1 day ago",
+     "page_age": "2026-10-24T08:00:00",
+     "meta_url": {
+      "hostname": "tbsnews.net"
+     }
+    }
+   ]
+  },
+  "web": {
+   "type": "search",
+   "results": [
+    {
+     "title": "Dhaka Mass Transit Company Limited",
+     "url": "https://dmtcl.gov.bd/",
+     "description": "Official site of the Dhaka metro rail operator.",
+     "page_age": "2026-09-01T00:00:00",
+     "meta_url": {
+      "hostname": "dmtcl.gov.bd"
+     }
+    }
+   ]
+  }
+ }
+}

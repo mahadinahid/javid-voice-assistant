@@ -1,0 +1,20 @@
+{
+ "source": "Brave Search API's documented web search response, not recorded",
+ "body": {
+  "type": "search",
+  "web": {
+   "type": "search",
+   "results": [
+    {
+     "title": "Apply for an e-passport online",
+     "url": "https://www.epassport.gov.bd/onboarding",
+     "description": "Apply for a Bangladeshi e-passport or renew one online, then give your fingerprints at the passport office.",
+     "page_age": "2026-06-01T00:00:00",
+     "meta_url": {
+      "hostname": "epassport.gov.bd"
+     }
+    }
+   ]
+  }
+ }
+}

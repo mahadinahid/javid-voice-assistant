@@ -1,20 +1,21 @@
 """
-Web search for Javid through Tavily (needs TAVILY_API_KEY in .env), and the checks that keep
-web answers honest. javid.py splices TOOLS/TOOL_MAP in and calls new_turn(), check_reply(),
-finalize() and sources() from its agent loop.
+Web search for Javid through the search engines in the provider registry (search.py routes each query: Tavily, Exa,
+Brave; Firecrawl for pages Tavily can't read; Cohere reranks), and the checks that keep web answers honest. javid.py
+splices TOOLS/TOOL_MAP in and calls new_turn(), check_reply(), finalize() and sources() from its agent loop.
 
 Rules enforced here, not left to the prompt:
   - every web answer names a source and its date (finalize appends one if the model didn't);
   - a web answer is at most MAX_SENTENCES sentences;
-  - a rate or price in the answer must appear on an official domain or on two sites;
+  - a rate or price in the answer must appear on an official domain or with two independent publishers (bbc.com
+    and bbc.co.uk count once); after a fact search, measures and counts too (m, km, million, people...);
   - when sources give different figures, the answer must say they disagree;
-  - read_page only opens the top READ_TOP results of a search made this turn;
-  - the same query within CACHE_SEC reuses the earlier results (no credit spent);
-  - Tavily goes through providers.py: its free monthly credits (config/providers.yaml) are guarded at 80/95 %, it
-    rests after a 429 or a plan limit, and every call is in the usage ledger; on top of that, at most
-    DAILY_CREDIT_CAP credits a day;
-  - a query that would carry personal data (a task, a memory line, a calendar result) isn't sent to Tavily
-    unless it has personal_ok (privacy_check, set by javid.py).
+  - each source says which engines found it (on screen too);
+  - read_page only opens the top READ_TOP results of a search made this turn, at most MAX_READS pages a turn, and
+    gives the model only each page's most relevant passages (PASSAGE_CHARS);
+  - every engine goes through providers.py (budget guard, cooldowns, the usage ledger); search.py caches results
+    (15 min for news, 24 h for facts) and keeps Tavily to DAILY_CREDIT_CAP credits a day;
+  - a query that would carry personal data (a task, a memory line, a calendar result) isn't sent to an engine
+    without personal_ok (privacy_check, set by javid.py).
 """
 import json
 import os
@@ -27,17 +28,17 @@ from urllib.parse import urlparse
 
 import gnews
 import providers
+import search
 
 USAGE_FILE = "tavily_usage.jsonl"    # before the usage ledger: one line per call (imported into it once)
-DAILY_CREDIT_CAP = 40
-CACHE_SEC = 15 * 60
-MAX_RESULTS = 5
+DAILY_CREDIT_CAP = search.DAILY_CAPS["tavily"]
+MAX_RESULTS = search.MAX_HITS
 NEWS_DAYS = 7          # default time filter for news questions
-READ_TOP = 3           # read_page accepts only the top 3 results of this turn's searches
-MAX_READS = 3          # read_page calls per turn
+READ_TOP = 3           # read_page accepts only the top 3 results of this turn's searches (after the rerank)
+MAX_READS = 2          # pages read per turn
 MAX_SENTENCES = 3
 SNIPPET_CHARS = 300    # per result in the tool result; the full snippet is kept for the checks
-PAGE_CHARS = 1500
+PASSAGE_CHARS = 3000   # a page's most relevant passages (~750 tokens; two pages ~1,500)
 SEARCHING = "Searching…"
 
 # Domains whose figures count as official on their own (plus any gov/gob/gouv/mil/int domain).
@@ -63,13 +64,13 @@ DISAGREE = re.compile(r"disagree|differ|vary|varies|conflict|inconsisten|don'?t 
                       r"not consistent|mixed|discrepan|while others|another (source|site) says", re.I)
 
 
-# ---------- Tavily client, credits, cache ----------
+# ---------- the engines (search.py), credits, privacy ----------
 _client_obj = None
 _client_key = ""
-_last_error: dict | None = None
-_cache: dict[tuple, tuple[float, dict]] = {}
-# javid.py sets the real check: where the personal data in a query comes from ("your tasks"), or None.
+# javid.py sets these: where the personal data in a query comes from ("your tasks") or None, and the message being
+# answered (search.py decides a query's intent from it and the model's query together).
 privacy_check = lambda text: None
+user_text = lambda: ""
 NOT_SEARCHED = "Not searched:"    # starts a refusal for personal data (no Google News fallback either)
 
 
@@ -98,86 +99,26 @@ def credits_today() -> float:
     return providers.used("tavily", _midnight(), unit="credits")
 
 
-def _note_error(err: Exception) -> str:
-    global _last_error
-    msg = str(err)
-    if _key():
-        msg = msg.replace(_key(), "[key hidden]")
-    _last_error = {"kind": type(err).__name__, "message": msg[:200], "at": time.time()}
-    return type(err).__name__
-
-
-def _cached(key: tuple) -> dict | None:
-    hit = _cache.get(key)
-    if hit and time.time() - hit[0] < CACHE_SEC:
-        return hit[1]
-    _cache.pop(key, None)
-    return None
-
-
-def _when(ts: float | None) -> str:
-    if not ts:
-        return "later"
-    d = datetime.fromtimestamp(ts)
-    return f"{d:%B} {d.day}" if d.date() != date.today() else f"{d:%H:%M}"
-
-
-def _paused(st: dict) -> str:
-    """Why Tavily can't be called now, for the model to pass on."""
-    if st["state"] == "nokey":
-        return "Web search isn't set up: add TAVILY_API_KEY to .env and restart Javid."
-    if st["state"] == "disabled":
-        return "Web search is turned off in config/providers.yaml. Tell Mahadi."
-    if st["state"] == "cooldown":
-        wait = max(1, round(((st["until"] or time.time()) - time.time()) / 60))
-        return f"Web search is resting for about {wait} minute{'s' if wait != 1 else ''} ({st['why']}). Tell Mahadi."
-    return (f"Web search is paused until {_when(st['until'])}: Tavily is at its free limit ({st['why']}). "
-            "Tell Mahadi.")
-
-
-def _private(text: str) -> str | None:
-    """The refusal for a query that carries personal data to Tavily without personal_ok, else None."""
-    if providers.personal_ok("tavily") or not (where := privacy_check(text)):
+def _leak(text: str) -> str | None:
+    """Where the personal data in a query comes from, when an engine without personal_ok could get it."""
+    if all(providers.personal_ok(e) for e in search.ENGINES if providers.get(e)):
         return None
-    providers.record("tavily", 0, op="search", status="refused", detail="personal data in the query")
-    print(f"[privacy] a web search with words from {where} wasn't sent to Tavily")
-    return (f"{NOT_SEARCHED} the query has words from {where}, and the web search provider isn't cleared for "
-            "personal data. Search again without those details, or answer without searching.")
+    return privacy_check(text)
 
 
-def _call(kind: str, key: tuple, what: str, request) -> dict | str:
-    """A cached Tavily call that the budget guard allows (providers.py) within the daily credit cap, in the usage
-    ledger. Returns the response or a sentence."""
-    hit = _cached(key)
-    if hit is not None:
-        providers.record("tavily", 0, op=kind, status="cached")
-        return hit
-    if kind == "search" and (refusal := _private(what)):     # a page read reuses a query already checked
-        return refusal
-    allowed, st = providers.allow("tavily", cost=providers.cost("tavily", f"{kind}_basic", 1.0))
-    if not allowed:
-        return _paused(st)
-    client = _client()
-    if client is None:
-        return "Web search isn't set up: add TAVILY_API_KEY to .env and restart Javid."
-    if credits_today() + 1 > DAILY_CREDIT_CAP:
-        return (f"The daily web search budget ({DAILY_CREDIT_CAP} Tavily credits) is used up. "
-                "Tell Mahadi it resets at midnight.")
-    t0 = time.time()
-    try:
-        resp = request(client)
-    except Exception as e:
-        kind_ = providers.error_kind(e)
-        providers.record("tavily", 0, op=kind, latency_ms=(time.time() - t0) * 1000, status=kind_,
-                         detail=type(e).__name__)
-        if kind_ in ("rate_limited", "quota", "payment", "auth") and (rest := providers.cooldown_seconds("tavily", e)):
-            providers.cool("tavily", rest, kind_)
-        return f"Web search failed ({_note_error(e)}). Tell Mahadi you couldn't search right now."
-    credits = (resp.get("usage") or {}).get("credits")
-    providers.record("tavily", credits if isinstance(credits, (int, float)) else providers.cost("tavily", f"{kind}_basic", 1.0),
-                     op=kind, latency_ms=(time.time() - t0) * 1000)
-    _cache[key] = (time.time(), resp)
-    return resp
+def _search(query: str, *, days=None, domains=(), news_topic=False, intent=None, k=MAX_RESULTS,
+            year: bool = False) -> dict | str:
+    """search.search for this turn: its result, or the refusal when no engine may see the query."""
+    leak = _leak(query)
+    res = search.search(query, days=days, domains=domains, news_topic=news_topic, asked=user_text(), tavily=_client,
+                        private=leak, k=k, intent=intent, year=year)
+    if res["refused"]:
+        print(f"[privacy] a web search with words from {leak} wasn't sent to an engine without personal_ok")
+        return (f"{NOT_SEARCHED} the query has words from {leak}, and the web search providers aren't cleared for "
+                "personal data. Search again without those details, or answer without searching.")
+    if res["intent"] == "fact" and res["hits"]:
+        _turn["fact"] = True         # the figure checks cover measures and counts too
+    return res
 
 
 # ---------- sources ----------
@@ -223,7 +164,7 @@ _turn: dict = {}
 
 def new_turn() -> None:
     _turn.clear()
-    _turn.update(sources=[], texts={}, top=[], reads=0, query="", trusted=set())
+    _turn.update(sources=[], texts={}, top=[], reads=0, query="", trusted=set(), fact=False)
 
 
 new_turn()
@@ -235,15 +176,19 @@ def used() -> bool:
 
 def _add_source(r: dict) -> dict:
     url = r.get("url", "")
+    engines = [search.LABELS.get(e, e) for e in r.get("engines") or []]
     for s in _turn["sources"]:
         if s["url"] == url:
+            if engines:
+                s["engines"] = list(dict.fromkeys((s.get("engines") or []) + engines))
             return s
     domain = _domain(url)
     published = _parse_date(r.get("published_date"))
     s = {"n": len(_turn["sources"]) + 1, "url": url, "domain": domain, "name": source_name(domain),
          "title": (r.get("title") or "").strip()[:140], "official": is_official(domain),
          "date": published.isoformat() if published else None,
-         "date_text": _say_date(published) if published else f"retrieved {_say_date(date.today())}"}
+         "date_text": _say_date(published) if published else f"retrieved {_say_date(date.today())}",
+         **({"engines": engines} if engines else {})}
     _turn["sources"].append(s)
     return s
 
@@ -263,7 +208,7 @@ def sources() -> list[dict]:
     """Links for the screen: every result this turn, in the order found ("via": "Google News" for a headline
     from there, so "did you get that from Google?" has a true answer)."""
     return [{**{k: s[k] for k in ("n", "name", "title", "url", "date", "date_text", "official")},
-             **({"via": s["via"]} if s.get("via") else {})}
+             **({"via": s["via"]} if s.get("via") else {}), **({"engines": s["engines"]} if s.get("engines") else {})}
             for s in _turn["sources"] if s["url"].startswith(("https://", "http://"))]
 
 
@@ -287,44 +232,69 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     query = " ".join((query or "").split())
     if not query:
         return "No query given."
+    # gpt-oss-20b asks for 365 days on how-to and evergreen questions: a window that long isn't news. It limits a
+    # search to the past year only when the question is about now ("latest", "current", "this year"...).
+    year = False
+    if recency_days and int(recency_days) > search.NEWS_MAX_DAYS and not _NEWSY.search(query):
+        year, recency_days = search.timely(f"{user_text()} {query}"), None
     news = bool(recency_days) or bool(_NEWSY.search(query))
-    days = max(1, min(int(recency_days or NEWS_DAYS), 365)) if news else None
+    days = max(1, min(int(recency_days or NEWS_DAYS), search.NEWS_MAX_DAYS)) if news else None
     # Google and the news aggregators aren't sources: with include_domains=["news.google.com"] Tavily found only
     # Google's own topic pages, and "an AI attack in PHP" got "I couldn't find any recent news" (2026-10-24). They're
     # dropped; with nothing else named, the search covers every site.
     domains = sorted({d for d in (_domain(d if "//" in d else "https://" + d) for d in domains or [] if str(d).strip())
                       if not _search_engine(d)})
-    kw = {"search_depth": "basic", "max_results": MAX_RESULTS, "include_usage": True,
-          "topic": "news" if news else "general", "timeout": providers.timeout_s("tavily", 30.0)}
-    if days:
-        kw["days"] = days
-    if domains:
-        kw["include_domains"] = domains
-    key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, tuple(domains))
-    resp = _call("search", key, query, lambda c: c.search(query, **kw))
-    if isinstance(resp, str):
-        # Tavily down or out of credits: for news, Google News' headlines still answer (2026-10-22: a Tavily
-        # ConnectionError became "I couldn't reach the news sites right now"). Not for a query refused for its
-        # personal data: Google would get it instead.
-        if resp.startswith(NOT_SEARCHED):
-            return resp
-        return (_google_fallback(query, days) if news and not domains else None) or resp
-    results = [r for r in resp.get("results", []) if r.get("url")][:MAX_RESULTS]
-    if not results:
-        return f"No results for '{query}'. Say you couldn't find it."
+    # A fact needs two independent publishers, so sites the model picked on its own are dropped (2026-10-25: gpt-oss-20b
+    # limited Everest's height to BBC, Reuters and CNN and answered "I couldn't confirm"); an official site, or one
+    # Mahadi named, stays.
+    dropped = []
+    if domains and search.classify(query, user_text(), days) == "fact":
+        asked = user_text().lower()
+        dropped = [d for d in domains if not is_official(d) and d.split(".")[0] not in asked]
+        domains = [d for d in domains if d not in dropped]
+    res = _search(query, days=days, domains=domains, news_topic=news, year=year)
+    if isinstance(res, str):
+        return res               # refused: personal data (Google News doesn't get it either)
+    widened = False
+    if domains and not res["failed"] and (not res["hits"] or res["intent"] == "fact" and len(
+            {_publisher(_domain(h["url"])) for h in res["hits"]}) < 2):
+        # The sites the model named had nothing, or, for a fact, fewer than the two publishers it needs: all sites
+        # once (2026-10-25: Everest's height searched on BBC and NYT alone came back "couldn't confirm").
+        wide = _search(query, days=days, news_topic=news, year=year)
+        if isinstance(wide, dict) and wide["hits"]:
+            seen = {search.url_key(h["url"]) for h in res["hits"]}
+            both = res["hits"] + [h for h in wide["hits"] if search.url_key(h["url"]) not in seen]
+            hits, _ = search.rerank(query, both, _leak(query))     # the best of both, not the narrow ones first
+            res = {**wide, "hits": hits, "found_by": list(dict.fromkeys(res["found_by"] + wide["found_by"]))}
+            widened = True
+    if not res["hits"]:
+        # Every engine down or out of credits: for news, Google News' headlines still answer (2026-10-22: a Tavily
+        # ConnectionError became "I couldn't reach the news sites right now").
+        failure = search.failure_text(res, query)
+        return ((_google_fallback(query, days) if res["failed"] and news and not domains else None) or failure)
     _turn["query"] = query
-    lines = [f"Results for '{query}'" + (f" (news, last {days} days)" if days else "") + ":"]
-    for i, r in enumerate(results):
+    found_by = " + ".join(search.LABELS[e] for e in res["found_by"])
+    lines = [f"Results for '{query}' ({search.INTENT_TEXT[res['intent']]}" + (f", last {days} days" if days else "")
+             + (", past year" if year else "") + f"; found by {found_by}"
+             + (", reused from a search a moment ago" if res["cached"] else "")
+             + ("; the sites asked for had too little, so all sites" if widened else "")
+             + ("; all sites, since a fact needs two independent publishers" if dropped else "") + "):"]
+    for i, r in enumerate(res["hits"]):
         s = _add_source(r)
         if i < READ_TOP and s["url"] not in _turn["top"]:
             _turn["top"].append(s["url"])
         _remember_text(s["domain"], f"{r.get('title', '')}\n{r.get('content', '')}")
         official = ", official" if s["official"] else ""
         snippet = " ".join((r.get("content") or "").split())[:SNIPPET_CHARS]
-        lines.append(f"[{s['n']}] {s['name']}{official}, {s['date_text']}, {s['url']} : {s['title']} - {snippet}")
+        via = f" (via {' + '.join(s['engines'])})" if s.get("engines") else ""
+        lines.append(f"[{s['n']}] {s['name']}{official}, {s['date_text']}{via}, {s['url']} : {s['title']} - {snippet}")
     conflicts = _conflicts()
     if conflicts:
         lines.append("Sources give different figures: " + "; ".join(conflicts) + ". Say they disagree.")
+    if res["intent"] == "fact":
+        lines.append("This is a fact or a figure: give the one that two different publishers above agree on, allowing "
+                     "for rounding (8,848.86 m and 8,849 m agree), or an official source's, and name them. Only if they "
+                     "truly differ, say the sources disagree; if just one gives it, say you couldn't confirm it.")
     lines.append(f"Answer in at most {MAX_SENTENCES} sentences and name the source and its date. "
                  "Only state a rate or price an official source gives or two sources agree on. "
                  "If the snippets don't answer it, read_page one of the top 3 results.")
@@ -385,13 +355,14 @@ def _add_news_item(item: dict) -> dict:
     return s
 
 
-def _tavily_news(topic: str, days: int, per_topic: int) -> dict | str:
-    """One Tavily news search for a topic Google News couldn't give (a credit): the response or a sentence."""
+def _engine_news(topic: str, days: int, per_topic: int) -> dict | str:
+    """A news search for a topic Google News couldn't give (search.py's news plan: Brave and Tavily): {"results"} or a
+    sentence."""
     query = f"{topic} news"
-    kw = {"search_depth": "basic", "max_results": per_topic + 2, "include_usage": True, "topic": "news", "days": days,
-          "timeout": providers.timeout_s("tavily", 30.0)}
-    key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, (), per_topic + 2)
-    return _call("search", key, query, lambda c: c.search(query, **kw))
+    res = _search(query, days=days, news_topic=True, intent="news", k=per_topic + 2)
+    if isinstance(res, str):
+        return res
+    return {"results": res["hits"]} if res["hits"] else search.failure_text(res, query)
 
 
 def headline_items(topics: list[str], per_topic: int = 1, days: int = 2, lang: str = "en") -> list[dict]:
@@ -415,9 +386,9 @@ def headline_items(topics: list[str], per_topic: int = 1, days: int = 2, lang: s
         seen.update(i["url"] for i in g["items"])
     missing = [(g, gnews.name(g["topic"]) if g["topic"] in gnews.TOPICS else topic)
                for g, topic in zip(groups, topics) if not g["items"]]
-    if missing:     # Google News down, or nothing for that topic: Tavily, all at once
+    if missing:     # Google News down, or nothing for that topic: the search engines, all at once
         with ThreadPoolExecutor(max_workers=len(missing)) as pool:
-            responses = list(pool.map(lambda m: _tavily_news(m[1], days, per_topic), missing))
+            responses = list(pool.map(lambda m: _engine_news(m[1], days, per_topic), missing))
         for (g, _), resp in zip(missing, responses):
             if isinstance(resp, str):
                 g["error"] = resp
@@ -480,20 +451,18 @@ def read_page(url: str) -> str:
         return f"Already read {MAX_READS} pages this turn; answer from what you have."
     _turn["reads"] += 1
     query = _turn["query"]
-    resp = _call("extract", ("extract", url, query.lower()), url,
-                 lambda c: c.extract(urls=[url], extract_depth="basic", query=query or None,
-                                     chunks_per_source=3, include_usage=True,
-                                     timeout=providers.timeout_s("tavily", 30.0)))
-    if isinstance(resp, str):
-        return resp
-    page = next((r for r in resp.get("results", []) if r.get("url") == url), None) or \
-        (resp.get("results") or [None])[0]
-    text = " ".join(((page or {}).get("raw_content") or "").split())
+    # Tavily's extract (sent the query only if Tavily may see it), or Firecrawl when that fails or hits a JavaScript
+    # wall; the model gets only the passages closest to the question.
+    text, engine, why = search.read(url, query, tavily=_client, private=_leak(query))
     if not text:
+        if why:
+            print(f"[web] couldn't read {url}: {why}")
         return "Couldn't read that page. Answer from the search results or try the next one."
     s = next(s for s in _turn["sources"] if s["url"] == url)
     _remember_text(s["domain"], text)
-    return f"[{s['n']}] {s['name']}, {s['date_text']} - page text: {text[:PAGE_CHARS]}"
+    passages = search.best_passages(text, f"{query} {user_text()}", PASSAGE_CHARS)
+    return (f"[{s['n']}] {s['name']}, {s['date_text']} - its most relevant passages (read with "
+            f"{search.LABELS.get(engine, engine)}): {passages}")
 
 
 TOOLS = [
@@ -573,13 +542,42 @@ _FIGURE = re.compile(
     r"gbp|pounds?|inr|rupees?|jpy|yen)(?![a-z])", re.I)
 
 
-def figures(text: str) -> list[tuple[float, str]]:
-    """Rates and prices in `text` as (value, unit): '1 USD = 122.50 BDT' -> [(1, USD), (122.5, BDT)]."""
+# After a fact search, measures and counts are checked too ("8,848.86 m", "171.5 million"): those questions need two
+# independent sources that agree, or an official one.
+_MEASURE_UNITS = {"m": "m", "meter": "m", "meters": "m", "metre": "m", "metres": "m", "km": "km", "kilometer": "km",
+                  "kilometers": "km", "kilometre": "km", "kilometres": "km", "ft": "ft", "foot": "ft", "feet": "ft",
+                  "mile": "mi", "miles": "mi", "kg": "kg", "kilogram": "kg", "kilograms": "kg", "ton": "t", "tons": "t",
+                  "tonne": "t", "tonnes": "t", "million": "million", "billion": "billion", "trillion": "trillion",
+                  "crore": "crore", "lakh": "lakh", "people": "people"}
+_MEASURE = re.compile(r"(?<![\d.,])(?P<n>" + _NUM + r")\s?(?P<u>meters?|metres?|m|kilomet(?:er|re)s?|km|feet|foot|ft|"
+                      r"miles?|kilograms?|kg|tonnes?|tons?|million|billion|trillion|crore|lakh|people)(?![a-z])", re.I)
+MEASURES = frozenset(_MEASURE_UNITS.values())
+
+
+def figures(text: str, measures: bool = False) -> list[tuple[float, str]]:
+    """Rates and prices in `text` as (value, unit): '1 USD = 122.50 BDT' -> [(1, USD), (122.5, BDT)]; with
+    `measures`, measures and counts too ('171.5 million' -> (171.5, million))."""
     out = []
     for m in _FIGURE.finditer(text or ""):
         num, unit = (m["n1"], _PRE[m["pre"].lower()]) if m["n1"] else (m["n2"], _POST[m["post"].lower()])
         out.append((float(num.replace(",", "")), unit))
+    if measures:
+        for m in _MEASURE.finditer(text or ""):
+            out.append((float(m["n"].replace(",", "")), _MEASURE_UNITS[m["u"].lower()]))
     return out
+
+
+def _publisher(domain: str) -> str:
+    """Who stands behind a site, so that two of one publisher's sites (bbc.com, bbc.co.uk) count as one source."""
+    if domain.startswith("outlet:"):
+        return domain[len("outlet:"):]
+    name = source_name(domain)
+    if name != domain:
+        return name.lower()
+    labels = domain.split(".")
+    keep = 3 if len(labels) >= 3 and labels[-2] in ("co", "com", "org", "net", "gov", "ac", "edu") \
+        and len(labels[-1]) == 2 else 2
+    return ".".join(labels[-keep:])
 
 
 def _close(a: float, b: float) -> bool:
@@ -587,7 +585,7 @@ def _close(a: float, b: float) -> bool:
 
 
 def _figures_by_domain() -> dict[str, list[tuple[float, str]]]:
-    return {d: figures(t) for d, t in _turn["texts"].items()}
+    return {d: figures(t, _turn.get("fact", False)) for d, t in _turn["texts"].items()}
 
 
 def _rivals(value: float, unit: str, by_domain: dict) -> dict[str, float]:
@@ -612,11 +610,13 @@ def _fmt(value: float, unit: str) -> str:
 
 
 def _conflicts() -> list[str]:
+    """Prices and rates the sources give differently (measures aren't compared: a page about a mountain names other
+    mountains' heights)."""
     by_domain = _figures_by_domain()
     seen, out = set(), []
     for d, figs in by_domain.items():
         for v, u in figs:
-            if v == 1 or (u, v) in seen:
+            if v == 1 or (u, v) in seen or u in MEASURES:
                 continue
             seen.add((u, v))
             rivals = _rivals(v, u, by_domain)
@@ -635,8 +635,8 @@ _BARE = re.compile(r"(?<![\d.,])(" + _NUM + r")(?![\d])")
 def _reply_figures(reply: str, by_domain: dict) -> list[tuple[float, str]]:
     """Figures in the reply: tagged ones, plus any bare number a source gives as a rate or price
     ("133.20 Bangladeshi takas" has no unit right after the number)."""
-    found = figures(reply)
-    source_figs = {f for figs in by_domain.values() for f in figs}
+    found = figures(reply, _turn.get("fact", False))
+    source_figs = {f for figs in by_domain.values() for f in figs if f[1] not in MEASURES}   # a date's "8" isn't 8 m
     for m in _BARE.finditer(reply):
         v = float(m.group(1).replace(",", ""))
         for sv, u in source_figs:
@@ -656,13 +656,15 @@ def check_reply(reply: str) -> list[str]:
         support = sorted(d for d, figs in by_domain.items() if any(u == unit and _close(v, value) for v, u in figs))
         if support and any(d in _turn["trusted"] for d in support):
             continue        # a live figure from a data API: an older one in a news snippet doesn't contradict it
-        rivals = _rivals(value, unit, by_domain)
+        confirmed = any(is_official(d) for d in support) or len({_publisher(d) for d in support}) >= 2
+        # A measure two publishers confirm stands: other values nearby are usually other things (K2 next to Everest).
+        rivals = {} if unit in MEASURES and confirmed else _rivals(value, unit, by_domain)
         if rivals and not flags_disagreement:
             others = ", ".join(f"{source_name(d)} says {_fmt(v, unit)}" for d, v in rivals.items())
             problems.append(f"{_fmt(value, unit)} is contradicted ({others}); say the sources disagree")
         elif not support:
             problems.append(f"{_fmt(value, unit)} isn't in any source; don't state it")
-        elif not flags_disagreement and not any(is_official(d) for d in support) and len(support) < 2:
+        elif not flags_disagreement and not confirmed:
             problems.append(f"{_fmt(value, unit)} comes only from {source_name(support[0])}, which isn't "
                             "official; say you couldn't confirm the figure instead of stating it")
     return problems
@@ -748,8 +750,9 @@ def status() -> dict:
         "has_key": bool(_key()), "cap": DAILY_CREDIT_CAP, "used_today": _count(credits_today()),
         "searches": sum(c["op"] == "search" and c["status"] == "ok" for c in today),
         "reads": sum(c["op"] == "extract" and c["status"] == "ok" for c in today),
-        "cache_hits": sum(c["status"] == "cached" for c in today), "cache_minutes": CACHE_SEC // 60,
-        "last_used": max((c["ts"] for c in today if c["status"] != "refused"), default=None), "last_error": _last_error,
+        "cache_hits": sum(c["status"] == "cached" for c in today), "cache_minutes": search.TTL["news"] // 60,
+        "last_used": max((c["ts"] for c in today if c["status"] != "refused"), default=None),
+        "last_error": providers.last_error("tavily"),
         "month": {**{k: month.get(k) for k in ("amount", "unit", "next_reset", "verified", "share")},
                   "used": _count(month.get("used"))},
         "state": providers.state("tavily")["state"] if providers.get("tavily") else "unknown",

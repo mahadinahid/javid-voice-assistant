@@ -1,0 +1,41 @@
+{
+ "source": "recorded 2026-10-25 from Tavily's search API (basic, 5 results); each snippet cut to 400 characters",
+ "body": {
+  "query": "Bangladesh population 2025",
+  "results": [
+   {
+    "url": "https://en.wikipedia.org/wiki/Demographics_of_Bangladesh",
+    "title": "Demographics of Bangladesh - Wikipedia",
+    "content": "As of mid-2025, the population of Bangladesh was estimated at 175,686,899 people, according to the United Nations World Population Prospects 2024 revision.\n\n### Population growth rate\n\n[edit] [...] [edit]\n\n\n\nThe population of Bangladesh has grown rapidly since 1947, when the region was part of East Pakistan. According to United Nations estimates, the population increased from approximately 44 mill",
+    "score": 0.95791626
+   },
+   {
+    "url": "https://www.unfpa.org/data/world-population/BD",
+    "title": "Bangladesh Population 2025 - United Nations Population Fund | United Nations Population Fund",
+    "content": "UNFPA Global share\n\nback\n\nBack to page\n\nShare on\n\nShare on\n\n# Bangladesh Population 2025 - United Nations Population Fund\n\nTotal Population (2025): 175,700,000\n\nBangladesh - Overview\n\n### Population\n\nPopulation, by age group, per cent\n\n Orange legend\n\n  Population aged 0-14\n Green legend\n\n  Population aged 15-64\n Violet legend\n\n  Population aged 65+\n\n### Sexual and Reproductive Health\n\nBirths atte",
+    "score": 0.9537642
+   },
+   {
+    "url": "https://www.worldeconomics.com/Demographics/Population/Bangladesh.aspx",
+    "title": "Bangladesh Population from 1950-2050 | Demographics on World Economics",
+    "content": "World Economics - The Global Authority on Geographic Investability\n\n#### Most popular:\n\n#### Asia - Pacific\n\n#### Americas\n\n#### Europe\n\n#### Africa\n\n#### Geographic Regions\n\n#### Thematic Regions\n\n#### Trade & Political Blocs\n\n#### Forums\n\n#### Ratings\n\n#### Methodologies\n\n# Bangladesh's Population: 175.1 million\n\nBangladesh's population is estimated by the United Nations to be 175.1 million in 2",
+    "score": 0.9380391
+   },
+   {
+    "url": "https://www.worldometers.info/world-population/bangladesh-population",
+    "title": "Bangladesh Population (2026) - Worldometer",
+    "content": "| 2025 | 175,686,899 | 1.22% | 2,124,535 | −402,100 | 26 | 2.11 | 1,350 | 42.6% | 74,837,709 | 2.1% | 8,231,613,070 | 8 |\n| 2024 | 173,562,364 | 1.22% | 2,095,374 | −473,362 | 25.7 | 2.14 | 1,333 | 42% | 72,825,128 | 2.1% | 8,161,972,572 | 8 |\n| 2023 | 171,466,990 | 1.23% | 2,082,093 | −549,918 | 25.3 | 2.16 | 1,317 | 41.3% | 70,806,614 | 2.1% | 8,091,734,930 | 8 |\n| 2022 | 169,384,897 | 0.92% | 1",
+    "score": 0.929036
+   },
+   {
+    "url": "https://en.wikipedia.org/wiki/Bangladesh",
+    "title": "Bangladesh",
+    "content": "316. ↑ \"Hospital beds (per 1,000 people) – Bangladesh\". World Bank. Retrieved 1 October 2022.\n317. ↑ \"Specialist surgical workforce (per 100,000 population) – Bangladesh\". World Bank. Retrieved 7 January 2025.\n318. ↑ \"Community health workers (per 1,000 people) – Bangladesh\". World Bank. Retrieved 7 January 2025.\n319. ↑ \"People using safely managed drinking water services (% of population) – Bangl",
+    "score": 0.5151571
+   }
+  ],
+  "usage": {
+   "credits": 1
+  }
+ }
+}

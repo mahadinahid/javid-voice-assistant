@@ -1,0 +1,20 @@
+{
+ "source": "Brave Search API's documented web search response, not recorded; BBC on a second domain (one publisher)",
+ "body": {
+  "type": "search",
+  "web": {
+   "type": "search",
+   "results": [
+    {
+     "title": "Bangladesh country profile",
+     "url": "https://www.bbc.co.uk/news/world-asia-bangladesh-profile",
+     "description": "Bangladesh, a nation of 171.5 million people, lies on the Bay of Bengal.",
+     "page_age": "2026-05-02T00:00:00",
+     "meta_url": {
+      "hostname": "bbc.co.uk"
+     }
+    }
+   ]
+  }
+ }
+}

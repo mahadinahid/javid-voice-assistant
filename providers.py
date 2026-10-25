@@ -49,7 +49,11 @@ USES = {
     "gemini": "backup chat model",
     "deepseek": "backup chat model (paid)",
     "ifm": "last backup chat model",
-    "tavily": "web search and page reads (news comes from Google News)",
+    "tavily": "web search (the default) and page reads; news comes from Google News",
+    "exa": "web search: companies or papers like X, and a fallback",
+    "brave": "web search: news, and a second index for facts",
+    "firecrawl": "reads a page Tavily can't (JavaScript)",
+    "cohere": "reranks web search results",
     "elevenlabs": "balance only: Javid's voice is edge-tts",
 }
 
@@ -116,6 +120,9 @@ def _normalize(raw: dict) -> dict:
         "allowance": allowance, "reset": reset, "rate_limit": rate,
         "costs": {str(k): float(_num(v, f"{name}: cost {k}") or 0) for k, v in costs.items()},
         "timeout_ms": int(min(300000, max(1000, _num(raw.get("timeout_ms", 30000), f"{name}: timeout_ms") or 30000))),
+        # search.py: how long an engine may take before the next one starts too (it isn't cut off then)
+        "soft_timeout_ms": (int(min(60000, max(50, _num(raw["soft_timeout_ms"], f"{name}: soft_timeout_ms"))))
+                            if raw.get("soft_timeout_ms") is not None else None),
         "personal_ok": raw.get("personal_ok") is True,               # only an explicit true allows personal data
     }
 
@@ -202,6 +209,11 @@ def personal_ok(name: str) -> bool:
 def timeout_s(name: str, default: float) -> float:
     entry = get(name)
     return entry["timeout_ms"] / 1000 if entry else default
+
+
+def soft_timeout_s(name: str, default: float) -> float:
+    entry = get(name)
+    return entry["soft_timeout_ms"] / 1000 if entry and entry.get("soft_timeout_ms") else default
 
 
 def unit_of(name: str) -> str:

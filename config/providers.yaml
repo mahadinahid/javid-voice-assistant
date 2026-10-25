@@ -20,6 +20,8 @@
 #   rate_limit   a short-window limit next to the allowance (amount, unit, per: minute): a call over it waits
 #   costs        what one call costs, in the allowance's unit, when the provider doesn't say it in its response
 #   timeout_ms   per request
+#   soft_timeout_ms  search engines (search.py): when this passes without an answer, the next engine starts too and
+#                the first usable answer wins; the slow one isn't cut off (that's timeout_ms)
 #   personal_ok  may it receive calendar, memory, chat history or tasks? false until Mahadi has read the
 #                provider's data policy and set it here himself. Without it, a provider gets requests with those
 #                stripped out, and a turn that needs them goes only to providers with personal_ok: true.
@@ -142,6 +144,7 @@ providers:
       extract_basic: 1     # Tavily reports a call's real credits in its response; that's what is counted
     reset: monthly_utc
     timeout_ms: 30000
+    soft_timeout_ms: 2500
     personal_ok: false
 
   - name: exa
@@ -159,6 +162,7 @@ providers:
       search: 0.005        # Exa reports each call's cost (costDollars); that's what is counted
     reset: monthly_utc
     timeout_ms: 20000
+    soft_timeout_ms: 2500
     personal_ok: false
 
   - name: brave
@@ -176,6 +180,7 @@ providers:
       search: 0.005        # $5 per 1,000 requests
     reset: monthly_utc
     timeout_ms: 20000
+    soft_timeout_ms: 2500
     personal_ok: false
 
   # ---------- page reading ----------
@@ -194,6 +199,7 @@ providers:
       scrape: 1
     reset: monthly_utc
     timeout_ms: 30000
+    soft_timeout_ms: 2500
     personal_ok: false
 
   # ---------- reranking ----------
@@ -212,6 +218,7 @@ providers:
       rerank: 1
     reset: monthly_utc
     timeout_ms: 15000
+    soft_timeout_ms: 2500
     personal_ok: false
 
   # ---------- voice ----------

@@ -2113,6 +2113,7 @@ def _personal_leak(text: str) -> str | None:
 
 
 web_tools.privacy_check = _personal_leak
+web_tools.user_text = lambda: _turn_text["text"]      # search.py reads the intent from the message too
 
 
 def _personal_models() -> list[str]:

@@ -73,8 +73,9 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   reaching for a personal tool) goes only to providers with `personal_ok`; with none, nothing is sent and Javid says
   so. The privacy tags never leave Javid (`_messages_for` strips them). Agents follow the same rule.
 - **Search queries**: a query carrying words from a task, a memory line or a calendar or task result isn't sent to a
-  search provider without `personal_ok`, and isn't handed to the Google News fallback (Mahadi's own words in that
-  message are allowed).
+  search engine without `personal_ok` (the search router checks each engine: Tavily, Exa, Brave), nor to Cohere for
+  reranking, nor to the Google News fallback (Mahadi's own words in that message are allowed). Firecrawl only ever
+  gets a result's URL. The router's cache (in memory) and the ledger never keep a query.
 - **Spending**: a provider is held back at 80 % of its free allowance and off at 95 %; a call whose cost would pass the
   allowance isn't made; a 429, a 402 or a quota error rests it until its retry-after, across restarts.
 - **The usage ledger** (`data/providers.db`, mode 600) holds provider, model, units, latency, status and an error's

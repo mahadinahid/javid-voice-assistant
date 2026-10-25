@@ -33,6 +33,9 @@ import yaml
 
 REGISTRY_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "providers.yaml")
 DB_FILE = os.path.join("data", "providers.db")
+# Providers whose rows go to another ledger file: regression.py's live cases send their fake search engines' calls there,
+# so a fake search never counts against a real allowance (the model requests stay in DB_FILE, where real use is).
+DB_ROUTES: dict[str, str] = {}
 # A new ledger starts from the usage Javid logged before it existed (once; regression.py empties this).
 IMPORT_FILES = {"llm": "llm_usage.jsonl", "tavily": "tavily_usage.jsonl"}
 KINDS = ("llm", "search", "extract", "rerank", "tts", "storage")
@@ -49,6 +52,8 @@ USES = {
     "gemini": "backup chat model",
     "deepseek": "backup chat model (paid)",
     "ifm": "last backup chat model",
+    "openrouter": "backup chat models: free ones only (ids ending :free)",
+    "cloudflare": "backup chat models, within the free daily neurons",
     "tavily": "web search (the default) and page reads; news comes from Google News",
     "exa": "web search: companies or papers like X, and a fallback",
     "brave": "web search: news, and a second index for facts",
@@ -113,6 +118,13 @@ def _normalize(raw: dict) -> dict:
     costs = raw.get("costs") or {}
     if not isinstance(costs, dict):
         raise ValueError(f"{name}: costs must be a mapping")
+    key_env = raw.get("key_env") or env[0]
+    if key_env not in env:
+        raise ValueError(f"{name}: key_env must be one of its env variables")
+    base_url = raw.get("base_url")
+    if base_url is not None and not (isinstance(base_url, str) and base_url.startswith("https://")
+                                     and set(re.findall(r"\{([A-Z0-9_]+)\}", base_url)) <= set(env)):
+        raise ValueError(f"{name}: base_url must be an https:// URL ({{VAR}} only for its own env variables)")
     return {
         "name": name, "label": str(raw.get("label") or name), "kind": raw["kind"], "env": env,
         "enabled": raw.get("enabled", True) is not False,           # only an explicit false turns it off
@@ -124,7 +136,33 @@ def _normalize(raw: dict) -> dict:
         "soft_timeout_ms": (int(min(60000, max(50, _num(raw["soft_timeout_ms"], f"{name}: soft_timeout_ms"))))
                             if raw.get("soft_timeout_ms") is not None else None),
         "personal_ok": raw.get("personal_ok") is True,               # only an explicit true allows personal data
+        "key_env": key_env, "base_url": base_url, "models": _models(name, raw.get("models")),
     }
+
+
+def _models(name: str, raw) -> list[dict]:
+    """A language model provider's models, in the order they're tried: {id, price, stream, options}."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        raise ValueError(f"{name}: models must be a list")
+    out = []
+    for item in raw:
+        item = {"id": item} if isinstance(item, str) else item
+        if not isinstance(item, dict) or not isinstance(item.get("id"), str) or not item["id"].strip():
+            raise ValueError(f"{name}: each model needs an id")
+        price = item.get("price")
+        if price is not None:
+            if not isinstance(price, dict) or _num(price.get("input"), f"{name}: price") is None \
+                    or _num(price.get("output"), f"{name}: price") is None:
+                raise ValueError(f"{name}: {item['id']}'s price needs input and output (per million tokens)")
+            price = {"input": float(price["input"]), "output": float(price["output"])}
+        options = item.get("options") or {}
+        if not isinstance(options, dict):
+            raise ValueError(f"{name}: {item['id']}'s options must be a mapping")
+        out.append({"id": item["id"].strip(), "price": price, "stream": item.get("stream", True) is not False,
+                    "options": options})
+    return out
 
 
 def _registry() -> dict[str, dict]:
@@ -206,6 +244,29 @@ def personal_ok(name: str) -> bool:
     return bool(entry) and entry["personal_ok"]
 
 
+def key_env(name: str) -> str:
+    """The .env variable holding the provider's API key (key_env, when env lists several)."""
+    return (get(name) or {}).get("key_env") or ""
+
+
+def base_url(name: str) -> str | None:
+    """The provider's endpoint with its {VAR} parts filled from the environment; None when one is missing."""
+    url = (get(name) or {}).get("base_url")
+    if not url:
+        return None
+    missing = [v for v in re.findall(r"\{([A-Z0-9_]+)\}", url) if not os.environ.get(v, "").strip()]
+    return None if missing else re.sub(r"\{([A-Z0-9_]+)\}", lambda m: os.environ[m.group(1)].strip(), url)
+
+
+def models(name: str) -> list[dict]:
+    return list((get(name) or {}).get("models", []))
+
+
+def model_entry(name: str, model: str) -> dict | None:
+    """One model's registry entry (its price, stream, options), by the provider's own id."""
+    return next((m for m in models(name) if m["id"] == model), None)
+
+
 def timeout_s(name: str, default: float) -> float:
     entry = get(name)
     return entry["timeout_ms"] / 1000 if entry else default
@@ -259,24 +320,25 @@ CREATE TABLE IF NOT EXISTS cooldowns (
     PRIMARY KEY (provider, model));
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
 """
-_db = {"path": None}
+_db = {"ready": set()}       # ledger files whose schema (and, for DB_FILE, the one-time import) is in place
 
 
 @contextlib.contextmanager
-def _db_con():
+def _db_con(provider: str = ""):
     """One connection per use (the server's threads, the CLI and the test suite all write to the ledger), committed
     when the block ends. The schema and the one-time import run the first time a path is used."""
-    path = DB_FILE
+    path = DB_ROUTES.get(provider, DB_FILE)
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     con = sqlite3.connect(path, timeout=10)
     try:
-        if _db["path"] != path:
+        if path not in _db["ready"]:
             with contextlib.suppress(OSError):
                 os.chmod(path, 0o600)       # owner-only, like Javid's other records of what Mahadi does
             with con:
                 con.executescript(_SCHEMA)
-            _import_once(con)
-            _db["path"] = path
+            if path == DB_FILE:
+                _import_once(con)
+            _db["ready"].add(path)
         with con:
             yield con
     finally:
@@ -327,7 +389,7 @@ def record(provider: str, units: float = 0.0, *, model: str = "", op: str = "", 
     """One call in the ledger. `detail` is a short, non-personal note (an error's kind, never a query or a key). A
     failed write is printed and dropped: accounting must never cost Mahadi his answer."""
     try:
-        with _db_con() as con:
+        with _db_con(provider) as con:
             con.execute("INSERT INTO calls (ts, provider, model, op, units, unit, latency_ms, status, detail) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (ts or time.time(), provider, model or "", op or "", float(units or 0), unit or unit_of(provider),
@@ -344,7 +406,7 @@ def used(provider: str, since: float | None = None, model: str | None = None, un
     if model:
         q, args = q + " AND model = ?", args + [model]
     try:
-        with _db_con() as con:
+        with _db_con(provider) as con:
             return float(con.execute(q, args).fetchone()[0])
     except sqlite3.Error:
         return 0.0
@@ -364,7 +426,7 @@ def calls(provider: str, since: float | None = None, model: str | None = None, o
     if exclude:
         q, args = q + f" AND status NOT IN ({','.join('?' * len(exclude))})", args + list(exclude)
     try:
-        with _db_con() as con:
+        with _db_con(provider) as con:
             rows = con.execute(q + " ORDER BY ts", args).fetchall()
     except sqlite3.Error:
         return []
@@ -378,7 +440,7 @@ def last_error(provider: str, model: str | None = None) -> dict | None:
     if model:
         q, args = q + " AND model = ?", args + [model]
     try:
-        with _db_con() as con:
+        with _db_con(provider) as con:
             row = con.execute(q + " ORDER BY ts DESC LIMIT 1", args).fetchone()
     except sqlite3.Error:
         return None
@@ -387,7 +449,7 @@ def last_error(provider: str, model: str | None = None) -> dict | None:
 
 def last_used(provider: str) -> float | None:
     try:
-        with _db_con() as con:
+        with _db_con(provider) as con:
             row = con.execute("SELECT MAX(ts) FROM calls WHERE provider = ? AND status != 'refused'", (provider,)).fetchone()
     except sqlite3.Error:
         return None
@@ -523,7 +585,7 @@ def cool(name: str, seconds: float, reason: str = "", model: str = "") -> float:
     """Keep the provider (or one model of it) out of use for `seconds`. A longer cooldown already running stays."""
     until = time.time() + max(1.0, float(seconds))
     try:
-        with _db_con() as con:
+        with _db_con(name) as con:
             con.execute("INSERT INTO cooldowns (provider, model, until, reason) VALUES (?, ?, ?, ?) "
                         "ON CONFLICT (provider, model) DO UPDATE SET reason = excluded.reason, "
                         "until = MAX(until, excluded.until)", (name, model or "", until, (reason or "")[:120]))
@@ -536,7 +598,7 @@ def cooldown(name: str, model: str = "", now: float | None = None) -> tuple[floa
     """(until, reason) of the cooldown that applies to this provider or model now, or (None, "")."""
     now = now or time.time()
     try:
-        with _db_con() as con:
+        with _db_con(name) as con:
             row = con.execute("SELECT until, reason FROM cooldowns WHERE provider = ? AND model IN ('', ?) AND until > ? "
                               "ORDER BY until DESC LIMIT 1", (name, model or "", now)).fetchone()
     except sqlite3.Error:
@@ -547,7 +609,7 @@ def cooldown(name: str, model: str = "", now: float | None = None) -> tuple[floa
 def clear_cooldown(name: str, model: str | None = None) -> None:
     """After a success (or a new key): the provider-wide cooldown and this model's, or all of them."""
     try:
-        with _db_con() as con:
+        with _db_con(name) as con:
             if model is None:
                 con.execute("DELETE FROM cooldowns WHERE provider = ?", (name,))
             else:
@@ -569,8 +631,9 @@ def _status(err) -> int | None:
 
 
 def explicit_wait(err) -> float | None:
-    """Seconds the error itself says to wait: a retry-after header (seconds or a date), or text like Groq's "try again
-    in 7m11s" or Google's "retry in 6h21m37s". None when it doesn't say."""
+    """Seconds the error itself says to wait: a retry-after header (seconds or a date), OpenRouter's X-RateLimit-Reset
+    (when its daily free limit refills), or text like Groq's "try again in 7m11s" or Google's "retry in 6h21m37s". None
+    when it doesn't say."""
     headers = getattr(getattr(err, "response", None), "headers", None) or {}
     header = headers.get("retry-after") if hasattr(headers, "get") else None
     if header:
@@ -581,6 +644,21 @@ def explicit_wait(err) -> float | None:
                 return max(1.0, parsedate_to_datetime(header).timestamp() - time.time())
             except (TypeError, ValueError, IndexError):
                 pass
+    reset = headers.get("x-ratelimit-reset") if hasattr(headers, "get") else None
+    if not reset:       # OpenRouter also puts its limit's headers in the error body: {"metadata": {"headers": {...}}}
+        body = getattr(err, "body", None)
+        body = body.get("error", body) if isinstance(body, dict) else None
+        meta = (body.get("metadata") or {}).get("headers") if isinstance(body, dict) else None
+        if isinstance(meta, dict):
+            reset = next((v for k, v in meta.items() if k.lower() == "x-ratelimit-reset"), None)
+    if reset:
+        try:
+            value = float(reset)
+            # OpenRouter: epoch milliseconds; others: epoch seconds or seconds from now
+            at = value / 1000 if value > 1e12 else value if value > 1e9 else time.time() + value
+            return max(1.0, at - time.time())
+        except ValueError:
+            pass
     m = _WAIT_TEXT.search(str(err))
     if m and any(m.groups()):
         h, mins, secs = (float(g) if g else 0.0 for g in m.groups())

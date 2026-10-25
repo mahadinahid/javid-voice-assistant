@@ -1,0 +1,15 @@
+{
+ "source": "OpenRouter's documented 429 for a free model rate-limited by the provider serving it, not recorded",
+ "status": 429,
+ "headers": {},
+ "body": {
+  "error": {
+   "code": 429,
+   "message": "google/gemma-4-31b-it:free is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://openrouter.ai/settings/integrations",
+   "metadata": {
+    "raw": "google/gemma-4-31b-it:free is temporarily rate-limited upstream",
+    "provider_name": "Google AI Studio"
+   }
+  }
+ }
+}

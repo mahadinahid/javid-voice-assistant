@@ -1,0 +1,18 @@
+{
+ "source": "OpenRouter's documented 429 for the account's free daily limit (openrouter.ai/docs/api-reference/limits), not recorded: RESET_MS is filled in by the test",
+ "status": 429,
+ "headers": {},
+ "body": {
+  "error": {
+   "code": 429,
+   "message": "Rate limit exceeded: free-models-per-day. Add 10 credits to unlock 1000 free model requests per day",
+   "metadata": {
+    "headers": {
+     "X-RateLimit-Limit": "50",
+     "X-RateLimit-Remaining": "0",
+     "X-RateLimit-Reset": "RESET_MS"
+    }
+   }
+  }
+ }
+}

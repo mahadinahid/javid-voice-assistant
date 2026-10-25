@@ -78,9 +78,25 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   gets a result's URL. The router's cache (in memory) and the ledger never keep a query.
 - **Spending**: a provider is held back at 80 % of its free allowance and off at 95 %; a call whose cost would pass the
   allowance isn't made; a 429, a 402 or a quota error rests it until its retry-after, across restarts.
+  - **OpenRouter** (2026-10-25) is free models only, enforced in code: a model id not ending in `:free` is refused
+    before any request (`javid._create`, `PaidModelRefused`), can't be saved in the chain, listed, pinged or smoke-
+    tested, and request fields that would route to another model are never sent. A response that reports any cost
+    rests OpenRouter for 30 days. Belt and braces on the account side: give the OpenRouter key a credit limit of $0.
+    Its free endpoints may log prompts or train on them (OpenRouter's data policy), one more reason `personal_ok`
+    stays false there.
+  - **Cloudflare Workers AI** is counted in neurons from each reply's tokens at the model's published price; a model
+    without a price is never called, and a request whose estimate could pass the free 10,000 a day isn't sent (on
+    the Workers Paid plan, more would be billed).
+- **Which models may change data** (2026-10-25): only a model with a pass in `config/model_tests.json` (tracked, written
+  by `regression.py --certify` from live tool tests: no unsafe call, tool-call accuracy ≥ 80 %) gets tools. Any other
+  model is chat-only: no tools in its requests, never a turn that needs one, and a write tool refuses to run for it
+  even if a call reaches it. A tool the round didn't offer never runs, whatever the provider passes through, and
+  malformed tool arguments are refused instead of crashing the turn.
 - **The usage ledger** (`data/providers.db`, mode 600) holds provider, model, units, latency, status and an error's
   class name per call: no query, no message text, no key.
-- Tests: `regression.py -k privacy` (stripped requests, refusals, search queries, a model reaching for the calendar),
+- Tests: `regression.py -k privacy` (stripped requests, refusals, search queries, a model reaching for the calendar,
+  OpenRouter and Cloudflare), `-k chain:` (OpenRouter's `:free` rule, a billed call, its 429s; Cloudflare's neurons),
+  `-k gate:` (chat-only models, the second locks, calls outside the offered tools, malformed arguments),
   `-k providers` (keys, windows, guard, cooldowns, the panel's JSON without keys), `-k "tests: the default run"`
   (no network in the default run).
 

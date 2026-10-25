@@ -214,8 +214,10 @@ def delegate(agent: str = "", task: str = ""):
     # block and the task without the chat it came from; an agent with personal tools (the planner reads the calendar
     # and the tasks) only runs on providers with personal_ok.
     request = _cfg["context"]() + f"Mahadi's request: {task}"
+    # An agent's whole job is its tools, so its requests go only to models that passed their tool tests (_needs_tools).
     msgs = [{"role": "system", "content": a["body"] + "\n\n" + _cfg["memory"](), "_public": a["body"]},
             {"role": "user", "content": request, "_public": request.split("\n(Earlier in this chat:")[0],
+             "_needs_tools": True,
              **({"_needs_personal": True} if set(a["tools"]) & _cfg.get("personal_tools", frozenset()) else {})}]
     rounds = _int(meta, "max-rounds", DEFAULT_ROUNDS)
     text = ""

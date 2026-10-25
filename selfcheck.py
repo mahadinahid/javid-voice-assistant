@@ -195,7 +195,7 @@ def _brain(groq_probe: tuple[bool, str]) -> dict:
         state = {"serving": "answering", "ready": "ready", "cooling": f"resting {m['retry_in_s'] // 60 + 1} min",
                  "off": "at its free limit", "reserve": "in reserve", "nokey": "no key",
                  "missing": "not on this key", "disabled": "turned off"}.get(m["state"], m["state"])
-        parts.append(f"{m['name']} ({state}{left})")
+        parts.append(f"{m['name']} ({state}{left}{'' if m.get('tools') else ', chat only'})")
     if not serving:
         problem = "None of my language models can answer right now: they're all resting or out of today's quota."
         bn = "এখন কোনো ল্যাঙ্গুয়েজ মডেলই উত্তর দিতে পারছে না: সবগুলো বিশ্রামে বা আজকের কোটা শেষ।"
@@ -206,6 +206,14 @@ def _brain(groq_probe: tuple[bool, str]) -> dict:
                "nokey": "has no key", "disabled": "is turned off in the providers file"}.get(primary["state"], "isn't available")
         problem = f"My main model, {primary['name']}, {why}, so {serving['name']} is answering."
         bn = f"আমার মূল মডেল {primary['name']} এখন পাওয়া যাচ্ছে না, তাই {serving['name']} উত্তর দিচ্ছে।"
+    # The tool gate (javid.tools_allowed): a chat-only model can talk, but tasks, calendar, memory and searches need one
+    # that passed its tool tests.
+    if serving and not serving.get("tools") and not any(
+            m.get("tools") and m["state"] in ("serving", "ready", "reserve") for m in models):
+        problem = ((problem + " " if problem else "") + f"{serving['name']} can only chat: none of the models I let use "
+                   "tools can answer now, so tasks, the calendar, memory and searches wait until one is back.")
+        bn = ((bn + " " if bn else "") + f"{serving['name']} শুধু কথা বলতে পারে: টুল ব্যবহারের অনুমতি থাকা কোনো মডেল এখন "
+              "উত্তর দিতে পারছে না, তাই কাজ, ক্যালেন্ডার, মেমরি আর সার্চ অপেক্ষায়।")
     if not groq_probe[0]:
         problem = (problem + " " if problem else "") + f"Groq didn't answer my check just now ({groq_probe[1]})."
         bn = (bn + " " if bn else "") + "Groq এখন সাড়া দিচ্ছে না।"

@@ -26,6 +26,22 @@
 #                provider's data policy and set it here himself. Without it, a provider gets requests with those
 #                stripped out, and a turn that needs them goes only to providers with personal_ok: true.
 #
+# Language model providers also have:
+#   base_url     their OpenAI-compatible endpoint; {VAR} is filled in from .env (Cloudflare's account id). Groq has
+#                none: Javid talks to it through Groq's own SDK.
+#   key_env      which of env holds the API key, when env lists several (default: the first)
+#   models       the models Javid may use there, in the order they're tried. The default model chain is these,
+#                provider by provider in priority order; the order saved from the Providers panel (llm_chain.json)
+#                replaces it. Each is an id, or a mapping:
+#                  id       the provider's model id. OpenRouter: only ids ending ":free" are ever called (in code,
+#                           javid._create: a paid model can't be reached from here)
+#                  price    a million tokens in the allowance's unit, {input, output} (Cloudflare's neurons). A
+#                           provider counted per token never calls a model without one: its usage couldn't be counted
+#                  stream   false asks for the whole reply at once (for a provider that can't stream tool calls)
+#                  options  extra request fields for this model
+#                Whether a model may use tools (and so change data) isn't set here: config/model_tests.json holds each
+#                model's tool tests (regression.py --certify), and a model without a pass there is chat-only.
+#
 # Budget guard (providers.py): at 80 % of an allowance a provider is "reserve" (used only when the others fail);
 # at 95 % it is off until its reset. A call that would go past a free allowance is never made. On a 429, 402 or a
 # quota error the provider (or that model, for per_model providers) cools down until its retry-after time.
@@ -45,6 +61,10 @@ providers:
     reset: headers         # Groq's daily limits refill continuously, not at midnight
     timeout_ms: 60000
     personal_ok: false     # Groq also does speech recognition (Whisper), which isn't routed: every voice clip goes there
+    models:
+      - openai/gpt-oss-20b
+      - openai/gpt-oss-120b
+      - qwen/qwen3.8-27b
 
   - name: gemini
     label: Google Gemini
@@ -61,6 +81,10 @@ providers:
     reset: daily_pacific
     timeout_ms: 30000
     personal_ok: false
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    models:
+      - gemini-3-flash-preview   # ~2 s, 5 requests a minute (2026-10-13)
+      - gemini-3.7-flash         # 6-17 s, often 503 "high demand"
 
   - name: openrouter
     label: OpenRouter (free models)
@@ -80,6 +104,10 @@ providers:
     reset: daily_utc
     timeout_ms: 30000
     personal_ok: false
+    base_url: https://openrouter.ai/api/v1
+    models:                      # free, with tool calling, in OpenRouter's list on 2026-10-25 (it changes often)
+      - google/gemma-4-31b-it:free
+      - nvidia/nemotron-3-super-120b-a12b:free
 
   - name: cloudflare
     label: Cloudflare Workers AI
@@ -92,9 +120,18 @@ providers:
       unit: neurons
       per: day
       verified: false
-    reset: daily_utc       # 00:00 UTC
+    reset: daily_utc       # 00:00 UTC; past it the Free plan errors and the Paid plan bills, so the guard stops at 95 %
     timeout_ms: 30000
     personal_ok: false
+    key_env: CLOUDFLARE_AI_TOKEN
+    base_url: https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1
+    models:                      # neurons per million tokens: developers.cloudflare.com/workers-ai/platform/pricing, 2026-10-25
+      - id: "@cf/openai/gpt-oss-120b"        # the same model as Groq's backup (~95 neurons a request)
+        price: {input: 31818, output: 68182}
+      - id: "@cf/openai/gpt-oss-20b"         # the same model as Groq's primary (~50 neurons a request)
+        price: {input: 18182, output: 27273}
+      - id: "@cf/meta/llama-4-scout-17b-16e-instruct"
+        price: {input: 24545, output: 77273}
 
   - name: deepseek
     label: DeepSeek
@@ -110,6 +147,9 @@ providers:
     reset: monthly_utc
     timeout_ms: 30000
     personal_ok: false
+    base_url: https://api.deepseek.com
+    models:
+      - deepseek-chat
 
   - name: ifm
     label: IFM K2 Horizon
@@ -125,6 +165,9 @@ providers:
     reset: daily_utc
     timeout_ms: 30000
     personal_ok: false
+    base_url: https://api.ifm.ai/v1
+    models:
+      - IFM/K2-Horizon-375B-A23B   # the only K2 Horizon size api.ifm.ai served on 2026-10-16
 
   # ---------- web search ----------
   - name: tavily

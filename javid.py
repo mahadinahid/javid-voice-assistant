@@ -58,21 +58,12 @@ UNAVAILABLE  = RATE_LIMITED + NOT_FOUND + BAD_KEY + OVERLOADED          # => try
 # ---------- settings ----------
 SAMPLE_RATE = 16000
 STT_MODEL = "whisper-large-v3-turbo"
+# The primary model. The whole chain comes from config/providers.yaml: each language model provider's `models`, provider
+# by provider in priority order (the order saved from the Providers panel replaces it). Groq models are bare ids, the
+# others "<provider>:<model>" ("gemini:gemini-3.7-flash", "openrouter:google/gemma-4-31b-it:free",
+# "cloudflare:@cf/openai/gpt-oss-120b"). A provider without its key in .env is skipped; a model that hasn't passed its
+# tool tests (config/model_tests.json) is chat-only.
 LLM_MODEL = "openai/gpt-oss-20b"
-# Tried in order when LLM_MODEL is rate-limited (free tier: 200k tokens/day per model) or down.
-# Quotas are per model, so each fallback has its own budget. Checked against this key's model list.
-# Entries without a prefix are Groq models; "gemini:<model>" goes to Google's OpenAI-compatible
-# endpoint (needs GEMINI_API_KEY), "deepseek:<model>" to DeepSeek's (needs DEEPSEEK_API_KEY, paid) and
-# "ifm:<model>" to IFM's (MBZUAI) K2 Horizon API at api.ifm.ai (needs IFM_API_KEY).
-# A provider without its key in .env is skipped.
-# Highest model that answered on the free tier on 2026-10-13 (tool calls OK). gemini-3.8-flash is newer
-# but returned 503 "high demand" on every try; gemini-3-flash-preview is much faster (~2 s vs 6-8 s).
-GEMINI_MODEL = "gemini-3.7-flash"
-DEEPSEEK_MODEL = "deepseek-chat"
-# The only K2 Horizon size api.ifm.ai served on 2026-10-16 (the others are open weights only).
-IFM_MODEL = "IFM/K2-Horizon-375B-A23B"
-LLM_FALLBACKS = ["openai/gpt-oss-120b", "qwen/qwen3.8-27b",
-                 f"gemini:{GEMINI_MODEL}", f"deepseek:{DEEPSEEK_MODEL}", f"ifm:{IFM_MODEL}"]
 # Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
 KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
 LLM_MIN_REQUEST_TOKENS = 1500   # one request is ~0.6-1.7k tokens (prompt + the tools sent); a turn ~2 requests
@@ -151,6 +142,10 @@ PHRASES = {
                          "free allowance. Try again in a few minutes.",
                    "bn": "এখন কোনো ল্যাঙ্গুয়েজ মডেল উত্তর দিতে পারছে না: সবগুলো বিশ্রামে বা ফ্রি সীমায় পৌঁছেছে। "
                          "কয়েক মিনিট পরে আবার চেষ্টা করো।"},
+    "no_tool_model": {"en": "I can't do that right now: the models I let use tools are resting or at their free limits. "
+                            "I can still chat; try that again in a few minutes.",
+                      "bn": "এখন এটা করতে পারছি না: যে মডেলগুলোকে টুল ব্যবহার করতে দিই, সেগুলো বিশ্রামে বা ফ্রি সীমায় "
+                            "আছে। কথা বলতে পারি; কয়েক মিনিট পরে আবার চেষ্টা করো।"},
 }
 # Shown under "no_personal" (never spoken: a file name read aloud helps nobody).
 NO_PERSONAL_SCREEN = ("Personal data (calendar, tasks, memory, past chats) only goes to providers marked personal_ok: true "
@@ -1292,18 +1287,28 @@ def _note_error(model: str, err: Exception) -> None:
 _load_quota()
 
 
-PROVIDERS = {
-    "groq":   {"label": "Groq"},
-    "gemini": {"label": "Google", "key_env": "GEMINI_API_KEY",
-               "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/"},
-    "deepseek": {"label": "DeepSeek", "key_env": "DEEPSEEK_API_KEY", "base_url": "https://api.deepseek.com"},
-    "ifm":    {"label": "IFM (K2 Horizon)", "key_env": "IFM_API_KEY", "base_url": "https://api.ifm.ai/v1"},
-}
 _provider_clients: dict = {}
+# OpenRouter serves paid models through the same key and endpoint: only its free variants, ids ending ":free", may ever
+# be called. Enforced here in code (_create refuses anything else before sending; _usable, set_chain, the model list and
+# the pings skip it), never left to config.
+FREE_ONLY = {"openrouter": ":free"}
+# Request fields that would let OpenRouter route to another model (paid ones included): never sent, whatever the
+# registry's options say.
+_ROUTING_FIELDS = ("models", "route", "fallbacks", "preset")
+_PRICED_UNITS = ("neurons", "usd")     # allowances counted per token: a model needs its price in the registry
+
+
+class PaidModelRefused(ValueError):
+    """A request for an OpenRouter model whose id doesn't end in ":free": refused before anything is sent."""
+
+
+def _chain_id(provider: str, name: str) -> str:
+    return name if provider == "groq" else f"{provider}:{name}"
 
 
 def default_chain() -> list[str]:
-    return [LLM_MODEL, *LLM_FALLBACKS]
+    """Every language model in config/providers.yaml, provider by provider in priority order."""
+    return [_chain_id(e["name"], m["id"]) for e in providers.entries("llm") for m in e["models"]] or [LLM_MODEL]
 
 
 def current_chain() -> list[str]:
@@ -1320,7 +1325,7 @@ def current_chain() -> list[str]:
 
 def set_chain(ids: list[str] | None) -> None:
     """Save a new model order (None restores the defaults). Every entry must be a default model
-    or one the provider's key actually lists, so typos can't end up in the chain."""
+    or one the provider's key actually lists, so typos can't end up in the chain; never a paid OpenRouter model."""
     if ids is None:
         try:
             os.remove(LLM_CHAIN_FILE)
@@ -1330,6 +1335,8 @@ def set_chain(ids: list[str] | None) -> None:
     if not 1 <= len(ids) <= 10 or len(set(ids)) != len(ids):
         raise ValueError("Pick between 1 and 10 different models.")
     for m in ids:
+        if _paid(m):
+            raise ValueError(f"{m} isn't free: only OpenRouter models whose id ends in ':free' can be used.")
         known = m in default_chain() or m in (_models_on_provider(_split(m)[0]) or [])
         if not known:
             raise ValueError(f"{m} isn't a model your keys can use.")
@@ -1338,26 +1345,44 @@ def set_chain(ids: list[str] | None) -> None:
 
 
 def _split(model_id: str) -> tuple[str, str]:
-    """'gemini:gemini-2.5-flash' -> ('gemini', 'gemini-2.5-flash'); a bare id is a Groq model."""
+    """'gemini:gemini-3.7-flash' -> ('gemini', 'gemini-3.7-flash'); a bare id is a Groq model. The prefix must be a
+    language model provider in config/providers.yaml (an OpenRouter id keeps its own ":free")."""
     provider, sep, name = model_id.partition(":")
-    return (provider, name) if sep and provider in PROVIDERS else ("groq", model_id)
+    entry = providers.get(provider) if sep else None
+    return (provider, name) if entry and entry["kind"] == "llm" else ("groq", model_id)
+
+
+def _paid(model_id: str) -> bool:
+    """An OpenRouter model that isn't one of its free variants (FREE_ONLY): never called."""
+    provider, name = _split(model_id)
+    return provider in FREE_ONLY and not name.endswith(FREE_ONLY[provider])
+
+
+def _label(provider: str) -> str:
+    return (providers.get(provider) or {}).get("label") or provider
+
+
+def _price(model_id: str) -> dict | None:
+    """A million tokens in the provider's own unit ({input, output}), from config/providers.yaml."""
+    provider, name = _split(model_id)
+    return (providers.model_entry(provider, name) or {}).get("price")
 
 
 def _key_env(provider: str) -> str:
-    """The .env variable holding a model provider's key: the one config/providers.yaml names, else the built-in."""
-    names = providers.env_names(provider)
-    return names[0] if names else PROVIDERS[provider].get("key_env", "GROQ_API_KEY")
+    """The .env variable holding a model provider's API key (config/providers.yaml)."""
+    return providers.key_env(provider) or "GROQ_API_KEY"
 
 
 def _provider_client(provider: str):
+    """Groq's own SDK client, or an OpenAI-compatible one on the provider's base_url (None without a key or URL)."""
     if provider == "groq":
         return client
-    if provider not in _provider_clients:
-        key = os.environ.get(_key_env(provider), "").strip()
-        _provider_clients[provider] = _openai.OpenAI(
-            api_key=key, base_url=PROVIDERS[provider]["base_url"], timeout=providers.timeout_s(provider, 30.0),
-            max_retries=0) if key else None
-    return _provider_clients[provider]
+    key, url = os.environ.get(_key_env(provider), "").strip(), providers.base_url(provider)
+    cached = _provider_clients.get(provider)
+    if cached is None or cached[0] != (key, url):
+        _provider_clients[provider] = ((key, url), _openai.OpenAI(
+            api_key=key, base_url=url, timeout=providers.timeout_s(provider, 30.0), max_retries=0) if key and url else None)
+    return _provider_clients[provider][1]
 
 
 def _has_key(model_id: str) -> bool:
@@ -1366,20 +1391,34 @@ def _has_key(model_id: str) -> bool:
 
 
 def _usable(model_id: str) -> bool:
-    """Its provider is on (enabled in config/providers.yaml, key in .env) and has a client."""
+    """Its provider is on (enabled in config/providers.yaml, key in .env) and has a client. Never a paid OpenRouter
+    model, nor one whose usage couldn't be counted (a provider counted per token, Cloudflare's neurons, without the
+    model's price)."""
     provider = _split(model_id)[0]
-    return providers.is_on(provider) and _provider_client(provider) is not None
+    return (providers.is_on(provider) and _provider_client(provider) is not None and not _paid(model_id)
+            and (providers.unit_of(provider) not in _PRICED_UNITS or bool(_price(model_id))))
+
+
+def _streams(model_id: str) -> bool:
+    provider, name = _split(model_id)
+    return (providers.model_entry(provider, name) or {}).get("stream", True)
 
 
 def _model_kwargs(model_id: str) -> dict:
     provider, name = _split(model_id)
     if provider == "gemini":
-        return {"reasoning_effort": "low"}      # keep thinking short: replies are spoken
-    # reasoning_effort is a gpt-oss knob. Qwen given reasoning_effort="none" skipped the
-    # tool call and claimed the task was added, so other models get their defaults.
-    if "gpt-oss" in name:
-        return {"reasoning_effort": "low", "include_reasoning": False}
-    return {}
+        kw = {"reasoning_effort": "low"}      # keep thinking short: replies are spoken
+    # reasoning_effort is a gpt-oss knob (include_reasoning is Groq's own). Qwen given reasoning_effort="none" skipped
+    # the tool call and claimed the task was added, so other models get their defaults.
+    elif provider == "groq" and "gpt-oss" in name:
+        kw = {"reasoning_effort": "low", "include_reasoning": False}
+    else:
+        kw = {}
+    options = {k: v for k, v in ((providers.model_entry(provider, name) or {}).get("options") or {}).items()
+               if not (provider in FREE_ONLY and k in _ROUTING_FIELDS)}
+    if options:
+        kw["extra_body"] = options
+    return kw
 
 
 def _messages_for(provider: str, msgs: list) -> list:
@@ -1387,7 +1426,7 @@ def _messages_for(provider: str, msgs: list) -> list:
     providers don't know the field, so it's stripped when failing over to them. IFM 400s
     on a follow-up turn unless every assistant message has a thinking field; "" is accepted
     (checked 2026-10-17), and history replies (other models, chat_log) have none to replay. The privacy tags
-    (_public, _personal, _needs_personal) never leave Javid."""
+    (_public, _personal, _needs_personal, _needs_tools) never leave Javid."""
     msgs = [{k: v for k, v in m.items() if not k.startswith("_")} for m in msgs]
     if provider == "ifm":
         msgs = [{**m, "reasoning_content": m.get("reasoning_content") or ""}
@@ -1400,20 +1439,44 @@ def _messages_for(provider: str, msgs: list) -> list:
             for m in msgs]
 
 
+def _as_stream(completion):
+    """A whole completion as the chunks a stream would have sent (its text and tool calls, then its usage): for a
+    model set to stream: false in config/providers.yaml."""
+    ns = types.SimpleNamespace
+    msg = completion.choices[0].message if completion.choices else None
+    calls = [ns(index=i, id=c.id, function=ns(name=c.function.name, arguments=c.function.arguments), model_extra={})
+             for i, c in enumerate(getattr(msg, "tool_calls", None) or [])]
+    yield ns(choices=[ns(delta=ns(content=getattr(msg, "content", None), tool_calls=calls or None))], usage=None,
+             x_groq=None)
+    yield ns(choices=[], usage=completion.usage, x_groq=None)
+
+
 def _create(model_id: str, msgs: list, *, tools=None, stream=False, max_tokens=None):
-    """One chat completion on whichever provider hosts `model_id`; returns the raw response."""
+    """One chat completion on whichever provider hosts `model_id`; returns the raw response. A paid OpenRouter model is
+    refused here, before anything is sent."""
+    if _paid(model_id):
+        raise PaidModelRefused(f"{model_id} isn't one of OpenRouter's free models (ids ending ':free'): not called")
     provider, name = _split(model_id)
     kw = _model_kwargs(model_id)
     if tools:
         kw["tools"] = tools
     if max_tokens:
         kw["max_tokens"] = max_tokens
-    if stream:
+    if provider in FREE_ONLY:
+        body = kw.setdefault("extra_body", {})
+        body["usage"] = {"include": True}     # the call's cost comes back with it: 0 for a free model (_check_cost)
+        if tools:
+            body["provider"] = {"require_parameters": True}   # only an endpoint that really takes the tools
+    whole = stream and not _streams(model_id)
+    if stream and not whole:
         kw["stream"] = True
         if provider != "groq":
             kw["stream_options"] = {"include_usage": True}   # else no token counts in the stream
-    return _provider_client(provider).chat.completions.with_raw_response.create(
+    raw = _provider_client(provider).chat.completions.with_raw_response.create(
         model=name, messages=_messages_for(provider, msgs), **kw)
+    if whole:
+        return types.SimpleNamespace(headers=raw.headers, parse=lambda: _as_stream(raw.parse()))
+    return raw
 
 
 def _is_unavailable(err: Exception) -> bool:
@@ -1434,16 +1497,25 @@ def _retry_after(err: Exception, default: float = 60.0) -> float:
     return providers.explicit_wait(err) or default
 
 
+_DAILY_LIMIT = re.compile(r"per.?day|daily", re.I)
+
+
 def _cool(model_id: str, err: Exception) -> float:
     """Rest a model after an error that makes it unavailable, in providers.py (so a restart respects it): only that
-    model when its provider's allowances are per model (Groq, Gemini) and the error is the model's (a 429, a missing
-    model, an outage); the whole provider for a rejected key or an empty balance. Returns the seconds."""
+    model when the error is the model's (a 429, a missing model, an outage; for Groq and Gemini, whose allowances are
+    per model, a quota too); the whole provider for a rejected key, an empty balance or an account's daily limit.
+    Returns the seconds."""
     provider = _split(model_id)[0]
     wait = _cooldown_for(err, provider)
     kind = providers.error_kind(err)
-    # a 403 for one model is that model's (access to it); a 401 is the key's, so the whole provider rests
-    own = providers.per_model(provider) and (kind in ("rate_limited", "quota", "missing", "unavailable")
-                                             or (kind == "auth" and getattr(err, "status_code", None) == 403))
+    if providers.per_model(provider):
+        # a 403 for one model is that model's (access to it); a 401 is the key's, so the whole provider rests
+        own = kind in ("rate_limited", "quota", "missing", "unavailable") or (
+            kind == "auth" and getattr(err, "status_code", None) == 403)
+    else:
+        # One allowance for the account (OpenRouter's free requests a day, Cloudflare's neurons): its daily limit rests
+        # the provider; a busy free model ("rate-limited upstream"), a missing one or an outage only that model.
+        own = kind in ("rate_limited", "missing", "unavailable") and not _DAILY_LIMIT.search(str(err))
     providers.cool(provider, wait, kind, model=model_id if own else "")
     return wait
 
@@ -1525,11 +1597,13 @@ def _model_state(model_id: str, now: float | None = None) -> dict:
     return providers.state(_split(model_id)[0], model_id, now=now)
 
 
-def _models_to_try(personal: bool = False) -> list[str]:
+def _models_to_try(personal: bool = False, tools: bool = False) -> list[str]:
     """The models to try, in chain order: the ready ones, then those in reserve (at 80 % of an allowance: used only
     when the others fail). A model resting after an error, or off (95 % of an allowance, no free tier, no key, turned
     off in config/providers.yaml), isn't tried. personal: the request carries calendar, memory, chat history or tasks,
-    so only providers with personal_ok may take it (PrivacyBlocked when no model in the chain has it)."""
+    so only providers with personal_ok may take it (PrivacyBlocked when no model in the chain has it). tools: the
+    request needs tools, so only models that passed their tool tests may take it (NoToolModel when only chat-only ones
+    could answer now)."""
     chain = [m for m in current_chain() if _usable(m)]
     if personal:
         chain = [m for m in chain if providers.personal_ok(_split(m)[0])]
@@ -1538,9 +1612,81 @@ def _models_to_try(personal: bool = False) -> list[str]:
     states = {m: _model_state(m)["state"] for m in chain}
     ready = [m for m in chain if states[m] == "ready"]
     reserve = [m for m in chain if states[m] == "reserve"]
+    if tools and (ready or reserve):
+        able = [m for m in ready + reserve if tools_allowed(m)]
+        if not able:
+            raise NoToolModel("only chat-only models can answer now")
+        ready, reserve = [m for m in ready if m in able], [m for m in reserve if m in able]
     if ready and reserve:
         print(f"[llm] {', '.join(reserve)} in reserve: used only if the others fail")
     return ready + reserve
+
+
+# ---------- the tool gate: only models that passed their tool tests use tools ----------
+# config/model_tests.json is written by regression.py --certify: each model's latest result on a fixed set of live cases
+# (writes, a must-not-write, reads, a plain chat). A model whose verdict is "tools" gets the turn's tools; any other model,
+# one never tested included, is chat-only: its requests go without tools, and a request that needs one skips it. Tracked
+# in git, so the evidence for every model that may change Mahadi's data is reviewed with the code.
+MODEL_TESTS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "model_tests.json")
+CERTIFYING: set[str] = set()      # regression.py --certify: the model under test has tools for its own tests
+_tests_cache = {"path": None, "mtime": None, "models": {}}
+_round_model = {"id": None}       # the model that answered the latest request (the write tools check it)
+refused_calls: list = []          # this turn's tool calls that weren't run: (tool, why) (regression.py --certify reads it)
+
+
+def model_tests() -> dict:
+    """{model id: its latest tool tests} from config/model_tests.json (read again when it changes)."""
+    try:
+        mtime = os.stat(MODEL_TESTS_FILE).st_mtime
+    except OSError:
+        return {}
+    if (_tests_cache["path"], _tests_cache["mtime"]) != (MODEL_TESTS_FILE, mtime):
+        try:
+            with open(MODEL_TESTS_FILE) as f:
+                found = json.load(f).get("models")
+        except (OSError, ValueError, AttributeError):
+            found = None
+        _tests_cache.update(path=MODEL_TESTS_FILE, mtime=mtime, models=found if isinstance(found, dict) else {})
+    return _tests_cache["models"]
+
+
+def tools_allowed(model_id: str) -> bool:
+    """May this model use tools, and so change Mahadi's data? Only if it passed its tool tests."""
+    return model_id in CERTIFYING or (model_tests().get(model_id) or {}).get("verdict") == "tools"
+
+
+def _needs_tools(msgs: list) -> bool:
+    """The request is part of a turn that needs tools: the turn's words point at one or one is required (think_stream
+    tags it), it already called one, or it's an agent's."""
+    return any(m.get("_needs_tools") or m.get("tool_calls") or m.get("role") == "tool" for m in msgs)
+
+
+_NO_TOOLS_NOTE = ("\n[No tools for this reply: answer from what you know. Don't say you looked anything up, set "
+                  "anything or changed anything.]")
+
+
+def _without_tools(msgs: list) -> list:
+    """A chat-only model's version of a request: the last user message says there are no tools."""
+    i = max((n for n, m in enumerate(msgs) if m["role"] == "user"), default=None)
+    if i is None or not isinstance(msgs[i].get("content"), str):
+        return msgs
+    return msgs[:i] + [{**msgs[i], "content": msgs[i]["content"] + _NO_TOOLS_NOTE}] + msgs[i + 1:]
+
+
+def _cleared(name: str, run):
+    """A write tool runs only for a model that passed its tool tests (the request routing already keeps chat-only
+    models away from tools; this is the second lock). No model recorded: the call was made in code."""
+    def call(args):
+        model = _round_model["id"]
+        if model and not tools_allowed(model):
+            refused_calls.append((name, "chat-only model"))
+            return f"Not done: {model} hasn't passed Javid's tool tests, so it can't change anything. Say so."
+        return run(args)
+    return call
+
+
+for _name in WRITE_TOOLS:
+    TOOL_MAP[_name] = _cleared(_name, TOOL_MAP[_name])
 
 
 _NON_CHAT = ("whisper", "orpheus", "tts", "guard", "embed", "image", "imagen", "veo", "live", "audio")
@@ -1553,14 +1699,20 @@ def _models_on_provider(provider: str) -> list[str] | None:
     c = _provider_client(provider) if providers.is_on(provider) else None
     if c is None:
         return None
+    if providers.unit_of(provider) in _PRICED_UNITS:   # counted per token (Cloudflare): only models with a price
+        return [_chain_id(provider, m["id"]) for m in providers.models(provider) if m["price"]]
     cache = _key_models.setdefault(provider, {"at": 0.0, "ids": None})
     if time.time() - cache["at"] > 600:
         t0 = time.time()
         try:
             listed = c.models.list().data
             providers.record(provider, 0, op="models", latency_ms=(time.time() - t0) * 1000)
-            raw_ids = sorted(m.id.removeprefix("models/") for m in listed)
+            raw_ids = sorted(m.id.removeprefix("models/") for m in listed
+                             if provider not in FREE_ONLY or "tools" in ((m.model_extra or {}).get(
+                                 "supported_parameters") or ["tools"]))
             keep = [i for i in raw_ids if not any(k in i for k in _NON_CHAT)]
+            if provider in FREE_ONLY:
+                keep = [i for i in keep if i.endswith(FREE_ONLY[provider])]
             if provider in ("gemini", "deepseek"):
                 keep = [i for i in keep if provider in i]
             elif provider == "ifm":
@@ -1584,7 +1736,7 @@ def llm_status() -> dict:
     # Our tally only starts when logging began; before that, usage is simply unknown to us.
     tracking_since = min((e["ts"] for e in everything), default=now)
     turns = _read_usage(now - 7 * 86400, LLM_TURNS_FILE)
-    on_key_by_provider = {p: _models_on_provider(p) for p in PROVIDERS}
+    on_key_by_provider = {e["name"]: _models_on_provider(e["name"]) for e in providers.entries("llm")}
     models = []
     for order, model in enumerate(chain):
         mine = [e for e in recent if e.get("model") == model]
@@ -1603,10 +1755,12 @@ def llm_status() -> dict:
             remaining = daily_left(model, now)       # refilling bucket, see daily_left
             est_used = quota["tpd_limit"] - remaining
         provider = _split(model)[0]
-        on_key = on_key_by_provider[provider]
+        on_key = on_key_by_provider.get(provider)
         guard = _model_state(model, now)
         cooling_for = max(0.0, (guard["until"] or now) - now) if guard["state"] == "cooldown" else 0.0
-        if guard["state"] in ("disabled", "unknown"):
+        if _paid(model):
+            state, guard["why"] = "disabled", "not one of OpenRouter's free models (ids ending :free): never called"
+        elif guard["state"] in ("disabled", "unknown"):
             state = "disabled"  # turned off (or missing) in config/providers.yaml
         elif not _has_key(model):
             state = "nokey"
@@ -1621,8 +1775,9 @@ def llm_status() -> dict:
         share = (guard["usage"] or {}).get("share")
         models.append({
             "id": model, "name": _split(model)[1].split("/")[-1], "order": order,
-            "provider": provider, "provider_label": PROVIDERS[provider]["label"],
+            "provider": provider, "provider_label": _label(provider),
             "key_env": _key_env(provider), "personal_ok": providers.personal_ok(provider),
+            "tools": tools_allowed(model), "tests": _test_summary(model), "free_only": provider in FREE_ONLY,
             "role": "primary" if order == 0 else "fallback", "state": state,
             "guard_why": guard["why"], "share": share, "off_until": guard["until"] if state == "off" else None,
             "retry_in_s": round(cooling_for), "tokens_24h": day, "per_turn": per_turn,
@@ -1641,11 +1796,12 @@ def llm_status() -> dict:
     if serving:
         serving["state"] = "serving"
     keys = {}
-    for name, cfg in PROVIDERS.items():
+    for e in providers.entries("llm"):
+        name = e["name"]
         key = os.environ.get(_key_env(name), "").strip()
-        keys[name] = {"label": cfg["label"], "key_env": _key_env(name),
+        keys[name] = {"label": e["label"], "key_env": _key_env(name),
                       "has_key": bool(key), "key_hint": key[-4:] if len(key) >= 8 else "",
-                      "editable": name != "groq"}   # the Groq key also drives speech, set it in .env
+                      "editable": _key_editable(name)}
     return {
         "providers": keys, "is_default_chain": chain == default_chain(),
         "now": now, "serving": serving["id"] if serving else None,
@@ -1658,6 +1814,22 @@ def llm_status() -> dict:
         "on_key": [{"id": i, "in_chain": i in chain, "provider": p}
                    for p, ids in on_key_by_provider.items() for i in ids or []],
     }
+
+
+def _test_summary(model: str) -> dict | None:
+    """What the Providers panel shows of a model's tool tests (config/model_tests.json)."""
+    t = model_tests().get(model)
+    if not t:
+        return None
+    return {k: t.get(k) for k in ("verdict", "tested", "cases", "pass_rate", "tool_accuracy", "unsafe", "median_s",
+                                  "why")}
+
+
+def _key_editable(provider: str) -> bool:
+    """A key that can be pasted in the Providers dialog: one variable (Cloudflare needs its account id too), and not
+    Groq's (it also drives speech recognition: set it in .env)."""
+    e = providers.get(provider)
+    return bool(e) and e["kind"] == "llm" and provider != "groq" and len(e["env"]) == 1 and bool(e["base_url"])
 
 
 def providers_status() -> dict:
@@ -1702,15 +1874,33 @@ def _forget_provider(provider: str) -> None:
             _model_info.get(m, {}).pop("last_error", None)
 
 
+class KeyRejected(ValueError):
+    """The provider said no to the key (OpenRouter's key check)."""
+
+
 def _verify_key(provider: str, c) -> None:
-    """Raise the provider's API error if it rejects the key; spends no tokens. api.ifm.ai lists
+    """Raise the provider's API error (or KeyRejected) if it rejects the key; spends no tokens. api.ifm.ai lists
     its models without checking the key at all, so IFM gets a chat request with no messages:
-    a bad key is a 401, a good one the 400 for the empty request (checked 2026-10-16)."""
+    a bad key is a 401, a good one the 400 for the empty request (checked 2026-10-16). OpenRouter's model list is
+    public too: its key endpoint checks the key (GET /key, which uses none of the free requests)."""
+    if provider == "openrouter":
+        import httpx
+        try:
+            r = httpx.get(str(c.base_url).rstrip("/") + "/key", headers={"Authorization": f"Bearer {c.api_key}"},
+                          timeout=15.0)
+        except httpx.HTTPError as e:
+            raise ConnectionError(type(e).__name__) from None
+        if r.status_code in (401, 403):
+            raise KeyRejected("rejected")
+        if r.status_code >= 400:
+            raise ConnectionError(f"HTTP {r.status_code}")
+        return
     if provider != "ifm":
         c.models.list()
         return
     try:
-        c.chat.completions.create(model=IFM_MODEL, messages=[], max_tokens=1)
+        c.chat.completions.create(model=(providers.models("ifm") or [{"id": "IFM/K2-Horizon-375B-A23B"}])[0]["id"],
+                                  messages=[], max_tokens=1)
     except API_ERRORS as e:
         if getattr(e, "status_code", None) not in (400, 422):   # key accepted, request refused
             raise
@@ -1719,16 +1909,21 @@ def _verify_key(provider: str, c) -> None:
 def set_provider_key(provider: str, key: str) -> None:
     """Check `key` against the provider (a model-list call: no tokens spent), then save it to
     .env and use it straight away. Raises ValueError with a message safe to show the user."""
-    cfg = PROVIDERS.get(provider, {})
-    if not cfg.get("key_env"):
+    if not _key_editable(provider):
         raise ValueError("That provider's key can't be changed here.")
+    cfg = {"label": _label(provider)}
     key = key.strip()
     if not _KEY_FORMAT.match(key):
         raise ValueError("That doesn't look like an API key (letters, digits, - _ . only, no spaces).")
     t0 = time.time()
     try:
-        _verify_key(provider, _openai.OpenAI(api_key=key, base_url=cfg["base_url"], timeout=15.0, max_retries=0))
-    except API_ERRORS as e:
+        _verify_key(provider, _openai.OpenAI(api_key=key, base_url=providers.base_url(provider), timeout=15.0,
+                                             max_retries=0))
+    except KeyRejected:
+        providers.record(provider, 0, op="verify", latency_ms=(time.time() - t0) * 1000, status="auth",
+                         detail="KeyRejected")
+        raise ValueError(f"{cfg['label']} rejected this key. Nothing was saved.") from None
+    except (*API_ERRORS, OSError) as e:
         providers.record(provider, 0, op="verify", latency_ms=(time.time() - t0) * 1000,
                          status=providers.error_kind(e), detail=type(e).__name__)
         if getattr(e, "status_code", None) in (400, 401, 403):
@@ -1742,8 +1937,7 @@ def set_provider_key(provider: str, key: str) -> None:
 
 
 def clear_provider_key(provider: str) -> None:
-    cfg = PROVIDERS.get(provider, {})
-    if not cfg.get("key_env"):
+    if not _key_editable(provider):
         raise ValueError("That provider's key can't be changed here.")
     _write_env(_key_env(provider), None)
     os.environ.pop(_key_env(provider), None)
@@ -1760,6 +1954,8 @@ def ping_models(only_provider: str | None = None) -> list[dict]:
         t0 = time.time()
         ms = lambda: round((time.time() - t0) * 1000)
         provider = _split(model)[0]
+        if _paid(model):
+            return {"id": model, "ok": False, "ms": 0, "skipped": True, "error": "Not tested: not a free model"}
         if not _has_key(model):
             return {"id": model, "ok": False, "ms": 0, "error": f"No API key: set {_key_env(provider)} in .env"}
         guard = _model_state(model)
@@ -1773,7 +1969,8 @@ def ping_models(only_provider: str | None = None) -> list[dict]:
             if done.usage:
                 _record_usage(model, done.usage)
             providers.clear_cooldown(provider, model)
-            providers.record(provider, _call_units(provider, done.usage), model=model, op="ping", latency_ms=ms())
+            providers.record(provider, _call_units(provider, done.usage, model, (12, 8)), model=model, op="ping",
+                             latency_ms=ms())
             return {"id": model, "ok": True, "ms": ms()}
         except Exception as e:
             kind = providers.error_kind(e) if isinstance(e, API_ERRORS) else "error"
@@ -1793,6 +1990,10 @@ class NoModelReady(Exception):
     key or turned off. Nothing is sent (think_stream says so)."""
 
 
+class NoToolModel(NoModelReady):
+    """The request needs tools and only chat-only models (no pass in config/model_tests.json) could answer now."""
+
+
 def _needs_personal(msgs: list) -> bool:
     """The request carries (or its turn needs) Mahadi's calendar, memory, chat history or tasks."""
     return any(m.get("_needs_personal") for m in msgs)
@@ -1806,27 +2007,64 @@ def _public_request(msgs: list, tools: list) -> tuple[list, list]:
     return out, [t for t in tools if t["function"]["name"] not in PERSONAL_TOOLS]
 
 
-def _call_units(provider: str, usage) -> float:
-    """One request in its provider's own unit: tokens for Groq, one for per-request allowances. A unit the response
-    doesn't give (usd, neurons) is left at 0 until that provider's own count is wired in."""
+def _call_units(provider: str, usage, model: str = "", estimate: tuple | None = None) -> float:
+    """One request in its provider's own unit: tokens for Groq, one for per-request allowances, and for a provider
+    counted per token (Cloudflare's neurons) its tokens at the model's price, from `estimate` ((input, output) tokens)
+    when the response gave no usage."""
     unit = providers.unit_of(provider)
     if unit == "tokens":
         return float(getattr(usage, "total_tokens", 0) or 0) if usage else 0.0
+    price = _price(model) if model else None
+    if price:
+        tin = getattr(usage, "prompt_tokens", None) if usage else None
+        tout = getattr(usage, "completion_tokens", None) if usage else None
+        if tin is None and estimate:
+            tin, tout = estimate
+        return round(((tin or 0) * price["input"] + (tout or 0) * price["output"]) / 1e6, 3)
     return 1.0 if unit in ("requests", "calls") else 0.0
+
+
+def _estimate(msgs: list, tools: list | None, out_tokens: int = 600) -> tuple[int, int]:
+    """(input, output) tokens a request takes, on the high side (3.5 characters a token): for the budget guard of a
+    provider counted per token, before a call and when a response gives no usage."""
+    chars = sum(len(str(m.get("content") or "")) + len(json.dumps(m.get("tool_calls") or "")) for m in msgs)
+    return int((chars + len(json.dumps(tools or []))) / 3.5) + 1, out_tokens
+
+
+def _check_cost(model: str, usage) -> None:
+    """OpenRouter reports what each call cost, and a free model's is 0. Anything more means a paid model was reached
+    somehow: OpenRouter is switched off (a 30-day rest, until someone checks the account) and it's said loudly."""
+    provider = _split(model)[0]
+    if provider not in FREE_ONLY or usage is None:
+        return
+    cost = getattr(usage, "cost", None)
+    if cost is None:
+        cost = (getattr(usage, "model_extra", None) or {}).get("cost")
+    if isinstance(cost, (int, float)) and cost > 0:
+        providers.cool(provider, 30 * 86400, "a call was billed: check the OpenRouter account")
+        print(f"[llm] {model} cost {cost}: OpenRouter is off until someone checks the account")
 
 
 def _open_stream(msgs: list, tools: list):
     """Start a streaming completion on the first model in the chain that may take this request (the budget guard:
     ready ones first, reserve ones only after them). The privacy rule: a request that needs personal data goes only to
-    providers with personal_ok; every other provider gets it without its personal parts (_public_request).
-    Returns (model, stream, start time)."""
-    candidates = _models_to_try(personal=_needs_personal(msgs))
+    providers with personal_ok; every other provider gets it without its personal parts (_public_request). The tool
+    gate: a model without a pass in config/model_tests.json gets the request without tools, and a request of a turn that
+    needs tools skips it. A provider counted per token (Cloudflare) isn't asked when this request could take it past its
+    free allowance. Returns (model, stream, start time)."""
+    candidates = _models_to_try(personal=_needs_personal(msgs), tools=bool(tools) and _needs_tools(msgs))
     if not candidates:
         raise NoModelReady("no model in the chain can take a request now")
     last_error = None
     for model in candidates:
         provider = _split(model)[0]
         send, send_tools = (msgs, tools) if providers.personal_ok(provider) else _public_request(msgs, tools)
+        if not tools_allowed(model):
+            send, send_tools = _without_tools(send), []
+        if _price(model) and not providers.allow(provider, model, _call_units(provider, None, model,
+                                                                              _estimate(send, send_tools)))[0]:
+            print(f"[llm] {model}: this request could go past its free allowance, skipping it")
+            continue
         t0 = time.time()
         try:
             raw = _create(model, send, tools=send_tools, stream=True)
@@ -1846,6 +2084,8 @@ def _open_stream(msgs: list, tools: list):
             print(f"[llm] answering with fallback {model}")
         llm_usage[model] = llm_usage.get(model, 0) + 1
         return model, raw.parse(), t0
+    if last_error is None:
+        raise NoModelReady("every model that could take this request is at its free allowance")
     raise last_error
 
 
@@ -1854,15 +2094,20 @@ def _stream_completion(tool_calls: dict, msgs: list, tools: list):
     usage ledger in its provider's own unit, with its latency."""
     span = tracing.llm_start()
     model, t0, done = None, time.time(), {}
+    _round_model["id"] = None
     try:
         model, stream, t0 = _open_stream(msgs, tools)
+        _round_model["id"] = model
         yield from _read_stream(model, stream, tool_calls, span, done)
     finally:
         tracing.llm_end(span, model)
         if model:
             provider = _split(model)[0]
-            providers.record(provider, _call_units(provider, done.get("usage")), model=model, op="chat",
+            units = _call_units(provider, done.get("usage"), model,
+                                _estimate(msgs, tools, int(done.get("out_chars", 0) / 3.5) + 1))
+            providers.record(provider, units, model=model, op="chat",
                              latency_ms=(time.time() - t0) * 1000, status="ok" if done.get("complete") else "aborted")
+            _check_cost(model, done.get("usage"))
 
 
 def _read_stream(model: str, stream, tool_calls: dict, span, done: dict | None = None):
@@ -1880,6 +2125,7 @@ def _read_stream(model: str, stream, tool_calls: dict, span, done: dict | None =
             continue
         delta = chunk.choices[0].delta
         if delta.content:
+            done["out_chars"] = done.get("out_chars", 0) + len(delta.content)
             yield delta.content
         for tc in delta.tool_calls or []:
             idx = tc.index
@@ -1896,6 +2142,7 @@ def _read_stream(model: str, stream, tool_calls: dict, span, done: dict | None =
                 slot["name"] += tc.function.name
             if tc.function and tc.function.arguments:
                 slot["arguments"] += tc.function.arguments
+                done["out_chars"] = done.get("out_chars", 0) + len(tc.function.arguments)
     done["complete"] = True
 
 
@@ -2033,7 +2280,7 @@ def _tools_used_in_previous_turn(turn_start: int) -> set[str]:
 
 def _model_name(model_id: str) -> str:
     provider, name = _split(model_id)
-    return f"{name.split('/')[-1]} on {PROVIDERS[provider]['label']}"
+    return f"{name.split('/')[-1]} on {_label(provider)}"
 
 
 def next_model() -> str:
@@ -2048,7 +2295,7 @@ def _self_facts() -> dict:
     chain = [m for m in current_chain() if _usable(m)] or default_chain()[:1]
     cleared = [e["label"] for e in providers.entries() if e["personal_ok"] and providers.is_on(e["name"])]
     return {"model": _model_name(chain[0]), "backups": [_model_name(m) for m in chain[1:]],
-            "provider": PROVIDERS[_split(chain[0])[0]]["label"], "stt": STT_MODEL,
+            "provider": _label(_split(chain[0])[0]), "stt": STT_MODEL,
             "personal_en": ", ".join(cleared) or "none yet", "personal_bn": ", ".join(cleared) or "এখনো কেউ না",
             "voice_en": EDGE_VOICE, "voice_bn": EDGE_VOICE_BN,
             "skills": [s["name"] for s in skills.all_skills()], "agents": [a["name"] for a in agents.all_agents()]}
@@ -2219,6 +2466,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     memory_store.new_turn()
     agents.new_turn()
     _new_proposals.clear()
+    refused_calls.clear()
+    _round_model["id"] = None
     _turn_text["text"] = user_text      # web_tools' privacy check lets through the words Mahadi said himself
     turn_start = len(messages)
     tools = select_tools(user_text, _tools_used_in_previous_turn(turn_start))
@@ -2311,6 +2560,10 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 print("[privacy] this needs personal data and no model provider has personal_ok: true")
                 raise providers.PrivacyBlocked("no model provider has personal_ok: true")
             messages[turn_start]["_needs_personal"] = True
+        # The tool gate (_open_stream): a turn whose words point at a tool, or that must call one, goes only to models
+        # that passed their tool tests; a chat-only model may answer the rest, without tools.
+        if _matched_tools(user_text, _tools_used_in_previous_turn(turn_start)) or required or agent_first or skill_first:
+            messages[turn_start]["_needs_tools"] = True
         said_searching = False
         # A reply in the wrong language, or a web answer that fails web_tools.check_reply, gets one
         # rewrite each. The rejected draft and the note go only into requests (never `messages`), at
@@ -2334,6 +2587,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
             for at, extra in reversed(notes):   # later notes first, so earlier cut points stay put
                 cut = len(req) - (len(messages) - at)
                 req = req[:cut] + extra + req[cut:]
+            _round_model["id"] = None      # set by the request (_stream_completion); none for a call made in code
             try:
                 if forced:      # this round's call was decided in code
                     tool_calls, text, forced = forced, "", None
@@ -2431,6 +2685,21 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 break
 
             calls = [tool_calls[i] for i in sorted(tool_calls)]
+            # Only tools this round offered run. Groq refuses a call to any other ("not in request", handled above by
+            # widening to every tool); other providers may pass one through, so the same happens here. A chat-only
+            # model was offered none. A call made in code (an agent's handover; regression.py's scripts) isn't checked.
+            served = _round_model["id"]
+            offered = (None if served is None else
+                       {t["function"]["name"] for t in round_tools} if tools_allowed(served) else set())
+            stray = [] if offered is None else [c["name"] for c in calls
+                                                if c["name"] not in offered and c["name"] not in blocked]
+            if stray and not widened and offered and round_no < rounds - 2:
+                print(f"[retry] needed a tool outside {sorted(offered)}: {stray}")
+                widened = True
+                tools = [t for t in TOOLS if not (skill_first and t["function"]["name"] in WEB_TOOLS)]
+                if PERSONAL_TOOLS & set(stray):
+                    messages[turn_start]["_needs_personal"] = True   # it reached for personal data
+                continue
             for c in calls:
                 c["id"] = c["id"] or f"call_{uuid.uuid4().hex[:12]}"   # some providers send none
             messages.append({
@@ -2445,9 +2714,21 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 ],
             })
             for call in calls:
-                if call["name"] in blocked:     # never run, never shown as running
+                if call["name"] in blocked or (offered is not None and call["name"] not in offered):   # never run
+                    if call["name"] not in blocked:
+                        refused_calls.append((call["name"], "not offered"))
                     messages.append({"role": "tool", "tool_call_id": call["id"],
                                      "content": f"{call['name']} isn't available for this message; answer without it."})
+                    continue
+                try:
+                    args = json.loads(call["arguments"] or "{}")
+                    if not isinstance(args, dict):
+                        raise ValueError("not an object")
+                except ValueError:     # Groq refuses malformed JSON itself; another provider may hand it over
+                    refused_calls.append((call["name"], "invalid arguments"))
+                    messages.append({"role": "tool", "tool_call_id": call["id"],
+                                     "content": f"Those {call['name']} arguments weren't valid JSON: call it again "
+                                                "with a JSON object."})
                     continue
                 if call["name"] in ("web_search", "news_headlines") and not said_searching:
                     said_searching = True
@@ -2457,13 +2738,13 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                     yield ("say", phrase("working", lang))     # an agent takes a while
                 yield ("tool", call["name"])
                 fn = TOOL_MAP.get(call["name"])
-                args = json.loads(call["arguments"] or "{}")
                 span = tracing.tool_start(call["name"])
                 try:
                     result = fn(args) if fn else f"Unknown tool: {call['name']}"
                     if isinstance(result, types.GeneratorType):   # an agent: relay its progress, then its result
                         result = yield from result
                 except TypeError as e:   # a made-up argument name (propose_memory(user=...)): let it retry
+                    refused_calls.append((call["name"], "wrong arguments"))
                     result = f"Wrong arguments for {call['name']}: {e}. Use only the parameters in its schema."
                 finally:
                     tracing.tool_end(span)
@@ -2502,6 +2783,10 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
         screen = NO_PERSONAL_SCREEN
         yield ("screen", screen)
         reply = phrase("no_personal", lang)
+        yield ("delta", reply)
+    except NoToolModel:
+        print("[llm] this turn needs tools and only chat-only models can answer now")
+        reply = phrase("no_tool_model", lang)
         yield ("delta", reply)
     except NoModelReady:
         print("[llm] no model in the chain can take a request now")

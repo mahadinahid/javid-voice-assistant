@@ -3702,7 +3702,7 @@ function renderModelsModal() {
             : m.state === 'off' ? `At ${pct != null ? pct + '% of ' : ''}its free allowance · off${m.off_until ? ' until <b>' + fmtWhen(m.off_until) + '</b>' : ' until it refills'}`
             : m.state === 'reserve' ? `${pct}% of its free allowance used (from ${Math.round(llmStatus.reserve_at * 100)}% it’s in reserve) · answers only when the models above can’t`
             : m.state === 'nokey' ? `No ${esc(m.provider_label)} API key yet — add it under <b>API keys</b> below`
-            : m.state === 'disabled' ? 'Its provider is turned off in <code>config/providers.yaml</code>'
+            : m.state === 'disabled' ? (m.free_only && m.guard_why ? esc(m.guard_why) : 'Its provider is turned off in <code>config/providers.yaml</code>')
             : m.state === 'missing' ? 'This model isn’t available to your API key' : STATE_TEXT[m.state];
         const role = m.role === 'primary' ? 'Primary' : `Fallback ${m.order}`;
         let daily;
@@ -3717,6 +3717,11 @@ function renderModelsModal() {
             daily = since + `<div class="mc-line"><b>${fmtN(t.total)}</b> tokens ${partial ? 'counted so far' : 'in the last 24 h'} · daily limit not reported yet</div>`;
         }
         const idle = m.state === 'nokey' || m.state === 'disabled';
+        // The tool gate: only a model that passed its tool tests (config/model_tests.json) gets tools and changes data.
+        const tt = m.tests;
+        const toolsLine = m.tools
+            ? `<div class="mc-line">Tools: <b>allowed</b>${tt ? ` · passed its tool tests ${esc(tt.tested)} (${Math.round(tt.tool_accuracy * 100)}% right over ${tt.cases} cases${tt.median_s != null ? `, ${tt.median_s} s a turn` : ''})` : ''}</div>`
+            : `<div class="mc-line">Tools: <b>chat only</b> · ${tt ? esc(tt.why) : 'no tool tests yet'} <span class="mc-dim">(regression.py --certify)</span></div>`;
         return `
         <div class="model-card ${m.state}">
             <div class="mc-head">
@@ -3731,6 +3736,7 @@ function renderModelsModal() {
             </div>
             <div class="mc-state">${stateLine}</div>
             ${m.provider !== 'groq' ? `<div class="mc-line">Requests go to <b>${esc(m.provider_label)}</b>, not Groq, when this model answers.</div>` : ''}
+            ${toolsLine}
             ${idle ? '' : daily}
             ${idle ? '' : `<div class="mc-line">In <b>${fmtN(t.prompt)}</b> · out <b>${fmtN(t.completion)}</b> · <b>${fmtN(t.requests)}</b> request${t.requests === 1 ? '' : 's'}${partial ? '' : ' (24 h)'}</div>`}
             ${m.per_turn ? `<div class="mc-line">Per turn (avg of last ${m.per_turn.turns}): in <b>${fmtN(m.per_turn.prompt)}</b>${m.per_turn.cached ? ` (${fmtN(m.per_turn.cached)} cached)` : ''} · out <b>${fmtN(m.per_turn.completion)}</b> · <b>${fmtN(m.per_turn.total)}</b> total · ${m.per_turn.requests} req</div>` : ''}

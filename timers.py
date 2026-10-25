@@ -177,7 +177,8 @@ def _bn_of(words: str) -> str:
 
 
 def _describe(t: dict, now: float) -> str:
-    name = (f"{t['label']} timer" if t["label"] else "timer") if t["kind"] == "timer" else f"reminder: {t['label']}"
+    name = ((f"{t['label']} timer" if t["label"] else "timer") if t["kind"] == "timer" else
+            f"alert: {t['label']}" if t["kind"] == "alert" else f"reminder: {t['label']}")
     if t["kind"] == "timer":
         return f"{name}, rings at {_clock(datetime.fromtimestamp(t['due']))} ({_left(t['due'], now)} left)"
     return f"{name}, {_when(t['due'])}"
@@ -252,6 +253,19 @@ def timers_tool(action: str = "list", which: str = "") -> str:
         _save(items)
     left = len(pending) - len(hits)
     return f"Cancelled {', '.join(_describe(t, now).split(',')[0] for t in hits)}. {left} still running."
+
+
+def add_alert(label: str, announce: dict) -> dict:
+    """An alert due now (watches.py: a price crossed its level, a story came out): the page rings it like a timer
+    and says the announcement in Javid's voice, Telegram and the CLI get it too."""
+    now = time.time()
+    with _lock:
+        items = _prune(_load(), now)
+        item = {"id": uuid.uuid4().hex[:10], "kind": "alert", "label": " ".join(label.split())[:80], "due": now,
+                "seconds": 0, "created": now, "fired": None, "announce": announce}
+        items.append(item)
+        _save(items)
+    return item
 
 
 # ---------- page and CLI ----------

@@ -33,10 +33,13 @@ import calc
 import calendar_tools
 import markets
 import memory_store
+import news
 import rates
+import selfcheck
 import skills
 import timers
 import tracing
+import watches
 import weather
 import web_tools
 
@@ -137,6 +140,8 @@ PHRASES = {
                    "bn": "দুঃখিত, গুলিয়ে ফেলেছি। আরেকবার বলবে?"},
     "holiday_unsure": {"en": "I couldn't confirm those holiday dates. Ask me again.",
                        "bn": "ছুটির তারিখগুলো নিশ্চিত করতে পারিনি। আবার জিজ্ঞেস করো।"},
+    "stt_failed": {"en": "I couldn't make that out: the speech recognition service didn't answer. Try again in a moment.",
+                   "bn": "কথাটা বুঝতে পারিনি: কথা চেনার সার্ভিস সাড়া দেয়নি। একটু পরে আবার বলো।"},
 }
 
 
@@ -435,7 +440,10 @@ def open_session(sid: str) -> bool:
     del messages[1:]
     turns = [e for e in _read_log() if e.get("session") == sid and e.get("role") in ("user", "assistant")
              and not (e["role"] == "assistant" and _is_garbled(e["text"]))]
-    messages.extend({"role": e["role"], "content": e["text"]} for e in turns[-CONTEXT_TURNS:])
+    # A reply keeps what it was based on (its tools and links), for "where did you get that?" after a restart.
+    messages.extend({"role": e["role"], "content": e["text"],
+                     **{k: e[k] for k in ("tools", "sources") if e["role"] == "assistant" and e.get(k)}}
+                    for e in turns[-CONTEXT_TURNS:])
     return True
 
 
@@ -856,6 +864,11 @@ class _Calc:
 
 
 _CALC_ASK = _Calc()
+# A question whose answer is a figure: when a web answer's figure can't be confirmed, the whole answer is replaced by
+# "couldn't confirm"; for any other question only the sentences with that figure go (web_tools.finalize).
+_FIGURE_ASK = re.compile(r"\b(?:rates?|prices?|costs?|how (?:much|many)|percent(?:age)?|inflation|gdp|growth|figures?|"
+                         r"numbers?|amount|value|worth|salary|fees?|fares?|tariffs?|scores?|population|interest)\b|%|"
+                         r"দাম|রেট|কত", re.I)
 # (request pattern, tool the answer needs, note for the one retry when the model answered without it)
 REQUIRED_TOOLS = [
     (_MEMORY_ASK, "propose_memory", "Mahadi asked you to remember that, and you can't save memory yourself: call "
@@ -1881,18 +1894,23 @@ def _self_facts() -> dict:
 
 
 def _code_answer(user_text: str):
-    """A rates question or a market brief that code answers whole (rates.request, markets.brief_request): a
-    function of the reply language giving the answer's generator. None leaves the message to the model."""
+    """A watch to set, list or cancel, a rates question, a market brief or a news request that code answers whole
+    (watches.request, rates.request, markets.brief_request, news.request): a function of the reply language giving
+    the answer's generator. None leaves the message to the model."""
+    if (req := watches.request(user_text)):     # first: "tell me when bitcoin goes above 70k" isn't a market brief
+        return lambda lang: watches.answer(req, lang)
     if (req := rates.request(user_text)):
         return lambda lang: rates.answer(req, lang)
     if (req := markets.brief_request(user_text)):
         return lambda lang: markets.brief(req, lang)
+    if (req := news.request(user_text)):
+        return lambda lang: news.answer(req, lang)
     return None
 
 
-def _relay(answer, lang: str):
+def _relay(answer, lang: str, used: list):
     """Pass a code answer's tool events on, with "Searching…" before its web search as for the model's, and
-    return its (spoken, screen)."""
+    return its (spoken, screen). The tools it used go in `used` (the reply records them)."""
     said_searching = False
     while True:
         try:
@@ -1901,6 +1919,7 @@ def _relay(answer, lang: str):
             return done.value
         if kind == "tool":
             print(f"[tool] {value} (answered in code)")
+            used.append(value)
             if value in WEB_TOOLS and not said_searching:
                 said_searching = True
                 yield ("say", phrase("searching", lang))
@@ -1949,6 +1968,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     screen = ""
     skill_results = []    # what the active skill's tools returned (the screen part if the model leaves it out)
     via_agent = None      # an agent's answer ({agent, spoken, screen}) when one handled the turn
+    code_tools = []       # tools a code answer used (the model's are in its tool calls)
+    previous = next((m for m in reversed(messages[1:turn_start]) if m["role"] == "assistant" and not m.get("tool_calls")), None)
     lang = get_language()
     try:
         _write_gate = gate
@@ -1973,15 +1994,18 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 reply = phrase("switched", lang)
                 yield ("delta", reply)
                 return
-        # Answered in code, no LLM request: a question about Javid itself (the model only guesses), a rates
-        # question or a market brief (the model only copied the figures, and got their sources wrong).
-        own = about.answer(user_text, lang, _self_facts())
-        in_code = None if own else _code_answer(user_text)
+        # Answered in code, no LLM request: a self-check or where the last answer came from (the model can't see
+        # either), a question about Javid itself (the model only guesses), a rates question, a market brief or a
+        # news request (the model only copied the figures and headlines, and got their sources wrong).
+        check = selfcheck.request(user_text)
+        own = None if check else about.answer(user_text, lang, _self_facts())
+        in_code = ((lambda lang: selfcheck.answer(check, user_text, lang, previous)) if check else
+                   None if own else _code_answer(user_text))
         if own or in_code:
             tracing.mark("routing_done")
         if in_code:
             try:
-                own = yield from _relay(in_code(lang), lang)
+                own = yield from _relay(in_code(lang), lang, code_tools)
             except Exception as e:      # a bug in a code answer must not lose the turn: the model answers it
                 print(f"[code] {type(e).__name__}: {e}; the model answers instead")
         if own:
@@ -2114,7 +2138,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                 # (problems were checked on the whole reply, screen part included, above)
                 # A skill's own spoken budget replaces the plain web answer's sentence cap.
                 text = web_tools.finalize(text, problems,
-                                          max_sentences=None if skill or via_agent else web_tools.MAX_SENTENCES)
+                                          max_sentences=None if skill or via_agent else web_tools.MAX_SENTENCES,
+                                          figure_asked=bool(_FIGURE_ASK.search(user_text)))
                 links = web_tools.sources()
                 yield ("sources", links)
             if not tool_calls and screen:
@@ -2194,9 +2219,13 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
         _write_gate = None
         # Runs on normal finish and when the client aborts mid-stream,
         # so history always gets whatever was actually said.
-        messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {})})
+        # What the reply was based on (its tools and links) stays with it: selfcheck answers "where did you get that?".
+        used = list(dict.fromkeys([c["function"]["name"] for m in messages[turn_start:] for c in m.get("tool_calls") or []]
+                                  + code_tools + sorted(agents.tools_used())))
+        basis = {**({"tools": used} if used else {}), **({"sources": links} if links else {})}
+        messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {}), **basis})
         if reply.strip():
-            log_message("assistant", reply.strip(), **({"sources": links} if links else {}),
+            log_message("assistant", reply.strip(), **basis,
                         **({"screen": screen} if screen else {}), **({"skill": skills.active()["name"]} if skills.active() else {}),
                         **({"agent": via_agent["agent"]} if via_agent else {}))
         _finish_turn_usage()
@@ -2215,7 +2244,16 @@ _TTS_CACHE_SIZE = 64
 # but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. Javid
 # waits and retries so the voice is always the locked one, never a substitute.
 EDGE_ATTEMPTS = 3
-EDGE_ATTEMPT_SEC = 6.0       # abandon a stalled try after this long and retry
+# A try waits this long for its first audio (longer on each retry), then at most EDGE_STALL_SEC between chunks: a
+# slow sentence that is still arriving is kept. A fixed 6 s for the whole sentence threw those away during a slow
+# spell (2026-10-24: every try of a news answer timed out while the endpoint answered a single request in 2-3.5 s).
+EDGE_FIRST_SEC = (6.0, 8.0, 10.0)
+EDGE_STALL_SEC = 4.0
+# At most this many syntheses at once. A news answer is 6-10 sentences and the page asks for all of them together:
+# ten at once took up to 4.7 s each (2-3 at once: ~1 s), so they ran into the time limit together. Not hedging: one
+# request per sentence, as before; the rest wait their turn (the waiting doesn't count against a try's time).
+EDGE_PARALLEL = 3
+_edge_slots = threading.BoundedSemaphore(EDGE_PARALLEL)
 
 
 # Bengali letters, not the whole block: the taka sign and Bengali digits are in it too, and "৳122.50" in an
@@ -2232,23 +2270,30 @@ def voice_for(text: str, lang: str | None = None) -> str:
     return VOICES[lang if lang in VOICES else get_language()]
 
 
-async def _edge_once(text: str, voice: str) -> bytes:
+async def _edge_once(text: str, voice: str, first_sec: float) -> bytes:
+    """One try: up to first_sec for the first chunk, then EDGE_STALL_SEC from each chunk to the next."""
     audio = b""
-    async for chunk in edge_tts.Communicate(text, voice).stream():
-        if chunk["type"] == "audio":
-            audio += chunk["data"]
+    async with asyncio.timeout(first_sec) as limit:
+        async for chunk in edge_tts.Communicate(text, voice).stream():
+            limit.reschedule(asyncio.get_running_loop().time() + EDGE_STALL_SEC)    # still arriving: keep going
+            if chunk["type"] == "audio":
+                audio += chunk["data"]
     if not audio:
         raise RuntimeError("edge-tts returned no audio")
     return audio
 
 
 def _edge_or_none(text: str, voice: str) -> bytes | None:
-    """edge-tts audio, or None if every try failed."""
+    """edge-tts audio, or None if every try failed. Each try is noted for the self-check."""
     for n in range(1, EDGE_ATTEMPTS + 1):
         try:
-            return asyncio.run(asyncio.wait_for(_edge_once(text, voice), EDGE_ATTEMPT_SEC))
+            with _edge_slots:
+                audio = asyncio.run(_edge_once(text, voice, EDGE_FIRST_SEC[min(n, len(EDGE_FIRST_SEC)) - 1]))
+            selfcheck.note_tts(True)
+            return audio
         except Exception as e:
             print(f"[tts] edge-tts {type(e).__name__} (try {n}/{EDGE_ATTEMPTS})")
+            selfcheck.note_tts(False, type(e).__name__)
     return None
 
 
@@ -2323,6 +2368,7 @@ def _ring_timers() -> None:
 def main() -> None:
     _restore_context()
     threading.Thread(target=_ring_timers, daemon=True).start()
+    watches.start()     # a watch that fires becomes a timer-style alert, which _ring_timers says
     greeting = startup_greeting()
     print(f"Javid: {greeting}")
     speak(greeting)

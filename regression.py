@@ -1,12 +1,12 @@
 """
-Regression check for Javid's agent behaviour: 111 cases, 66 of them prompts through the real LLM + tool loop.
+Regression check for Javid's agent behaviour: 139 cases, 63 of them prompts through the real LLM + tool loop.
 
     python regression.py              # run everything once
     python regression.py -n 3         # repeat each case 3x (the model is non-deterministic)
     python regression.py -k delete    # only cases whose name contains "delete"
     python regression.py -v           # print every reply, not just failures
     python regression.py --use-120b   # on gpt-oss-120b instead of the default gpt-oss-20b
-    python regression.py --offline    # only the 45 scripted cases: no LLM request, no tokens, a few seconds
+    python regression.py --offline    # only the 76 scripted cases: no LLM request, no tokens, a few seconds
 
 The scripted ("offline") cases fix the model's output to test what code decides whatever the model says: the
 garble guard, questions about Javid itself (about.py), the voice every spoken sentence gets, exchange rates
@@ -20,8 +20,10 @@ chain's 120b is the user's backup, so it is only used with --use-120b).
 Safe to run: tasks, memory, chat history and timers go to a temp dir, the Google Calendar is a
 fake in-memory service, and Tavily, the weather services and the price APIs are fakes with fixed
 results (no credits spent, no key needed). Your real data is never touched.
-Needs GROQ_API_KEY. A full run makes ~40-50 LLM requests (~40-45k tokens): on Groq's free tier
-(200k tokens/day for this model) that is half the day's budget, so don't loop it. Exit code: 0 all passed, 1 a check failed, 3 only API/network errors (inconclusive).
+Needs GROQ_API_KEY. A full live run makes ~175 LLM requests (~210k tokens, measured 2026-10-24): more than Groq's
+free daily budget for this model (200k), so it leaves the live Javid on its backup model for hours. Run the cases
+you touched with -k instead, and --offline for the scripted ones. Exit code: 0 all passed, 1 a check failed, 3 only
+API/network errors (inconclusive).
 """
 import argparse
 import contextlib
@@ -41,13 +43,17 @@ from datetime import date, datetime, timedelta
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import approvals  # noqa: E402
 import calendar_tools as ct  # noqa: E402
+import gnews  # noqa: E402
 import javid  # noqa: E402
 import markets  # noqa: E402
 import memory_store  # noqa: E402
 import rates  # noqa: E402
+import selfcheck  # noqa: E402
 import skills  # noqa: E402
 import telegram_bot  # noqa: E402
 import timers  # noqa: E402
+import tracing  # noqa: E402
+import watches  # noqa: E402
 import weather  # noqa: E402
 import web_tools  # noqa: E402
 from groq import Groq  # noqa: E402
@@ -216,6 +222,8 @@ javid.LLM_TURNS_FILE = os.path.join(SCRATCH, "llm_turns.jsonl")   # the Models p
 javid.LANGUAGE_FILE = os.path.join(SCRATCH, "language.json")      # never flips the real reply language
 web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
 timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings or lists the real timers
+watches.WATCHES_FILE = os.path.join(SCRATCH, "watches.json")       # never fires the real watches
+tracing.TRACES_FILE = os.path.join(SCRATCH, "traces.jsonl")        # offline Telegram cases wrote into the real latency log
 TURN_TOKENS: list[tuple[str, dict]] = []   # (case name, javid.last_turn_usage) for every turn run
 
 
@@ -402,6 +410,21 @@ WEB_FIXTURES[:0] = [   # news-digest topics; first, so "europe news" doesn't get
         hit("https://apnews.com/article/wall-street-tech-rally", "Wall Street ends higher on tech rally",
             "US stocks ended higher, led by technology shares.", YESTERDAY)]),
 ]
+WEB_FIXTURES[:0] = [   # 2026-10-24: "an AI attack in PHP", searched with domains=["news.google.com"]
+    (r"\bphp\b", [hit("https://www.reuters.com/world/asia-pacific/south-korea-php-security-flaws",
+                       "South Korea activates emergency response over PHP security flaws",
+                       "South Korea's government activated emergency measures after critical PHP flaws that could let "
+                       "attackers run commands on web servers, the science ministry said.", YESTERDAY)]),
+]
+WEB_FIXTURES[:0] = [   # "tell me more about the Japan story" after a news list: the search the model makes
+    (r"japan", [hit("https://www.aljazeera.com/news/japan-election-call", "Japan's prime minister calls snap election",
+                    "Japan's prime minister called a snap election for November, saying he needs a fresh mandate for "
+                    "his economic plan, broadcaster NHK reported.", TODAY)]),
+]
+WEB_FIXTURES[:0] = [   # a figure only the model gives (the 2026-10-22 "growth figure" answer)
+    (r"chip", [hit("https://www.reuters.com/technology/china-ai-chip-export-rules", "China tightens AI chip export rules",
+                   "China tightened export rules for advanced AI chips, the commerce ministry said on Thursday.", TODAY)]),
+]
 WEB_FIXTURES += [   # morning-brief headlines (news_headlines searches "<topic> news")
     (r"^bangladesh news$", [hit("https://www.thedailystar.net/padma-rail-freight", "Padma rail link opens to freight trains",
                                 "Freight trains began running on the Padma rail link on Tuesday, Bangladesh Railway said.", TODAY)]),
@@ -515,6 +538,90 @@ class FakeTavily:
                 "failed_results": [{"url": u} for u in urls if u not in WEB_PAGES], "usage": {"credits": 1}}
 
 
+# ---------- fake Google News (gnews.py): RSS built from fixtures, matched on the feed's section or query ----------
+def gn(title, source, domain, hours=2, cluster=()):
+    """One Google News item: its outlet, how many hours old, and the other outlets' (title, source) in its story."""
+    return (title, source, domain, hours, tuple(cluster))
+
+
+GNEWS_FIXTURES = [   # (pattern on "edition:section:NAME" / "edition:search:query", items); first match wins
+    (r"^en:section:WORLD$", [gn("UN climate talks open in Nairobi", "Reuters", "reuters.com", 1,
+                                [("UN climate summit opens in Nairobi", "AP News"), ("Climate talks begin in Kenya", "BBC")]),
+                             gn("Storms delay global shipping routes", "AP News", "apnews.com", 3)]),
+    (r"^en:search:\(Asia OR", [gn("Japan's prime minister calls snap election", "Al Jazeera", "aljazeera.com", 2),
+                              gn("Late monsoon floods hit northern Thailand", "BBC", "bbc.com", 5)]),
+    (r"^en:search:\(Europe OR", [gn("EU leaders back new migration deal", "The Guardian", "theguardian.com", 2),
+                                gn("French rail workers announce strike", "BBC", "bbc.com", 6)]),
+    (r'^en:search:\("Middle East"', [gn("Aid convoy reaches northern Gaza", "Al Jazeera", "aljazeera.com", 1),
+                                    gn("Iran and Oman hold talks in Muscat", "Reuters", "reuters.com", 7)]),
+    (r"^en:search:\(war OR", [gn("Ukraine says it struck a Russian refinery", "Reuters", "reuters.com", 2),
+                             gn("Sudan ceasefire talks resume in Jeddah", "BBC", "bbc.com", 9)]),
+    (r"^en:search:\(cricket OR", [gn("Bangladesh beat Zimbabwe by six wickets", "ESPNcricinfo", "espncricinfo.com", 4),
+                                 gn("Champions League: holders drawn against Inter", "BBC", "bbc.com", 3)]),
+    (r'^en:search:\("stock market"', [gn("Asian stocks fall 1.2% on rate worries", "Reuters", "reuters.com", 2),
+                                     gn("Wall Street ends higher on tech rally", "AP News", "apnews.com", 8)]),
+    (r"^en:search:Bangladesh", [gn("Padma rail link opens to freight trains", "The Daily Star", "thedailystar.net", 3)]),
+    (r'^en:search:"China"', [gn("China's exports beat forecasts in September", "Reuters", "reuters.com", 4)]),
+    (r"^en:search:\(AI OR", [gn("EU agrees new rules for AI chatbots", "BBC", "bbc.com", 5),
+                            gn("OpenAI opens an office in Dhaka", "TechCrunch", "techcrunch.com", 6)]),
+    (r"^en:search:\(bitcoin OR", [gn("Bitcoin steadies as ETF inflows return", "Reuters", "reuters.com", 2),
+                                 gn("Solana leads altcoin gains", "CoinDesk", "coindesk.com", 5)]),
+    (r"^en:section:BUSINESS$", [gn("Global oil prices climb as supply tightens", "Reuters", "reuters.com", 2)]),
+    (r"^en:search:Dhaka metro", [gn("Dhaka metro adds two new stations on Line 6", "The Daily Star", "thedailystar.net", 2)]),
+    (r"^en:search:Padma bridge", [gn("Padma Bridge toll collection crosses a milestone", "The Daily Star", "thedailystar.net", 30)]),
+    (r"^en:search:junk", [gn("Opinion | Why the markets are wrong", "CNN", "cnn.com", 1),
+                          gn("Latest news", "New Age BD", "newagebd.net", 1),
+                          gn("Fantasy football picks and predictions for week 8", "ESPN", "espn.com", 1),
+                          gn("Cricket Videos - Highlights | Match Highlights", "Cricinfo", "cricinfo.com", 1),
+                          gn("Dhaka flyover opens to traffic after three years", "Dhaka Tribune", "dhakatribune.com", 80),
+                          gn("Dhaka metro adds two new stations on Line 6", "The Daily Star", "thedailystar.net", 2)]),
+    (r"^bn:section:WORLD$", [gn("জাতিসংঘের জলবায়ু সম্মেলন শুরু নাইরোবিতে", "প্রথম আলো", "prothomalo.com", 2),
+                             gn("কলকাতায় দুর্গাপূজার ভিড়ে যানজট", "আনন্দবাজার পত্রিকা", "anandabazar.com", 1),
+                             gn("জাপানে আগাম নির্বাচনের ঘোষণা", "বিবিসি বাংলা", "bbc.com", 4),
+                             gn("ইউরোপে নতুন অভিবাসন চুক্তি", "bdnews24.com", "bangla.bdnews24.com", 6)]),
+    (r"^bn:section:NATION$", [gn("পদ্মা রেল সংযোগে মালবাহী ট্রেন চালু", "প্রথম আলো", "prothomalo.com", 3),
+                              gn("ঢাকায় মেট্রোরেলের সময় বাড়ল", "সমকাল", "samakal.com", 5)]),
+    (r"^bn:section:SPORTS$", [gn("জিম্বাবুয়েকে ছয় উইকেটে হারাল বাংলাদেশ", "প্রথম আলো", "prothomalo.com", 4)]),
+]
+
+
+class FakeGoogleNews:
+    """gnews._get's stand-in: the feed for a URL, as RSS bytes; down=True raises like a dead network."""
+    def __init__(self, down: bool = False):
+        self.urls, self.down = [], down
+
+    @staticmethod
+    def key(url: str) -> str:
+        import urllib.parse
+        parsed = urllib.parse.urlparse(url)
+        query = urllib.parse.parse_qs(parsed.query)
+        edition = "bn" if query.get("hl", [""])[0] == "bn" else "en"
+        if "/search" in parsed.path:
+            q = re.sub(r"\s+when:\d+d.*$", "", query.get("q", [""])[0])
+            return f"{edition}:search:{q}"
+        return f"{edition}:section:{parsed.path.rsplit('/', 1)[-1] if '/section/' in parsed.path else 'TOP'}"
+
+    def get(self, url: str) -> bytes:
+        from email.utils import format_datetime
+        from html import escape
+        from datetime import timezone
+        self.urls.append(url)
+        if self.down:
+            raise ConnectionError("Google News unreachable (fake)")
+        items = next((items for pat, items in GNEWS_FIXTURES if re.search(pat, self.key(url))), [])
+        now = datetime.now(timezone.utc)
+        out = ['<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Google News</title>']
+        for title, source, domain, hours, cluster in items:
+            link = f"https://news.google.com/rss/articles/fake-{abs(hash(title)) % 10**8}"
+            desc = "<ol>" + "".join(f'<li><a href="{link}">{escape(t)}</a>&nbsp;&nbsp;<font color="#6f6f6f">{escape(src)}</font></li>'
+                                    for t, src in ((title, source), *cluster)) + "</ol>" if cluster else ""
+            out.append(f"<item><title>{escape(title)} - {escape(source)}</title><link>{link}</link>"
+                       f"<pubDate>{format_datetime(now - timedelta(hours=hours))}</pubDate>"
+                       f"<description>{escape(desc)}</description><source url=\"https://{domain}\">{escape(source)}</source></item>")
+        out.append("</channel></rss>")
+        return "".join(out).encode()
+
+
 def next_weekday(wd: int) -> date:   # Monday = 0; always in the future
     return TODAY + timedelta(days=(wd - TODAY.weekday()) % 7 or 7)
 
@@ -606,6 +713,9 @@ class Case:
     speak: bool = False                          # speak each reply through /speak as the page does (fake edge-tts)
     page_lang: str = None                        # the language a (stale) page sends to /speak with each sentence
     drive: object = None                         # instead of turns: a function run in the same scratch world (Telegram)
+    gnews_down: bool = False                     # the fake Google News is down (web_down takes it down too)
+    tavily_down: bool = False                    # only the fake Tavily is down (Google News still answers)
+    after: object = None                         # run after the turns (a watch's later check); returns r.extra["after"]
 
 
 def _ran(r, name, turn=None):
@@ -1361,16 +1471,16 @@ CASES = [
           screen_lacks(r"dentist|project review|lunch with|hiking|call mom|buy milk")]),
     # The 2026-10-17 chat: searched topic by topic, ran out of tool rounds and answered "I can't pull that many".
     # Its "stock market mix" once sent it to the market agent instead (2026-10-19): news requests aren't market briefs.
-    Case("skill: news digest of many stories",
+    # Since 2026-10-24 news requests are answered in code from Google News (news.py): no model request.
+    Case("news: ten stories over six topics, in code",
          ["Bring me at least 10 news from all over the world including Asia, Europe, Middle East and also "
           "war news, sport news, and the stock market mix."],
-         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search", "read_page", "delegate"), spoken_within(60),
-          lambda r: None if len(re.findall(r"^\s*\d+[.)]", r.screen, re.M)) >= 10
-          else f"screen lists {len(re.findall(r'^\s*\d+[.)]', r.screen, re.M))} stories (want 10+)",
-          screen_has(r"japan|thailand", "an Asia story"), screen_has(r"migration|rail", "a Europe story"),
-          screen_has(r"gaza|iran", "a Middle East story"), screen_has(r"zimbabwe|champions league", "a sport story"),
-          reply_lacks(r"1\.2"), reply_lacks(r"can.?t (pull|get|fetch|bring)|couldn.?t (pull|get|fetch)"),
-          said_searching]),
+         [called("news_headlines"), not_called("web_search", "read_page", "delegate", "use_skill"), spoken_within(60),
+          numbered_lines_at_least(10), screen_has(r"japan|thailand", "an Asia story"),
+          screen_has(r"migration|rail", "a Europe story"), screen_has(r"gaza|iran", "a Middle East story"),
+          screen_has(r"zimbabwe|champions league", "a sport story"), reply_lacks(r"1\.2"),
+          reply_lacks(r"can.?t (pull|get|fetch|bring)|couldn.?t (pull|get|fetch)"), reply_has("full list is on your screen"),
+          said_searching, links_shown, model_requests(0)], script=[]),
     # ---------- tools added 2026-10-19 ----------
     # Javid made up "sunny, 28°C in India" in a greeting (2026-10-17) when it had no weather tool.
     Case("weather: today's forecast from the tool", ["What's the weather like today?"],
@@ -1419,18 +1529,16 @@ CASES = [
           reply_has(r"\b3\b|৩|তিন", "3 open tasks"), screen_has(r"padma|পদ্মা", "the Bangladesh headline")],
          tasks=T3, lang="bn"),
     # news-digest
-    Case("skill: news digest of two named regions", ["Give me world news headlines, three from Asia and three from Europe."],
-         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search", "read_page", "delegate"),
-          tool_arg("news_headlines", "topics", "asia"), tool_arg("news_headlines", "topics", "europe"),
+    Case("news: three from Asia and three from Europe, in code", ["Give me world news headlines, three from Asia and three from Europe."],
+         [called("news_headlines"), not_called("web_search", "read_page", "delegate"), numbered_lines_at_least(4),
           screen_has(r"japan|thailand", "an Asia story"), screen_has(r"migration|rail", "a Europe story"),
-          screen_lacks(r"gaza|iran|zimbabwe"), spoken_within(60)]),
-    Case("skill: news digest follow-up about one story",
-         ["Give me 5 news stories from around the world.", "Tell me more about the Japan story."],
-         [skill_ran("news-digest"), called_in_turn(0, "news_headlines"), reply_has("japan"),
-          reply_has(r"snap election|election", "the election story")]),
-    Case("skill: news digest in Bangla mode", ["বিশ্বের খবর দাও"],
-         [skill_ran("news-digest"), called("news_headlines"), not_called("web_search"), reply_in("bn"),
-          numbered_lines_at_least(4), spoken_within(60)], lang="bn"),
+          screen_lacks(r"gaza|iran|zimbabwe|nairobi"), spoken_within(60), model_requests(0)], script=[]),
+    Case("news: a follow-up about one story goes to the model, with the list",
+         ["Give me 5 news stories from Asia and Europe.", "Tell me more about the Japan story."],
+         [called_in_turn(0, "news_headlines"), reply_has("japan"), reply_has(r"snap election|election", "the election story")]),
+    Case("news: Bangla mode reads Bangladesh's Bangla edition, in Bangla", ["বিশ্বের খবর দাও"],
+         [called("news_headlines"), not_called("web_search"), reply_in("bn"), numbered_lines_at_least(3),
+          screen_lacks("আনন্দবাজার"), reply_lacks("আনন্দবাজার"), spoken_within(60), model_requests(0)], lang="bn", script=[]),
     # planner agent
     Case("agent: planner for a named day", ["Plan my day on Friday."],
          [agent_ran("planner"), called("list_events"), screen_has("dentist"), screen_has("friday"),
@@ -1676,7 +1784,8 @@ CASES = [
     Case("garble: twice garbled gets the apology, not the dots", ["Tell me a fun fact."],
          [reply_has("lost my train of thought"), reply_lacks(r"\.\.\.|…"), model_requests(2)],
          script=[GARBLED_2026_10_13, FRAGMENT_LOOP]),
-    Case("garble: a skill's garbled spoken part isn't diluted by its screen part", ["Give me world news headlines."],
+    Case("garble: a skill's garbled spoken part isn't diluted by its screen part",
+         ["Give me world news headlines and your take on them."],
          [skill_ran("news-digest"), reply_lacks(r"\.\.\.|…"), reply_has("snap election"), model_requests(4)],
          script=[call("use_skill", name="news-digest"), call("news_headlines", topics=["World", "Asia", "Europe"], per_topic=2),
                  "SPOKEN: I found... ... ... ... ...\nSCREEN:\n" + NEWS_SCREEN,
@@ -1709,7 +1818,265 @@ CASES = [
          script=[call("calculate", expression="17.5% of 2,340"), "It's 409.5, Mahadi.",
                  "It's a tidy result, not quite a round number."]),
 ]
-assert len(CASES) == 111, len(CASES)
+
+# ---------- news, self-check and watches (2026-10-24) ----------
+def junk_titles():
+    """The headlines Google News' "junk" search keeps after the filters (section pages, opinion, old, listicles)."""
+    web_tools.new_turn()
+    groups = web_tools.headline_items(["junk"], per_topic=10)
+    return {"titles": [i["title"] for g in groups for i in g["items"]]}
+
+
+def via_google(r):
+    return None if any(s.get("via") == "Google News" for s in r.sources) else "no Google News link was shown"
+
+
+def seed_hearing():
+    """Three hands-free clips dropped for having no "Javid" after the window, one answered; probes that don't go out."""
+    now = time.time()
+    for ago, mode, outcome, text in [(600, "wake", "ignored", "what's the weather tomorrow"),
+                                     (300, "followup", "answered", "and the AI news"),
+                                     (200, "wake", "ignored", "can you hear me"),
+                                     (60, "wake", "ignored", "why are you not answering me")]:
+        selfcheck._clips.append((now - ago, mode, outcome, text))
+    selfcheck._probe_groq = lambda: (True, "40 ms")
+    javid._key_models.update({p: {"at": time.time(), "ids": None} for p in javid.PROVIDERS})   # no model listing
+
+
+def no_probes():
+    selfcheck._probe_groq = lambda: (True, "40 ms")
+    javid._key_models.update({p: {"at": time.time(), "ids": None} for p in javid.PROVIDERS})
+
+
+def btc_rises_past(price):
+    """Later, bitcoin trades at `price`: two checks of the watches, a price interval apart. Returns the alerts."""
+    def after():
+        old = FAKE_TICKERS["BTCUSDT"]
+        FAKE_TICKERS["BTCUSDT"] = (str(price), *old[1:])
+        markets._cache.clear()
+        try:
+            watches.check_due(time.time() + watches.PRICE_SEC + 1)
+            watches.check_due(time.time() + 2 * watches.PRICE_SEC + 2)
+        finally:
+            FAKE_TICKERS["BTCUSDT"] = old
+        return {"alerts": [t for t in timers._load() if t["kind"] == "alert"], "active": watches.active_json()}
+    return after
+
+
+def padma_story_breaks():
+    item = gn("Padma Bridge rail link to open in December", "Reuters", "reuters.com", 1)
+    def after():
+        GNEWS_FIXTURES.insert(0, (r"^en:search:Padma bridge", [item, *GNEWS_FIXTURES[[p for p, _ in GNEWS_FIXTURES].index(r"^en:search:Padma bridge")][1]]))
+        gnews._cache.clear()
+        try:
+            watches.check_due(time.time() + watches.NEWS_SEC + 1)
+            watches.check_due(time.time() + 2 * watches.NEWS_SEC + 2)     # nothing newer: no second alert
+        finally:
+            GNEWS_FIXTURES.pop(0)
+        return {"alerts": [t for t in timers._load() if t["kind"] == "alert"], "active": watches.active_json()}
+    return after
+
+
+def dry_weather():
+    def fake(url, timeout=None):
+        data = fake_weather_get(url, timeout)
+        if "open-meteo" in url and "geocoding" not in url:
+            data["hourly"]["precipitation"] = [0.0] * len(data["hourly"]["precipitation"])
+            data["hourly"]["weather_code"] = [2] * len(data["hourly"]["weather_code"])
+        return data
+    weather._get_json = fake
+
+
+def rain_starts():
+    def after():
+        def wet(url, timeout=None):
+            data = fake_weather_get(url, timeout)
+            if "open-meteo" in url and "geocoding" not in url:
+                data["current"]["weather_code"] = 61
+            return data
+        weather._get_json = wet
+        weather._cache.clear()
+        watches.check_due(time.time() + watches.RAIN_SEC + 1)
+        return {"alerts": [t for t in timers._load() if t["kind"] == "alert"], "active": watches.active_json()}
+    return after
+
+
+def tts_under_load():
+    """Eight sentences at once through synthesize, against a fake edge-tts that streams each slowly (five chunks
+    120 ms apart) and stalls the first try of one sentence after its first chunk. Limits shrunk for the test."""
+    import threading
+    state = {"now": 0, "max": 0, "calls": {}, "lock": threading.Lock()}
+
+    class SlowCommunicate:
+        def __init__(self, text, voice, **options):
+            self.text = text
+
+        async def stream(self):
+            import asyncio
+            with state["lock"]:
+                state["now"] += 1
+                state["max"] = max(state["max"], state["now"])
+                state["calls"][self.text] = state["calls"].get(self.text, 0) + 1
+                first_try_of_stalled = self.text.startswith("Stalls") and state["calls"][self.text] == 1
+            try:
+                for i in range(5):
+                    await asyncio.sleep(0.12)
+                    yield {"type": "audio", "data": b"ID3 fake mp3"}
+                    if first_try_of_stalled:
+                        await asyncio.sleep(5)      # stops sending: the try must be abandoned and retried
+            finally:
+                with state["lock"]:
+                    state["now"] -= 1
+
+    old = (javid.edge_tts.Communicate, javid.EDGE_FIRST_SEC, javid.EDGE_STALL_SEC)
+    javid.edge_tts.Communicate, javid.EDGE_FIRST_SEC, javid.EDGE_STALL_SEC = SlowCommunicate, (0.3, 0.3, 0.3), 0.3
+    texts = [f"Sentence number {i} of the news answer, long enough to skip the phrase cache." for i in range(7)]
+    texts.append("Stalls after its first chunk on the first try, then streams normally on the retry.")
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            results = list(pool.map(lambda t: bool(javid.synthesize(t, "en")[0]), texts))
+    finally:
+        javid.edge_tts.Communicate, javid.EDGE_FIRST_SEC, javid.EDGE_STALL_SEC = old
+    return {"ok": results, "max": state["max"], "calls": state["calls"]}
+
+
+def alerts_are(n, pattern=None):
+    def check(r):
+        alerts = r.extra.get("after", {}).get("alerts", [])
+        if len(alerts) != n:
+            return f"expected {n} alert(s), got {[a['announce']['en'] for a in alerts]}"
+        if pattern and not all(re.search(pattern, a["announce"]["en"], re.I) for a in alerts):
+            return f"alert should match /{pattern}/: {[a['announce']['en'] for a in alerts]}"
+        return None
+    return check
+
+
+def watching(n):
+    return lambda r: None if len(watches.active_json()) == n else f"expected {n} active watch(es), got {watches.active_json()}"
+
+
+def reply_in_turn(i, pattern):
+    return lambda r: None if re.search(pattern, _plain(r.replies[i]), re.I) else f"turn {i + 1} should match /{pattern}/: {r.replies[i][:120]!r}"
+
+
+CASES += [
+    Case("news: 'show me the news' is answered in code, from Google News", ["Okay, show me the news"],
+         [called("news_headlines"), reply_has(r"reuters|bbc|daily star"), reply_has("full list is on your screen"),
+          numbered_lines_at_least(5), links_shown, via_google, said_searching, model_requests(0)], script=[]),
+    # 2026-10-22: "Can you show me the news briefing of today?" got "No pending tasks, Mahadi. Today's calendar is empty."
+    Case("news: 'the news briefing of today' is the news, not the task list",
+         ["Good evening my friend. Can you show me the news briefing of today?"],
+         [called("news_headlines"), not_called("morning_briefing"), reply_lacks(r"pending task|calendar is empty"),
+          numbered_lines_at_least(5), model_requests(0)], tasks=T3, script=[]),
+    # 2026-10-22: "Go to the Google and bring out top 10 AI development news" (three times, "why not just go to Google?").
+    Case("news: asked to use Google, it says Google News",
+         ["Go to the Google and bring out top 10 AI development news from the Google search engine and bring it to me."],
+         [reply_has("google news"), screen_has(r"chatbot|openai", "an AI story"), not_called("web_search"), model_requests(0)],
+         script=[]),
+    Case("news: with Google News down, a Tavily search fills in", ["What's up with the world news?"],
+         [lambda r: None if r.web.searches else "Tavily wasn't asked", screen_has(r"nairobi|shipping", "a world story"),
+          model_requests(0)], gnews_down=True, script=[]),
+    Case("news: with all the news down, it says so and invents nothing", ["Show me the world news"],
+         [reply_has(COULD_NOT), lambda r: None if not r.screen else f"a screen part with the news down: {r.screen[:80]!r}",
+          model_requests(0)], web_down=True, script=[]),
+    Case("news: section pages, opinion, listicles and old stories are left out", [],
+         [lambda r: None if r.extra["titles"] == ["Dhaka metro adds two new stations on Line 6"] else f"kept {r.extra['titles']}",
+          model_requests(0)], drive=junk_titles, script=[]),
+    Case("news: a question about one story still goes to the model", ["What's the latest news on the Dhaka metro rail?"],
+         [called("web_search"), not_called("news_headlines"), reply_has("11"), model_requests(2)],
+         script=[call("web_search", query="Dhaka metro rail latest news"),
+                 "The Dhaka Metro Rail will run until 11 PM from November 1, the Dhaka Tribune reports today."]),
+    # 2026-10-22: a Tavily ConnectionError became "I couldn't reach the news sites right now".
+    Case("news: web_search answers from Google News' headlines when Tavily is down",
+         ["Search the web for the latest news on the Dhaka metro rail."],
+         [called("web_search"), via_google, reply_has("two new stations"), model_requests(2)], tavily_down=True,
+         script=[call("web_search", query="Dhaka metro rail latest news"),
+                 "The Daily Star reports the Dhaka metro adds two new stations on Line 6, today."]),
+    # 2026-10-22: a news answer with one unconfirmed figure was replaced whole by "I couldn't confirm a specific
+    # growth figure"; for a question that didn't ask for a figure, only that sentence goes.
+    Case("web: an unconfirmed figure costs only its sentence when no figure was asked",
+         ["Search for news about the AI chip export rules from China."],
+         [called("web_search"), reply_has("tightened"), reply_lacks(r"12\.5"), reply_lacks("couldn't confirm"), model_requests(3)],
+         script=[call("web_search", query="China AI chip export rules news"),
+                 "Reuters reports China tightened AI chip export rules, today. Exports fell 12.5% last month.",
+                 "Reuters reports China tightened AI chip export rules, today. Exports fell 12.5% last month."]),
+    # ---------- self-check (selfcheck.py): from what Javid recorded, no model ----------
+    # 2026-10-22: "What's wrong? Why cannot you listen and answer?" was answered with a figure-check fallback about Reuters.
+    Case("selfcheck: 'what's wrong?' explains the ignored hands-free clips",
+         ["What's wrong? Why cannot you listen and answer?"],
+         [called("self_check"), reply_has(r"ignored 3 things"), reply_has("javid"), reply_has("talk button"),
+          screen_has("Hearing"), screen_has(r"Calendar: Google Calendar connected"), not_called("web_search"),
+          model_requests(0)], drive=seed_hearing, script=[]),
+    Case("selfcheck: 'evaluate the bug problems in your system' runs the self-check",
+         ["Can you evaluate the bug problems in your system so that I can fix the problem?"],
+         [called("self_check"), reply_has(r"checked myself"), screen_has("Brain"), screen_has("Voice"), model_requests(0)],
+         drive=no_probes, script=[]),
+    Case("selfcheck: in Bangla mode, in Bangla", ["কী সমস্যা তোমার?"],
+         [called("self_check"), reply_in("bn"), model_requests(0)], lang="bn", drive=no_probes, script=[]),
+    Case("selfcheck: 'where did you get that?' names Google News and the outlets", ["Show me the world news", "Where did you get that?"],
+         [reply_has("google news"), reply_has("reuters"), links_shown, model_requests(0)], script=[]),
+    # 2026-10-22: "Did you bring out the news from the Google?" got "I couldn't find any recent top-10 AI development stories".
+    Case("selfcheck: 'did you get the news from Google?' gets the true answer", ["Give me the AI news", "Did you bring out the news from the Google?"],
+         [reply_has(r"^yes"), reply_has("google news"), model_requests(0)], script=[]),
+    Case("selfcheck: a model-only answer says it wasn't checked", ["Tell me a fun fact.", "How do you know that?"],
+         [reply_has(r"own knowledge"), reply_has(r"look it up"), model_requests(1)], script=["Octopuses have three hearts, Mahadi."]),
+    Case("selfcheck: a price answer is credited to Binance", ["What's the bitcoin price right now?", "Where did you get that?"],
+         [reply_has("binance"), model_requests(2)],
+         script=[call("market_price", symbols=["BTC"]), "Bitcoin is at $82,152.34 on Binance, Mahadi."]),
+    Case("selfcheck: ordinary questions still go to the model", ["What's wrong with the economy?", "Who said that the earth is flat?"],
+         [not_called("self_check"), model_requests(2)],
+         script=["Inflation and slow growth, mostly.", "Nobody serious, Mahadi: that's a myth."]),
+    # ---------- watches (watches.py): set in code, checked in code, ring like timers ----------
+    Case("watch: a price level is set in code and rings once when crossed", ["Tell me when bitcoin goes above 90,000"],
+         [reply_has("watching bitcoin"), reply_has(r"82,?152"), reply_has(r"90,000"), called("market_price"),
+          alerts_are(1, r"above \$90,000.*90,500"), lambda r: None if not r.extra["after"]["active"] else "still watching after it fired",
+          model_requests(0)], after=btc_rises_past(90500), script=[]),
+    Case("watch: already past the level, it says so and sets nothing", ["Tell me when bitcoin goes above 80,000"],
+         [reply_has("already above"), watching(0), model_requests(0)], script=[]),
+    Case("watch: news about something, each new story once", ["Let me know when there's news about the Padma bridge"],
+         [reply_has("news about Padma bridge"), reply_has("toll", "the latest story now"), alerts_are(1, "rail link to open in december"),
+          model_requests(0)], after=padma_story_breaks(), script=[]),
+    Case("watch: listed and cancelled by voice",
+         ["Tell me when ETH drops below 2,000", "What are you watching?", "Cancel the ethereum alert", "What are you watching?"],
+         [reply_in_turn(0, r"watching ethereum"), reply_in_turn(1, r"ethereum below \$2,000"),
+          reply_in_turn(2, r"stopped watching ethereum"), reply_in_turn(3, r"not watching anything"), watching(0),
+          model_requests(0)], script=[]),
+    Case("watch: in Bangla mode, in Bangla", ["বিটকয়েন ৯০ হাজার ডলারের উপরে গেলে জানিও"],
+         [reply_in("bn"), watching(1), model_requests(0)], lang="bn", script=[]),
+    Case("watch: what it can't watch, it says so instead of promising", ["Tell me when the dollar rate goes above 125 taka"],
+         [reply_has("can't watch that"), watching(0), model_requests(0)], script=[]),
+    Case("watch: 'tell me if bitcoin is up today' is a question for the model", ["Tell me if bitcoin is up today."],
+         [called("market_price"), watching(0), model_requests(2)],
+         script=[call("market_price", symbols=["BTC"]), "Bitcoin is up 1.36% in 24 hours, Mahadi."]),
+    Case("watch: rain, rung when it starts", ["Tell me when it starts raining"],
+         [reply_has(r"starts raining in Dhaka"), alerts_are(1, "started raining in dhaka"), model_requests(0)],
+         drive=dry_weather, after=rain_starts(), script=[]),
+    # 2026-10-24: "I heard that there is an AI attack in PHP" was searched with domains=["news.google.com"]: Tavily
+    # found only Google's own topic pages, and the answer was "I couldn't find any recent news".
+    Case("web: Google's own domains are dropped from a web search", ["I heard there's an AI attack in PHP. Find the news."],
+         [called("web_search"), lambda r: None if r.web.searches and not r.web.searches[0][1].get("include_domains")
+          else f"searched {r.web.searches[0][1].get('include_domains') if r.web.searches else 'nothing'}",
+          lambda r: None if r.web.searches[1][1].get("include_domains") == ["reuters.com"] else
+          f"second search domains {r.web.searches[1][1].get('include_domains')}", reply_has("PHP"), model_requests(3)],
+         script=[call("web_search", query="AI attack PHP", domains=["news.google.com"], recency_days=7),
+                 call("web_search", query="critical vulnerability PHP news", domains=["news.google.com", "reuters.com"]),
+                 "Reuters reports South Korea activated an emergency response over critical PHP security flaws, yesterday."]),
+    # 2026-10-24: during a slow spell every try of a news answer's sentences hit the old 6 s limit for a whole sentence.
+    Case("voice: at most 3 sentences at once, a slow one that keeps arriving isn't cut, a stalled one is retried", [],
+         [lambda r: None if all(r.extra["ok"]) else f"failed: {r.extra['ok']}",
+          lambda r: None if r.extra["max"] <= javid.EDGE_PARALLEL else f"{r.extra['max']} syntheses at once",
+          lambda r: None if all(n == 1 for t, n in r.extra["calls"].items() if not t.startswith("Stalls"))
+          else f"a slow sentence was retried: {r.extra['calls']}",
+          lambda r: None if next(n for t, n in r.extra["calls"].items() if t.startswith("Stalls")) == 2
+          else f"the stalled sentence: {r.extra['calls']}", model_requests(0)],
+         drive=tts_under_load, script=[]),
+    # 2026-10-19: "Yeah, give me a plan for tomorrow." got a plan the model made up; it's the planner's.
+    Case("agent: 'give me a plan for tomorrow' goes to the planner", ["Yeah, give me a plan for tomorrow."],
+         [agent_ran("planner"), screen_has("project review"), model_requests(1)], tasks=T3, events=PLAN_EVENTS,
+         script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
+]
+assert len(CASES) == 139, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -1747,7 +2114,7 @@ def run_case(case: Case) -> Result:
     ct._service = lambda: svc
     ct.status = lambda: "connected"
     ct._pending_delete = None
-    fake_web = FakeTavily(down=case.web_down)
+    fake_web = FakeTavily(down=case.web_down or case.tavily_down)
     web_tools._client = lambda: fake_web
     web_tools._cache.clear()
     rates._get_json = fake_rates(case.rates_up, case.ecb_up)
@@ -1758,8 +2125,15 @@ def run_case(case: Case) -> Result:
     weather._skip_until["open-meteo"] = 0.0
     markets._get_json = fake_market_get
     markets._cache.clear()
-    if os.path.exists(timers.TIMERS_FILE):
-        os.remove(timers.TIMERS_FILE)
+    fake_gnews = FakeGoogleNews(down=case.web_down or case.gnews_down)
+    gnews._get = fake_gnews.get
+    gnews._cache.clear()
+    for f in (timers.TIMERS_FILE, watches.WATCHES_FILE):
+        if os.path.exists(f):
+            os.remove(f)
+    selfcheck._clips.clear()
+    selfcheck._tts.clear()
+    selfcheck._stt.clear()
     del javid.messages[1:]
 
     tools, replies, by_turn, sources, said, langs, screens, skills_run, agents_run = [], [], [], [], [], [], [""], [], []
@@ -1815,6 +2189,9 @@ def run_case(case: Case) -> Result:
             by_turn.append(len(svc.log))
             langs.append(javid.get_language())
             facts_by_turn.append(_all_facts())
+        if case.after:
+            with contextlib.redirect_stdout(io.StringIO()):
+                extra["after"] = case.after()
     finally:
         javid.TOOL_MAP.update(real_map)
         _script = None
@@ -1856,7 +2233,7 @@ def main() -> int:
         print(f"Not running: {problem[:400]}\n\nNothing was tested (exit 3). Wait for the limit to reset and rerun.")
         return 3
     left = javid.daily_left(chain[0])
-    need = 1400 * sum(len(c.turns) for c in live) * args.repeat     # ~1.4k tokens per turn, measured
+    need = 2800 * sum(len(c.turns) for c in live) * args.repeat     # 2,785 tokens per turn, measured 2026-10-24
     if left is not None and left < need:
         print(f"warning: {chain[0]} has ~{left:,} of its daily tokens left and this run needs ~{need:,}; "
               f"it will probably stop early (it refills ~{javid._tpd_limit(chain[0])[0] // 24:,}/hour)\n")

@@ -115,18 +115,19 @@ _SPOKEN = {
         "bn": "আমার উত্তর লেখে একটা ল্যাঙ্গুয়েজ মডেল, এখন {model}{backup}। তোমার কাজ, ক্যালেন্ডার, আবহাওয়া, দাম আর "
               "হিসাব আসে কোডের টুল থেকে, মডেলের মনে রাখা থেকে না।"},
     "search": {
-        "en": "I search the web through Tavily, a search service, not Google itself, and I name the source and date. "
-              "I only state a price or rate that an official site or two separate sites give, so tell me what to "
-              "look up and I'll search.",
-        "bn": "আমি Google না, Tavily নামের একটা সার্চ সার্ভিস দিয়ে ওয়েবে খুঁজি, আর উৎস ও তারিখ বলি। কোনো দাম বা রেট "
-              "বলি শুধু সরকারি সাইট বা দুটো আলাদা সাইটে পেলে; কী খুঁজব বলো।"},
+        "en": "For news I read Google News directly: its top stories and searches of outlets like Reuters, the BBC, AP "
+              "and The Daily Star. Other questions go through Tavily, a web search service, and I name the source and "
+              "date; I only state a price or rate that an official site or two separate sites give.",
+        "bn": "খবরের জন্য সরাসরি Google News পড়ি: তার প্রধান খবর আর Reuters, BBC, AP, ডেইলি স্টারের মতো মাধ্যমের খবর। "
+              "অন্য প্রশ্ন খুঁজি Tavily নামের সার্চ সার্ভিস দিয়ে, উৎস আর তারিখসহ; দাম বা রেট বলি শুধু সরকারি সাইট বা "
+              "দুটো আলাদা সাইটে পেলে।"},
     "sources": {
         "en": "Weather comes from Open-Meteo, live prices from Binance and Yahoo Finance, exchange rates from the "
               "European Central Bank and ExchangeRate-API, and holidays from Google's public holiday calendar. News "
-              "and other web answers come from a Tavily web search, and I name the source and date.",
+              "comes from Google News, and other web answers from a Tavily web search, with the source and date.",
         "bn": "আবহাওয়া আসে Open-Meteo থেকে, দাম Binance আর Yahoo Finance থেকে, এক্সচেঞ্জ রেট ইউরোপিয়ান সেন্ট্রাল "
-              "ব্যাংক আর ExchangeRate-API থেকে, আর ছুটির দিন Google-এর ছুটির ক্যালেন্ডার থেকে। খবর আর অন্য ওয়েবের "
-              "উত্তর আসে Tavily সার্চ থেকে, উৎস আর তারিখসহ।"},
+              "ব্যাংক আর ExchangeRate-API থেকে, আর ছুটির দিন Google-এর ছুটির ক্যালেন্ডার থেকে। খবর আসে Google News "
+              "থেকে, আর অন্য ওয়েবের উত্তর Tavily সার্চ থেকে, উৎস আর তারিখসহ।"},
     "memory": {
         "en": "I only remember what you approve: I propose a line, and it's saved to a file on your Mac once you "
               "say yes, never passwords, keys or ID numbers. Our chats stay on your Mac too, and each message goes "
@@ -141,11 +142,14 @@ _SPOKEN = {
               "মডেল, {model}, আর বাকি সব কোড।"},
     "capabilities": {
         "en": "I keep your tasks and calendar, set timers and reminders, check the weather, live prices and "
-              "exchange rates, do sums and conversions, search the web and the news, and remember what you approve. "
-              "For bigger jobs I have {agents} agents; I can't send email or messages, make calls or buy anything.",
+              "exchange rates, do sums, read the news and search the web, and remember what you approve. I can also "
+              "watch a price, the news about something or the rain and tell you when it happens, and check myself "
+              "when something seems wrong. For bigger jobs I have {agents} agents; I can't send email or messages, "
+              "make calls or buy anything.",
         "bn": "আমি তোমার কাজের তালিকা আর ক্যালেন্ডার রাখি, টাইমার দিই, আবহাওয়া, দাম আর এক্সচেঞ্জ রেট দেখি, হিসাব করি, "
-              "ওয়েব আর খবর খুঁজি, আর তুমি যা অনুমতি দাও তা মনে রাখি। বড় কাজের জন্য {agents} এজেন্ট আছে; ইমেইল বা "
-              "মেসেজ পাঠানো, কল করা বা কেনাকাটা পারি না।"},
+              "খবর পড়ি আর ওয়েবে খুঁজি, আর তুমি যা অনুমতি দাও তা মনে রাখি। কোনো দাম, কোনো বিষয়ের খবর বা বৃষ্টির দিকে "
+              "নজর রেখে সময়মতো জানাতে পারি, আর কিছু ঠিকমতো না চললে নিজেকে পরীক্ষা করতে পারি। বড় কাজের জন্য {agents} "
+              "এজেন্ট আছে; ইমেইল বা মেসেজ পাঠানো, কল করা বা কেনাকাটা পারি না।"},
     "design": {
         "en": "Each message goes to a language model, {model} right now, which calls tools written in code for "
               "tasks, calendar, weather, prices, sums and web search, and the reply is checked in code before I say "
@@ -169,8 +173,11 @@ _SOURCE_SPOKEN = {
                     "ExchangeRate-API, because the ECB doesn't quote it.",
               "bn": "ইউয়ান আর কোরুনার রেট ইউরোপিয়ান সেন্ট্রাল ব্যাংকের, আর টাকার রেট ExchangeRate-API থেকে, কারণ ECB "
                     "টাকার রেট দেয় না।"},
-    "news": {"en": "News comes from a Tavily web search of the last few days' news, and I name each story's source and date.",
-             "bn": "খবর আসে Tavily দিয়ে গত কয়েক দিনের খবর খুঁজে, প্রতিটার উৎস আর তারিখসহ।"},
+    "news": {"en": "News comes from Google News: its editors' top stories, and for each topic a search of established "
+                   "outlets like Reuters, the BBC, AP and The Daily Star. I read each headline with its outlet's name; "
+                   "if Google News is down, a Tavily search fills in.",
+             "bn": "খবর আসে Google News থেকে: তার প্রধান খবর, আর প্রতিটা বিষয়ে Reuters, BBC, AP, ডেইলি স্টারের মতো মাধ্যমের "
+                   "খবর। প্রতিটা শিরোনাম তার মাধ্যমের নামসহ পড়ি।"},
     "holidays": {"en": "Public holidays come from Google's public holiday calendar for Bangladesh; an office's own "
                        "closures, like a visa centre's, come from its notice on the web.",
                  "bn": "সরকারি ছুটির দিন আসে Google-এর বাংলাদেশের ছুটির ক্যালেন্ডার থেকে; কোনো অফিসের নিজের ছুটি তার "
@@ -182,7 +189,9 @@ _SOURCE_SPOKEN = {
 _DESIGN_SCREEN = """How Javid works:
 - Ears: Groq Whisper speech recognition ({stt}); hands-free answers only what starts with "Javid".
 - Brain: {model}, backups {backups}. It writes the reply and picks tools; facts come from the tools.
-- Tools in code: tasks, Google Calendar, timers, weather (Open-Meteo, MET Norway), live prices (Binance, Yahoo Finance), exchange rates (ECB, ExchangeRate-API), calculator, web and news search (Tavily), public holidays (Google), memory, past chats.
+- Tools in code: tasks, Google Calendar, timers, weather (Open-Meteo, MET Norway), live prices (Binance, Yahoo Finance), exchange rates (ECB, ExchangeRate-API), calculator, news (Google News), web search (Tavily), public holidays (Google), memory, past chats.
+- Answered in code, no model: news headlines, exchange rates, market briefs, watches, the self-check, where an answer came from, and questions about Javid.
+- Watches: a price level or move, news about something, or rain, checked in code; when one happens it rings like a timer and goes to Telegram.
 - Skills: {skills}. Agents: {agents}, each with its own tools and steps.
 - Checks in code: dates, counts and sums worked out in Python; web figures need an official site or two sources; holiday dates must match the official list; deleting an event needs a yes; memory needs your approval; garbled replies are retried.
 - Voice: {voice_en} in English, {voice_bn} in Bangla mode, through edge-tts. No other voice.
@@ -194,7 +203,9 @@ _CAPABILITIES_SCREEN = """What Javid can do:
 - Timers and reminders
 - Weather, live crypto and stock prices, exchange rates
 - Sums and unit conversions
-- Web search, news, public holidays
+- News from Google News, web search, public holidays
+- Watches: "tell me when bitcoin goes above 90,000", "...when there's news about X", "...when it starts raining"
+- Self-check: "what's wrong?", and "where did you get that?"
 - Memory you approve, and search of past chats
 Skills: {skills}
 Agents: {agents}

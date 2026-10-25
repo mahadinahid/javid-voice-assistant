@@ -4,7 +4,7 @@ Javid is a single-user assistant on Mahadi's Mac: a local web server (`server.py
 loop (`javid.py`) and a Telegram bot (`telegram_bot.py`). It holds API keys, a Google Calendar token, tasks,
 memory and every chat. This file lists what it defends against, how, and what is still open.
 
-Last reviewed: 2026-10-21.
+Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24).
 
 ## Threats
 
@@ -45,6 +45,20 @@ Last reviewed: 2026-10-21.
 - Keys pasted in the Models panel are verified with the provider, written to `.env` owner-only and never sent back.
   (The panel still shows each key's last 4 characters: see open items.)
 - The Google scope is `calendar.events`, not full `calendar`.
+
+## News, watches and the self-check (added 2026-10-24)
+
+- **Google News** (`gnews.py`): Javid fetches news.google.com's RSS for the topics asked (and, for a news watch, its
+  subject). Google sees the topic words, nothing else: no account, key or personal data goes with them.
+- **Watches** (`watches.py`) only fetch prices (Binance, Yahoo Finance), headlines (Google News) and the forecast
+  (Open-Meteo) on a timer, and their only action is an alert that rings like a timer. A watch is made only from a
+  message Mahadi sent himself (the page, the CLI, or the allowed Telegram account; a forwarded Telegram message is
+  never a turn), in code, not by the model; a news subject with a link is refused. Cancelling on the page goes
+  through `_local_page_only`; `GET /watches` has no check, like the other read routes (open item 1). Setting or
+  cancelling a watch from Telegram doesn't need Approve, like a timer (open item 9).
+- **Self-check** (`selfcheck.py`): the last 300 clips' outcomes and first 120 characters, edge-tts and Whisper
+  failures are kept in memory only (never written to disk) and shown only when Mahadi asks what's wrong; the
+  last ignored clip's words are on that answer's screen. Its Groq probe lists models (no message content).
 
 ## Open (found in the 2026-10-21 audit, not fixed yet)
 

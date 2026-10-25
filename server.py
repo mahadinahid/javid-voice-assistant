@@ -17,10 +17,12 @@ from pydantic import BaseModel
 import agents
 import calendar_tools
 import memory_store
+import selfcheck
 import skills
 import telegram_bot
 import timers
 import tracing
+import watches
 import web_tools
 from javid import (
     _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
@@ -57,7 +59,9 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_warm_tts, daemon=True).start()
     threading.Thread(target=_check_models, daemon=True).start()
     telegram_bot.start()    # only with TELEGRAM_BOT_TOKEN in .env
+    watches.start()         # price, news and rain watches: checked in code, alerts ring like timers
     yield
+    watches.stop()
     telegram_bot.stop()
     tracing.flush_all()     # traces still waiting for the page's stages
 
@@ -163,7 +167,7 @@ async def _reply_stream(user_text: str, session: str | None = None):
     finally:
         hung_up.set()
     yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language(),
-                 timers=timers.active_json())
+                 timers=timers.active_json(), watches=watches.active_json())
 
 
 def _reply_event(kind: str, value) -> str | None:
@@ -273,7 +277,16 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
         ext = "webm"
 
     # Hands-free clips are often just noise; the name hint would make Whisper say "Javid" for them.
-    transcript = transcribe_turn(audio_bytes, f"audio.{ext}", bias_name=(mode == "push"))
+    try:
+        transcript = transcribe_turn(audio_bytes, f"audio.{ext}", bias_name=(mode == "push"))
+    except Exception as e:      # Whisper down or rate-limited: say so (the self-check remembers it) instead of a 500
+        print(f"[stt] {type(e).__name__}: {str(e)[:120]}")
+        selfcheck.note_stt_error(type(e).__name__)
+
+        async def stt_failed():
+            yield _event(type="delta", text=phrase("stt_failed"))
+            yield _event(type="done", tasks=None, memory=None, lang=get_language())
+        return _ndjson(_traced(trace, stt_failed()))
     trace.mark("stt_done")
     trace.label = transcript[:60]
     request = transcript
@@ -286,10 +299,13 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
         if request is None:
             if mode == "wake" or is_noise(transcript):
                 print(f"[hands-free] ignored: {transcript!r}")
+                selfcheck.note_clip(mode, "noise" if is_noise(transcript) else "ignored", transcript)
                 return _ndjson(ignored())
             request = transcript  # follow-up: no wake word needed
         elif not request or is_noise(request):
             # Just "Hey Javid" — acknowledge and open a follow-up window.
+            selfcheck.note_clip(mode, "ack", transcript)
+
             async def ack():
                 yield _event(type="transcript", text=transcript)
                 yield _event(type="delta", text=phrase("ack"))
@@ -298,6 +314,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 
     if mode == "push" and strip_wake_word(request) == "":
         # Just "Javid": acknowledge, as in hands-free.
+        selfcheck.note_clip(mode, "ack", transcript)
+
         async def ack_push():
             yield _event(type="transcript", text=transcript)
             yield _event(type="delta", text=phrase("ack"))
@@ -311,6 +329,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
         answer = (memory_store._YES.match(request) or memory_store._NO.match(request)
                   or _SMALL_TALK.match(request.strip()))
         too_short = (len(request.split()) < 2 and not answer) if mode == "push" else not request
+        selfcheck.note_clip(mode, "not_caught" if too_short else "answered", transcript)
         if too_short:
             yield _event(type="delta", text=phrase("not_caught"))
             yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
@@ -484,6 +503,19 @@ def timers_cancel(tid: str, request: Request):
     _local_page_only(request)
     if not timers.cancel(tid):
         raise HTTPException(404, "No such timer")
+    return {"ok": True}
+
+
+@app.get("/watches")
+def watches_list():
+    return watches.active_json()
+
+
+@app.delete("/watches/{wid}")
+def watches_cancel(wid: str, request: Request):
+    _local_page_only(request)
+    if not watches.cancel(wid):
+        raise HTTPException(404, "No such watch")
     return {"ok": True}
 
 

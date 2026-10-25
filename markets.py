@@ -166,6 +166,12 @@ def _quote(symbol: str) -> dict:
     return out
 
 
+def quote(symbol: str) -> dict:
+    """One symbol's quote for code outside a turn (watches.py's checks): not registered with web_tools, whose
+    figures belong to the turn that's running."""
+    return _quote(symbol)
+
+
 def quotes(symbols: list[str]) -> list[dict]:
     """Quotes for up to MAX_SYMBOLS symbols, fetched in parallel; found ones become trusted figures for the turn."""
     symbols = list(dict.fromkeys(s.strip() for s in symbols or [] if str(s).strip()))[:MAX_SYMBOLS]

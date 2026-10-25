@@ -475,6 +475,12 @@ header h1 {
 .timer-item .del-btn { opacity: 0.6; }
 .timer-item .del-btn:hover { opacity: 1; }
 
+/* Watching: prices, news and rain Javid keeps an eye on (watches.py); a watch that fires rings like a timer */
+#watches-panel[hidden] { display: none; }
+.watch-icon { flex-shrink: 0; width: 18px; text-align: center; color: var(--violet-soft); font-size: 12px; }
+.watch-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.watch-status { font-size: 11px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ── Models and latency panels ── */
 .models-summary { margin-bottom: 8px; font-size: 11.5px; line-height: 1.45; color: var(--text-3); }
 .model-row {
@@ -1595,6 +1601,8 @@ html[data-theme="overdrive"] .chats-search:focus { border-color: var(--od-red); 
 html[data-theme="overdrive"] .event-time,
 html[data-theme="overdrive"] .timer-left { color: var(--od-hot); font-family: var(--od-mono); }
 html[data-theme="overdrive"] .timer-item.reminder .timer-left { color: var(--od-amber); }
+html[data-theme="overdrive"] .watch-icon { color: var(--od-hot); }
+html[data-theme="overdrive"] .watch-status { color: #9c7f7a; font-family: var(--od-mono); }
 html[data-theme="overdrive"] .mem-dot { color: var(--od-red); }
 html[data-theme="overdrive"] .mem-section { color: #7a4a45; }
 html[data-theme="overdrive"] .skill-item { border-radius: 0; color: #c9a9a4; }
@@ -1975,6 +1983,10 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
         <div class="panel" id="timers-panel" hidden>
             <div class="panel-title">Timers</div>
             <div id="timers-list"></div>
+        </div>
+        <div class="panel" id="watches-panel" hidden>
+            <div class="panel-title">Watching</div>
+            <div id="watches-list"></div>
         </div>
         <div class="panel">
             <div class="panel-title">Tasks</div>
@@ -2768,6 +2780,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     refreshModels();    // tokens were just spent
                     refreshChats();     // a first message names the chat; the order changes
                     if (ev.timers) syncTimers(ev.timers);   // a reply may have set or cancelled one
+                    if (ev.watches) syncWatches(ev.watches);
                 }
             }
         }
@@ -2835,6 +2848,7 @@ const TOOL_LABELS = {
     use_skill: 'Loading skill…', news_headlines: 'Checking the headlines…', exchange_rates: 'Fetching exchange rates…',
     get_weather: 'Checking the weather…', set_timer: 'Setting the timer…', timers: 'Checking timers…',
     calculate: 'Calculating…', market_price: 'Fetching live prices…', delegate: 'Handing it to an agent…',
+    self_check: 'Checking myself…',
 };
 
 function showToolNote(name) {
@@ -4046,8 +4060,42 @@ setInterval(() => {
         if (t) el.querySelector('.timer-left').textContent = timerWhen(t, now);
     });
 }, 1000);
-setInterval(refreshTimers, 30000);     // timers set from the CLI or another tab, or cancelled there
+// Every 10 s: timers set from the CLI or another tab, and alerts from a watch that fired (they're due at once).
+setInterval(refreshTimers, 10000);
 refreshTimers();
+
+// ── Watching ──────────────────────────────────────────────────────────────
+// What Javid keeps an eye on (watches.json, checked on the server with no model): a price level or move, news about
+// something, rain. The server turns a watch that fires into an alert in the timers list, so it rings above.
+let watchList = [];
+const WATCH_ICONS = { price: '↗', news: '◉', rain: '☂' };
+
+function syncWatches(list) {
+    watchList = Array.isArray(list) ? list : [];
+    document.getElementById('watches-panel').hidden = !watchList.length;
+    document.getElementById('watches-list').innerHTML = watchList.map(w => `
+        <div class="timer-item watch-item" data-id="${esc(w.id)}">
+            <span class="watch-icon" aria-hidden="true">${WATCH_ICONS[w.kind] || '•'}</span>
+            <span class="watch-text">
+                <span class="timer-label" title="${esc(w.label)}">${esc(w.label)}</span>
+                ${w.status ? `<span class="watch-status">${esc(w.status)}</span>` : ''}
+            </span>
+            <button class="del-btn" data-unwatch="${esc(w.id)}" title="Stop watching">✕</button>
+        </div>`).join('');
+}
+
+async function refreshWatches() {
+    try { syncWatches(await (await fetch('/watches')).json()); } catch {}
+}
+
+document.getElementById('watches-list').addEventListener('click', async e => {
+    const id = e.target.closest('[data-unwatch]')?.dataset.unwatch;
+    if (!id) return;
+    try { await fetch(`/watches/${encodeURIComponent(id)}`, { method: 'DELETE' }); } catch {}
+    refreshWatches();
+});
+setInterval(refreshWatches, 15000);
+refreshWatches();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────
 (async () => {

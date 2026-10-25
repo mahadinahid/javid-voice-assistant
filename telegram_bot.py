@@ -51,8 +51,10 @@ import httpx
 import approvals
 import javid
 import memory_store
+import selfcheck
 import timers
 import tracing
+import watches
 import web_tools
 
 API = "https://api.telegram.org"
@@ -71,6 +73,7 @@ FORWARD_TAG = "[Forwarded message"     # starts every forwarded text kept in the
 COMMANDS = [("help", "What I can do here"), ("new", "Start a new Telegram chat"), ("tasks", "Your task list"),
             ("timers", "Running timers and reminders"), ("lang", "Reply language: /lang en or /lang bn"),
             ("voice", "Voice replies: only to voice messages, or always"), ("status", "Model, language, tasks"),
+            ("watches", "What I'm watching for you"), ("check", "Self-check: what works and what doesn't"),
             ("lock", "Turn off remote control until you unlock it on the Mac")]
 
 # Every Bot API URL carries the token, and httpx logs request URLs at INFO: keep its loggers at WARNING whatever
@@ -526,6 +529,15 @@ def _status_text() -> str:
     return "\n".join(lines)
 
 
+def _drain(answer) -> tuple[str, str]:
+    """A code answer's (spoken, screen), its tool events dropped (a command has no typing indicator to show)."""
+    while True:
+        try:
+            next(answer)
+        except StopIteration as done:
+            return done.value
+
+
 def _command_name(text: str) -> str:
     return text[1:].split()[0].split("@")[0].lower() if text.startswith("/") and len(text) > 1 else ""
 
@@ -557,6 +569,12 @@ def _command(chat_id: int, text: str) -> None:
                       "I'll send voice notes only when you send a voice message.")
     elif name == "status":
         send(chat_id, _status_text())
+    elif name == "watches":
+        spoken, screen = _drain(watches.answer({"action": "list"}, javid.get_language()))
+        send(chat_id, screen or spoken)
+    elif name == "check":
+        spoken, screen = _drain(selfcheck.diagnose("", javid.get_language()))
+        send(chat_id, spoken.replace(" The full report is on your screen.", "") + (f"\n\n{screen}" if screen else ""))
     else:
         send(chat_id, f"I don't know /{name}.\n\n{_help()}")
 
@@ -723,7 +741,8 @@ def push_due() -> None:
     for t in timers.take_due_for("telegram"):
         late = time.time() - t["due"]
         text = t["announce"].get(lang) or t["announce"]["en"]
-        send(state["chat"], f"⏰ {text}" + (f" (missed: it was due {timers._when(t['due'])})" if late > 120 else ""))
+        icon = "🔔" if t["kind"] == "alert" else "⏰"     # an alert is a watch that fired (watches.py)
+        send(state["chat"], f"{icon} {text}" + (f" (missed: it was due {timers._when(t['due'])})" if late > 120 else ""))
 
 
 # ---------- the loops ----------

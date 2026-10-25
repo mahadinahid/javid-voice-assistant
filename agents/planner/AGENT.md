@@ -10,7 +10,7 @@ metadata:
   must-show: "list_events"
   follow-up-tools: "add_event"
   required: "true"
-  triggers: "\bplan (out )?(my|the|our) (day|week|morning|afternoon|evening|weekend|schedule)\b|\bplan (my |out )?(today|tomorrow|tonight)\b|\b(day|daily) plan\b|\borgani[sz]e my (day|week|time|schedule|morning|afternoon|evening)\b|\bwhat should i (do|work on|tackle) (first|next|today|tomorrow)\b|\bprioriti[sz]e my\b|\btime.?block|পরিকল্পনা|প্ল্যান"
+  triggers: "\b(?:a|the|my) plan for (?:today|tomorrow|tonight|the day|(?:this )?(?:mon|tues|wednes|thurs|fri|satur|sun)day)\b|\bplan (out )?(my|the|our) (day|week|morning|afternoon|evening|weekend|schedule)\b|\bplan (my |out )?(today|tomorrow|tonight)\b|\b(day|daily) plan\b|\borgani[sz]e my (day|week|time|schedule|morning|afternoon|evening)\b|\bwhat should i (do|work on|tackle) (first|next|today|tomorrow)\b|\bprioriti[sz]e my\b|\btime.?block|পরিকল্পনা|প্ল্যান"
 ---
 You are Javid's planning agent. Build Mahadi a realistic plan for the day he asked about (today if he
 didn't say). His weekend is Friday and Saturday.

@@ -21,6 +21,8 @@ from datetime import date, datetime
 from email.utils import parsedate_to_datetime
 from urllib.parse import urlparse
 
+import gnews
+
 USAGE_FILE = "tavily_usage.jsonl"    # one line per Tavily call (or cache hit): credits spent
 DAILY_CREDIT_CAP = 40
 CACHE_SEC = 15 * 60
@@ -228,9 +230,26 @@ def note_data(domain: str, text: str) -> None:
 
 
 def sources() -> list[dict]:
-    """Links for the screen: every result this turn, in the order found."""
-    return [{k: s[k] for k in ("n", "name", "title", "url", "date", "date_text", "official")}
+    """Links for the screen: every result this turn, in the order found ("via": "Google News" for a headline
+    from there, so "did you get that from Google?" has a true answer)."""
+    return [{**{k: s[k] for k in ("n", "name", "title", "url", "date", "date_text", "official")},
+             **({"via": s["via"]} if s.get("via") else {})}
             for s in _turn["sources"] if s["url"].startswith(("https://", "http://"))]
+
+
+def keep_sources(urls: list[str]) -> None:
+    """Only these of this turn's sources, numbered in this order: the stories a news answer shows (news.py fetches
+    more than it lists). Their texts stay for the figure checks."""
+    by_url = {s["url"]: s for s in _turn["sources"]}
+    _turn["sources"] = [{**by_url[u], "n": n} for n, u in enumerate(dict.fromkeys(urls), 1) if u in by_url]
+
+
+def restore_sources(links: list[dict]) -> None:
+    """An earlier answer's links, shown again with this turn's reply (selfcheck: "where did you get that?")."""
+    for s in links:
+        if s.get("url") and not any(x["url"] == s["url"] for x in _turn["sources"]):
+            _turn["sources"].append({"official": False, "date": None, "date_text": "", **s,
+                                     "n": len(_turn["sources"]) + 1, "domain": _domain(s["url"])})
 
 
 # ---------- tools ----------
@@ -240,7 +259,11 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
         return "No query given."
     news = bool(recency_days) or bool(_NEWSY.search(query))
     days = max(1, min(int(recency_days or NEWS_DAYS), 365)) if news else None
-    domains = sorted({_domain(d if "//" in d else "https://" + d) for d in domains or [] if d.strip()})
+    # Google and the news aggregators aren't sources: with include_domains=["news.google.com"] Tavily found only
+    # Google's own topic pages, and "an AI attack in PHP" got "I couldn't find any recent news" (2026-10-24). They're
+    # dropped; with nothing else named, the search covers every site.
+    domains = sorted({d for d in (_domain(d if "//" in d else "https://" + d) for d in domains or [] if str(d).strip())
+                      if not _search_engine(d)})
     kw = {"search_depth": "basic", "max_results": MAX_RESULTS, "include_usage": True,
           "topic": "news" if news else "general"}
     if days:
@@ -250,7 +273,9 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, tuple(domains))
     resp = _call("search", key, query, lambda c: c.search(query, **kw))
     if isinstance(resp, str):
-        return resp
+        # Tavily down or out of credits: for news, Google News' headlines still answer (2026-10-22: a Tavily
+        # ConnectionError became "I couldn't reach the news sites right now").
+        return (_google_fallback(query, days) if news and not domains else None) or resp
     results = [r for r in resp.get("results", []) if r.get("url")][:MAX_RESULTS]
     if not results:
         return f"No results for '{query}'. Say you couldn't find it."
@@ -273,53 +298,128 @@ def web_search(query: str, recency_days: int | None = None, domains: list[str] |
     return "\n".join(lines)
 
 
+def _google_fallback(query: str, days: int | None) -> str | None:
+    """web_search's results from Google News headlines (titles only), or None if it has nothing either."""
+    try:
+        items = gnews.search(re.sub(r"\b(?:latest|news|today'?s?|headlines?)\b", " ", query, flags=re.I),
+                             days=min(days or 2, 7), limit=MAX_RESULTS)
+    except Exception:
+        return None
+    if not items:
+        return None
+    _turn["query"] = query
+    lines = [f"Google News headlines for '{query}' (the web search is down, so headlines only, no article text):"]
+    for item in items:
+        s = _add_news_item(item)
+        lines.append(f"[{s['n']}] {s['name']}, {s['date_text']} : {s['title']}")
+    lines.append(f"Answer in at most {MAX_SENTENCES} sentences from these headlines, naming the source and its date. "
+                 "Don't add details a headline doesn't give.")
+    return "\n".join(lines)
+
+
+def _search_engine(domain: str) -> bool:
+    """google.com, news.google.com, bing.com, news.yahoo.com, msn.com...: search engines and aggregators."""
+    return any(_matches(domain, a) for a in _AGGREGATORS) or \
+        bool(re.fullmatch(r"(?:www\.|news\.|search\.)?(?:google|bing|duckduckgo|yahoo)\.(?:com|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})",
+                          domain))     # not finance.yahoo.com, a source
+
+
 MAX_NEWS_TOPICS = 8
 MAX_PER_TOPIC = 3
 # Aggregators link to their own front page, not to a story (news.google.com came back as all 5 results).
 _AGGREGATORS = ("news.google.com", "news.yahoo.com", "msn.com")
 
 
-def news_headlines(topics: list[str], days: int = 2, per_topic: int = 1) -> str:
-    """The top news stories per topic, in one tool call: one search per topic, run in parallel (searching
-    topic by topic used up the turn's tool rounds: "10 news from all over the world" ended in "I can't pull
-    that many"). Sources and texts are registered like web_search's."""
+def _add_news_item(item: dict) -> dict:
+    """A Google News headline as a source of this turn (gnews.py item: the outlet's own name and domain, the
+    link is Google's redirect to the article), with its outlet's and the cluster's titles kept for the figure
+    checks: a figure two outlets' headlines give counts as confirmed."""
+    url = item["link"]
+    for s in _turn["sources"]:
+        if s["url"] == url:
+            return s
+    domain = item["domain"] or _domain(url)
+    published = item["published"].astimezone().date() if item.get("published") else None
+    s = {"n": len(_turn["sources"]) + 1, "url": url, "domain": domain, "name": item["source"] or source_name(domain),
+         "title": item["title"][:140], "official": is_official(domain), "via": "Google News",
+         "date": published.isoformat() if published else None,
+         "date_text": _say_date(published) if published else f"retrieved {_say_date(date.today())}"}
+    _turn["sources"].append(s)
+    _remember_text(domain, item["title"])
+    for other in item.get("cluster") or []:
+        if other["source"] and other["source"] != item["source"]:
+            _remember_text("outlet:" + other["source"].lower(), other["title"])
+    return s
+
+
+def _tavily_news(topic: str, days: int, per_topic: int) -> dict | str:
+    """One Tavily news search for a topic Google News couldn't give (a credit): the response or a sentence."""
+    query = f"{topic} news"
+    kw = {"search_depth": "basic", "max_results": per_topic + 2, "include_usage": True, "topic": "news", "days": days}
+    key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, (), per_topic + 2)
+    return _call("search", key, query, lambda c: c.search(query, **kw))
+
+
+def headline_items(topics: list[str], per_topic: int = 1, days: int = 2, lang: str = "en") -> list[dict]:
+    """[{"topic", "items", "error"}]: each topic's top stories from Google News (gnews.py, no credits), and a
+    Tavily news search for a topic it couldn't give. A topic is a gnews.TOPICS key or the model's words
+    ("Middle East", "stock market", "Apple"). Every item is registered as a source of this turn: a source dict
+    plus its "published" time (None from Tavily, which gives a date) and Google's "cluster" of outlets."""
     topics = list(dict.fromkeys(" ".join(str(t).split()) for t in topics or [] if str(t).strip()))[:MAX_NEWS_TOPICS]
+    if not topics:
+        return []
+    keys = [gnews.key_for(t) or t for t in topics]
+    try:
+        groups = gnews.headlines(keys, per_topic=per_topic, lang=lang)
+    except Exception as e:      # a bug in the feed code must not cost the news: Tavily for all of it
+        print(f"[news] Google News failed: {type(e).__name__}: {e}")
+        groups = [{"topic": k, "items": [], "error": type(e).__name__} for k in keys]
+    seen = set()
+    for g in groups:
+        g["items"] = [{**_add_news_item(i), "published": i.get("published"), "cluster": i.get("cluster") or []}
+                      for i in g["items"]]
+        seen.update(i["url"] for i in g["items"])
+    missing = [(g, gnews.name(g["topic"]) if g["topic"] in gnews.TOPICS else topic)
+               for g, topic in zip(groups, topics) if not g["items"]]
+    if missing:     # Google News down, or nothing for that topic: Tavily, all at once
+        with ThreadPoolExecutor(max_workers=len(missing)) as pool:
+            responses = list(pool.map(lambda m: _tavily_news(m[1], days, per_topic), missing))
+        for (g, _), resp in zip(missing, responses):
+            if isinstance(resp, str):
+                g["error"] = resp
+                continue
+            for r in resp.get("results", []):
+                if not r.get("url") or r["url"] in seen or any(_matches(_domain(r["url"]), a) for a in _AGGREGATORS):
+                    continue
+                seen.add(r["url"])
+                s = _add_source(r)
+                _remember_text(s["domain"], f"{r.get('title', '')}\n{r.get('content', '')}")
+                g["items"].append({**s, "published": None, "cluster": [],
+                                   "snippet": " ".join((r.get("content") or "").split())[:SNIPPET_CHARS]})
+                if len(g["items"]) >= per_topic:
+                    break
+            g["error"] = None
+    return groups
+
+
+def news_headlines(topics: list[str], days: int = 2, per_topic: int = 1) -> str:
+    """The top news stories per topic, in one tool call (searching topic by topic used up the turn's tool rounds:
+    "10 news from all over the world" ended in "I can't pull that many"): Google News first, Tavily for a topic
+    it couldn't give. Sources and texts are registered like web_search's."""
+    topics = [t for t in topics or [] if str(t).strip()]
     if not topics:
         return "No topics given."
     days = max(1, min(int(days or 2), 7))
     per_topic = max(1, min(int(per_topic or 1), MAX_PER_TOPIC))
-    room = DAILY_CREDIT_CAP - credits_today()     # checked once for all topics: they run at the same time
-    skipped = topics[max(room, 0):]
-    topics = topics[:max(room, 0)]
-
-    def fetch(topic):
-        query = f"{topic} news"
-        kw = {"search_depth": "basic", "max_results": per_topic + 2, "include_usage": True, "topic": "news", "days": days}
-        key = ("search", re.sub(r"[^\w\s]", "", query.lower()), days, (), per_topic + 2)
-        return _call("search", key, query, lambda c: c.search(query, **kw))
-
-    with ThreadPoolExecutor(max_workers=len(topics) or 1) as pool:
-        responses = list(pool.map(fetch, topics))
-    lines, seen = [], set()
-    for topic, resp in zip(topics, responses):
-        if isinstance(resp, str):
-            lines.append(f"{topic}: {resp}")
-            continue
-        results = [r for r in resp.get("results", []) if r.get("url") and r["url"] not in seen
-                   and not any(_matches(_domain(r["url"]), a) for a in _AGGREGATORS)][:per_topic]
-        if not results:
-            lines.append(f"{topic}: no news found in the last {days} days.")
-            continue
-        for r in results:
-            seen.add(r["url"])
-            s = _add_source(r)
-            _remember_text(s["domain"], f"{r.get('title', '')}\n{r.get('content', '')}")
-            snippet = " ".join((r.get("content") or "").split())[:SNIPPET_CHARS]
-            # "N. Topic - headline (source, date)" so the list reads well on screen when the model leaves out
-            # its SCREEN part (skills.screen_from_results shows this result as it is).
-            lines.append(f"{s['n']}. {topic} - {s['title']} ({s['name']}, {s['date_text']}): {snippet}")
-    if skipped:
-        lines.append(f"Not searched (daily web budget of {DAILY_CREDIT_CAP} credits used up): {', '.join(skipped)}.")
+    lines = []
+    for g, topic in zip(headline_items(topics, per_topic, days), dict.fromkeys(" ".join(str(t).split()) for t in topics)):
+        if not g["items"]:
+            lines.append(f"{topic}: {g['error'] or f'no news found in the last {days} days.'}")
+        # "N. Topic - headline (source, date)" so the list reads well on screen when the model leaves out
+        # its SCREEN part (skills.screen_from_results shows this result as it is).
+        for s in g["items"]:
+            snippet = f": {s['snippet']}" if s.get("snippet") else ""
+            lines.append(f"{s['n']}. {topic} - {s['title']} ({s['name']}, {s['date_text']}){snippet}")
     found = sum(bool(re.match(r"\d+\. ", l)) for l in lines)
     return f"Headlines ({found} stories):\n" + "\n".join(lines)
 
@@ -376,7 +476,8 @@ TOOLS = [
                     "recency_days": {"type": "integer",
                                      "description": "For news: only results from the last N days."},
                     "domains": {"type": "array", "items": {"type": "string"},
-                                "description": "Only search these sites, e.g. ['bb.org.bd']."},
+                                "description": "Only search these sites, e.g. ['bb.org.bd']. Never Google or "
+                                               "news.google.com: they're search engines, not sources, and are dropped."},
                 },
                 "required": ["query"],
             },
@@ -565,13 +666,15 @@ _NOTHING_FOUND = re.compile(r"\b(?:couldn.?t|can.?t|didn.?t|unable to) (?:find|c
                             r"details|figures?|notice)\b", re.I)
 
 
-def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SENTENCES) -> str:
+def finalize(reply: str, problems: list[str], max_sentences: int | None = MAX_SENTENCES, figure_asked: bool = True) -> str:
     """The spoken web answer: unresolved problems replaced, at most max_sentences sentences (None: no cap,
     for skills, which have their own spoken budget), ending with a source name and date if the model left
-    them out."""
+    them out. figure_asked=False (the question wasn't for a rate, price or number): an unconfirmed figure costs only
+    its own sentences, not the whole answer (2026-10-22: "Bring me some news from AI development" became "I couldn't
+    confirm a specific growth figure from an official source")."""
     lead, label = [], "Source"
     unconfirmed = lambda ps: any("isn't in any source" in p or "couldn't confirm" in p for p in ps)
-    if max_sentences is None and unconfirmed(problems):
+    if (max_sentences is None or not figure_asked) and unconfirmed(problems):
         # A skill's long answer (a news digest) loses only the sentences with the unconfirmed figure.
         kept = [s for s in sentences(reply) if not unconfirmed(check_reply(s))]
         if kept:

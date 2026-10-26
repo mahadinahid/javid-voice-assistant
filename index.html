@@ -2630,7 +2630,7 @@ async function playNext() {
         a.onended = a.onerror = done;
         a.play().catch(done);
     } else {
-        done();     // never a substitute voice: skip this sentence
+        done();     // never the browser's voice: the server already tried edge-tts and the backup voice
     }
 }
 
@@ -3638,12 +3638,25 @@ function allowanceHtml(p) {
     if (a.from === 'headers') return `<div class="mc-line">Each model has its own allowance, which ${esc(p.label)} reports in its responses: see the models below.</div>`;
     if (a.from === 'api') return p.used != null
         ? meter(`Free ${esc(a.unit)} ${perText(a.per)} · from its API`, `${fmtUnits(p.used, a.unit)} / ${fmtUnits(a.amount, a.unit)}`,
-                p.used, a.amount, provStatus.reserve_at, provStatus.off_at)
+                p.used, a.amount, provStatus.reserve_at, p.off_at ?? provStatus.off_at)
+            + (p.off_at && p.off_at < provStatus.off_at ? `<div class="mc-line">Stops at <b>${Math.round(p.off_at * 100)}%</b> of the ${esc(a.per)}’s ${esc(a.unit)}</div>` : '')
         : '<div class="mc-line">Its balance is asked from its API…</div>';
     if (a.amount === 0) return '<div class="mc-line">No free tier, so Javid keeps it off: it never spends past a free allowance.</div>';
     if (a.amount == null) return `<div class="mc-line">Free allowance not published · <b>${fmtUnits(p.used ?? 0, a.unit)}</b> ${esc(a.unit)} counted ${perText(a.per)}; only its own limit errors stop it</div>`;
     const label = `Free ${a.unit === 'usd' ? 'credit' : esc(a.unit)} ${perText(a.per)}${a.per_model ? ' (each model)' : ''}${a.verified ? '' : ' · <span class="unverified">unverified</span>'}`;
     return meter(label, `${fmtUnits(p.used ?? 0, a.unit)} / ${fmtUnits(a.amount, a.unit)}`, p.used ?? 0, a.amount, provStatus.reserve_at, provStatus.off_at);
+}
+
+// A voice provider (ElevenLabs, the backup voice): its fixed voices and what Javid spoke through it each day.
+function voiceLines(p) {
+    if (!p.voices) return '';
+    const lang = { en: 'English', bn: 'Bangla' };
+    const voices = Object.entries(p.voices).map(([l, v]) =>
+        `${lang[l] || esc(l)}: <b>${esc(v.name)}</b> (${esc(v.model)})${v.approved ? '' : ' · <span class="unverified">not approved yet</span>'}`).join(' · ');
+    const days = (p.per_day || []).map((d, i) =>
+        `${i === 0 ? 'today' : i === 1 ? 'yesterday' : new Date(d.date + 'T12:00').toLocaleDateString([], { weekday: 'short' })} <b>${fmtN(d.units)}</b>`).join(' · ');
+    return `<div class="mc-line">Voices: ${voices}</div>`
+        + (days ? `<div class="mc-line">Characters a day: ${days}</div>` : '');
 }
 
 function provStateLine(p) {
@@ -3670,6 +3683,7 @@ function provCard(p) {
             ${p.rate_limit ? `<div class="mc-line">Also at most <b>${fmtN(p.rate_limit.amount)}</b> ${esc(p.rate_limit.unit)} a minute</div>` : ''}
             ${web && !idle ? `<div class="mc-line">Today <b>${fmtN(web.used_today)}</b> of Javid’s own <b>${fmtN(web.cap)}</b> credits a day · ${fmtN(web.searches)} search${web.searches === 1 ? '' : 'es'} · ${fmtN(web.reads)} page read${web.reads === 1 ? '' : 's'} · ${fmtN(web.cache_hits)} from cache</div>` : ''}
             <div class="mc-line">${esc(p.uses)}</div>
+            ${voiceLines(p)}
             ${idle ? '' : `<div class="mc-line">${resetText(p)}</div>`}
             <div class="mc-line">Personal data: <b>${p.personal_ok ? 'allowed' : 'never sent'}</b> <span class="mc-dim">(personal_ok: ${p.personal_ok})</span></div>
             ${idle ? '' : `<div class="mc-line">Last call <b>${fmtAgo(p.last_used)}</b>${p.calls != null ? ` · ${fmtN(p.calls)} call${p.calls === 1 ? '' : 's'} ${perText(p.allowance.per)}` : ''} · timeout ${Math.round(p.timeout_ms / 1000)} s</div>`}

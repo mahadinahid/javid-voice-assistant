@@ -87,6 +87,10 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   - **Cloudflare Workers AI** is counted in neurons from each reply's tokens at the model's published price; a model
     without a price is never called, and a request whose estimate could pass the free 10,000 a day isn't sent (on
     the Workers Paid plan, more would be billed).
+- **The backup voice** (ElevenLabs, 2026-10-26) gets the text of a sentence only after every edge-tts try failed, and
+  never a reply to a turn that needed calendar, tasks, memory or past chats while it has no `personal_ok`. Its key goes
+  only in the `xi-api-key` header. Clips of Javid's fixed phrases are kept in `data/tts_cache/` (mode 600): no
+  reply text is stored. edge-tts itself still gets every spoken reply (Microsoft), as before.
 - **Which models may change data** (2026-10-25): only a model with a pass in `config/model_tests.json` (tracked, written
   by `regression.py --certify` from live tool tests: no unsafe call, tool-call accuracy ≥ 80 %) gets tools. Any other
   model is chat-only: no tools in its requests, never a turn that needs one, and a write tool refuses to run for it

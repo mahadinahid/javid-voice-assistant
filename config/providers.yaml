@@ -269,12 +269,30 @@ providers:
     label: ElevenLabs
     kind: tts
     env: ELEVENLABS_API_KEY
-    enabled: true          # balance only: Javid's voice stays edge-tts (locked, see CLAUDE.md)
+    enabled: true          # the backup voice (2026-10-26): only when edge-tts fails every try. Javid's voice is edge-tts.
     priority: 1
     allowance:
-      from: api            # character_count / character_limit from GET /v1/user/subscription
+      from: api            # character_count / character_limit from GET /v1/user/subscription (asked again after 10 min)
       unit: characters
       per: month
+    off_at: 0.90           # stops at 90 % of the month's characters (Mahadi, 2026-10-26), not the usual 95 %
     reset: api
     timeout_ms: 10000
-    personal_ok: false
+    personal_ok: false     # so a reply to a calendar, task, memory or past-chat turn is never spoken by it
+    # The backup voices, fixed: one per language. A voice is used only with approved: true, Mahadi's to set after
+    # hearing it (python regression.py --voice-sample). cost_per_char: the characters a character costs, counted on the
+    # high side until ElevenLabs' next balance check replaces the estimate. Never change a voice_id without Mahadi.
+    voices:
+      en:
+        voice_id: cjVigY5qzO86Huf0OWal   # "Eric", a premade American male voice (Andrew is a US male voice)
+        name: Eric
+        model: eleven_flash_v2_5         # its fastest (~75 ms) and cheapest model; it has no Bengali
+        cost_per_char: 1
+        approved: true
+      bn:
+        voice_id: cjVigY5qzO86Huf0OWal   # the same voice speaking Bengali
+        name: Eric
+        model: eleven_v4_turbo           # speaks Bengali (bn), ~100 ms, the same price tier as Flash
+        language_code: bn
+        cost_per_char: 1
+        approved: false                  # until Mahadi's listening test: Bangla falls back to the notice

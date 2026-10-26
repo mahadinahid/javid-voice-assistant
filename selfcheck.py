@@ -25,7 +25,7 @@ VOICE_WINDOW_SEC = 3600
 PROBE_SEC = 4.0
 
 _clips: deque = deque(maxlen=300)    # (ts, mode, outcome, transcript): every /talk clip
-_tts: deque = deque(maxlen=300)      # (ts, ok, kind): every edge-tts synthesis (cache hits aren't)
+_tts: deque = deque(maxlen=300)      # (ts, ok, kind, engine): every synthesis try, edge-tts or the backup voice
 _stt: deque = deque(maxlen=50)       # (ts, kind): transcriptions that failed
 
 # outcome: "answered", "ignored" (hands-free without "Javid", outside the conversation window), "noise",
@@ -34,8 +34,8 @@ def note_clip(mode: str, outcome: str, transcript: str) -> None:
     _clips.append((time.time(), mode, outcome, (transcript or "")[:120]))
 
 
-def note_tts(ok: bool, kind: str = "") -> None:
-    _tts.append((time.time(), ok, kind))
+def note_tts(ok: bool, kind: str = "", engine: str = "edge") -> None:
+    _tts.append((time.time(), ok, kind, engine))
 
 
 def note_stt_error(kind: str) -> None:
@@ -226,19 +226,25 @@ def _voice(now: float) -> dict:
     import javid
     import tracing
     recent = [v for v in _tts if now - v[0] < VOICE_WINDOW_SEC]
-    failed = [v for v in recent if not v[1]]
+    edge = [v for v in recent if (v[3] if len(v) > 3 else "edge") == "edge"]
+    backup = [v for v in recent if len(v) > 3 and v[3] == "elevenlabs"]
+    failed = [v for v in edge if not v[1]]
     stats = tracing.stats()
     chat = stats.get("chat", {}).get("ttfa_median")
-    line = (f"{javid.EDGE_VOICE} / {javid.EDGE_VOICE_BN} via edge-tts · last hour: {len(recent)} sentences"
-            + (f", {len(failed)} failed tries ({failed[-1][2]}, {_ago(failed[-1][0])})" if failed else ", none failed"))
+    line = (f"{javid.EDGE_VOICE} / {javid.EDGE_VOICE_BN} via edge-tts · last hour: {len(edge)} sentences"
+            + (f", {len(failed)} failed tries ({failed[-1][2]}, {_ago(failed[-1][0])})" if failed else ", none failed")
+            + (f" · the backup voice (ElevenLabs) spoke {sum(v[1] for v in backup)}"
+               + (f", failed {sum(not v[1] for v in backup)}" if any(not v[1] for v in backup) else "") if backup else ""))
     if chat:
         line += f" · chat replies start speaking after {chat / 1000:.1f} s (median)"
     problem = bn = None
     if len(failed) >= 2:
-        problem = (f"The voice service failed {len(failed)} times in the last hour; I retry three times, then show the "
-                   "reply as text, never another voice.")
-        bn = (f"গত এক ঘণ্টায় ভয়েস সার্ভিস {_bn(len(failed))} বার কাজ করেনি; আমি তিনবার চেষ্টা করি, তারপর লেখা দেখাই, "
-              "অন্য কোনো ভয়েস না।")
+        on = javid._eleven_voice("x", "en") is not None
+        problem = (f"The voice service failed {len(failed)} times in the last hour; I retry three times, then "
+                   + ("my backup voice, ElevenLabs, speaks instead, or the reply shows as text." if on else
+                      "show the reply as text: the backup voice isn't set up."))
+        bn = (f"গত এক ঘণ্টায় ভয়েস সার্ভিস {_bn(len(failed))} বার কাজ করেনি; আমি তিনবার চেষ্টা করি, তারপর "
+              + ("বিকল্প ভয়েস (ElevenLabs) বলে, নয়তো লেখা দেখাই।" if on else "লেখা দেখাই: বিকল্প ভয়েস চালু নেই।"))
     return {"name": "Voice", "ok": problem is None, "line": line, "problem": problem, "problem_bn": bn,
             "ok_said": "the voice is working"}
 

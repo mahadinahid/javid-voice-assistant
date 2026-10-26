@@ -429,8 +429,8 @@ def calendar_connect():
 def speak_text(body: SpeakBody):
     """The locked voice for one sentence, chosen here from the language setting: a tab's own copy of the
     language can be stale (another tab or the CLI switched it), and English sent with "bn" was read by
-    Pradeep. 503 = edge-tts failed every try: the page shows the text with a "voice unavailable" notice
-    (there is no other voice)."""
+    Pradeep. 503 = edge-tts failed every try and the backup voice (ElevenLabs) couldn't take the sentence: the page
+    shows the text with a "voice unavailable" notice (never the browser's voice)."""
     try:
         audio, media_type = synthesize(body.text)
     except Exception as e:

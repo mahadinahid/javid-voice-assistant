@@ -29,7 +29,7 @@ contexts don't mix; memory, tasks, calendar and past-chat search are shared), un
 never runs at the same time as a web turn, and the web's open chat is reopened afterwards. A voice message is
 transcribed like /talk and also gets a voice-note reply in the locked voice: javid.synthesize, sentence groups
 by voice as the page speaks them, converted to OGG/Opus by ffmpeg (an MP3 audio file if ffmpeg is missing; if
-edge-tts is down, the text says the voice is unavailable - never another voice). A skill's or agent's screen
+edge-tts is down, the backup voice as on the page, else the text says the voice is unavailable). A skill's or agent's screen
 part and the source links follow as their own messages. Timers and reminders are pushed when they come due.
 Commands: /help, /new, /tasks, /timers, /lang, /voice, /status, /lock.
 """
@@ -362,7 +362,7 @@ def _to_ogg(mp3: bytes) -> bytes | None:
 def _speech(text: str) -> bytes:
     """The reply in the locked voice, as the page speaks it: sentence by sentence (web_tools.sentences), each
     with javid.voice_for's voice, consecutive sentences in the same voice synthesized together. Raises if
-    edge-tts fails (no other voice)."""
+    edge-tts fails and the backup voice can't take it (javid.synthesize)."""
     groups: list[tuple[str, list[str]]] = []
     for sentence in web_tools.sentences(text):
         if not re.search(r"[a-z0-9ঀ-৿]", sentence, re.I):

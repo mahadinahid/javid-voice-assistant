@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 178 cases. The default run never calls a real API: 114 of them script the
+Regression check for Javid's agent behaviour: 182 cases. The default run never calls a real API: 118 of them script the
 model's part and replay recorded fixtures for every provider; the other 64 send prompts through the real LLM and tool
 loop and only run with --llm.
 
@@ -11,6 +11,7 @@ loop and only run with --llm.
     python regression.py --use-120b   # live cases on gpt-oss-120b instead of the default gpt-oss-20b (implies --llm)
     python regression.py --live       # smoke test: one real call per provider that is on, then stop
     python regression.py --certify M  # the tool tests on model M (13 live cases): may it use tools? (config/model_tests.json)
+    python regression.py --voice-sample   # the listening test: ElevenLabs' backup voices say one sentence each
 
 The scripted cases fix the model's output to test what code decides whatever the model says: the garble guard,
 questions about Javid itself (about.py), the voice every spoken sentence gets, exchange rates and market briefs
@@ -44,6 +45,7 @@ import re
 import signal
 import statistics
 import socket
+import subprocess
 import sys
 import time
 import tempfile
@@ -169,6 +171,68 @@ class FakeCommunicate:
         yield {"type": "audio", "data": b"ID3 fake mp3"}
 
 
+class FailingCommunicate(FakeCommunicate):
+    """edge-tts in an outage: every try ends without audio."""
+
+    async def stream(self):
+        raise RuntimeError("NoAudioReceived")
+        yield  # noqa: unreachable (makes this an async generator, as edge-tts's is)
+
+
+class FakeElevenLabs:
+    """ElevenLabs without the network: its balance (the documented subscription response, the month's characters
+    settable) and text-to-speech requests, each kept as it would go out (never the key itself)."""
+
+    def __init__(self, used: float = 4210, limit: float = 10000):
+        self.used, self.limit, self.tts, self.checks, self.down = used, limit, [], 0, False
+
+    def get(self, url, headers, timeout):
+        self.checks += 1
+        if self.down:
+            raise ConnectionError("balance check failed")
+        body = copy.deepcopy(fixture("elevenlabs_subscription.json")["body"])
+        body.update(character_count=self.used, character_limit=self.limit)
+        return body
+
+    def post(self, url, headers, params, body, timeout):
+        self.tts.append({"url": url, "key_sent": bool(headers.get("xi-api-key")), "params": dict(params),
+                         "body": dict(body)})
+        return b"ID3 fake elevenlabs mp3"
+
+
+@contextlib.contextmanager
+def backup_voice(fake: FakeElevenLabs, edge_down: bool = True, voices: dict | None = None, registry: dict | None = None):
+    """edge-tts failing every try (or working), the fake ElevenLabs with a fake key, the scratch registry's ElevenLabs
+    voices changed by `voices` ({lang: fields}) and other `registry` changes."""
+    real = providers._get_json, javid._eleven_post, javid.edge_tts.Communicate
+    providers._get_json, javid._eleven_post = fake.get, fake.post
+    javid.edge_tts.Communicate = FailingCommunicate if edge_down else FakeCommunicate
+    javid._edge_down["until"] = 0.0
+    javid._tts_cache.clear()
+    providers._balance.update(at=0.0, data=None, error=None, busy=False)     # no balance known yet, no rest
+    providers.clear_cooldown("elevenlabs")
+    eleven = next(e for e in BASE_REGISTRY["providers"] if e["name"] == "elevenlabs")
+    write_registry({**(registry or {}), "elevenlabs": {**(registry or {}).get("elevenlabs", {}), "voices": {
+        lang: {**v, **(voices or {}).get(lang, {})} for lang, v in eleven["voices"].items()}}})
+    try:
+        with env(ELEVENLABS_API_KEY=FAKE_KEYS["ELEVENLABS_API_KEY"]):
+            yield fake
+    finally:
+        providers._get_json, javid._eleven_post, javid.edge_tts.Communicate = real
+        write_registry()
+
+
+def speak_post(text: str):
+    """POST /speak as the page does: (status, audio)."""
+    global _speech_client
+    if _speech_client is None:
+        from fastapi.testclient import TestClient
+        import server
+        _speech_client = TestClient(server.app)
+    res = _speech_client.post("/speak", json={"text": text})
+    return res.status_code, res.content
+
+
 @contextlib.contextmanager
 def fake_edge_tts():
     real = javid.edge_tts.Communicate
@@ -247,6 +311,7 @@ web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
 timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings or lists the real timers
 watches.WATCHES_FILE = os.path.join(SCRATCH, "watches.json")       # never fires the real watches
 tracing.TRACES_FILE = os.path.join(SCRATCH, "traces.jsonl")        # offline Telegram cases wrote into the real latency log
+javid.TTS_DISK_CACHE = os.path.join(SCRATCH, "tts_cache")           # the backup voice's saved phrases
 # Providers: a scratch copy of config/providers.yaml in which every provider may take personal data (the cases test
 # what Javid does, not Mahadi's personal_ok choices; the privacy cases set their own), and a scratch usage ledger.
 # Real requests (live cases, --live) are counted where real use is (accounting(True)).
@@ -2204,6 +2269,141 @@ def fake_web_ledger():
     return {"problems": problems}
 
 
+def voice_backup_order():
+    """edge-tts first, every try; only then ElevenLabs, in its fixed English voice, after checking the balance. For a
+    minute after, the next sentences skip edge-tts; the balance is asked again only after 10 minutes."""
+    problems, fake = [], FakeElevenLabs()
+    en = next(e for e in BASE_REGISTRY["providers"] if e["name"] == "elevenlabs")["voices"]["en"]
+    with backup_voice(fake):
+        before = len(TTS_CALLS)
+        status, audio = speak_post("The forecast says light rain this afternoon.")
+        if (status, audio) != (200, b"ID3 fake elevenlabs mp3"):
+            problems.append(f"edge-tts down: /speak gave {status} {audio[:30]!r}")
+        if len(TTS_CALLS) - before != javid.EDGE_ATTEMPTS:
+            problems.append(f"edge-tts was tried {len(TTS_CALLS) - before} times first, not {javid.EDGE_ATTEMPTS}")
+        sent = fake.tts[0] if fake.tts else {}
+        if (sent.get("url"), sent.get("body"), sent.get("params"), sent.get("key_sent")) != (
+                javid.ELEVEN_URL.format(voice_id=en["voice_id"]),
+                {"text": "The forecast says light rain this afternoon.", "model_id": en["model"]},
+                {"output_format": "mp3_44100_128"}, True):
+            problems.append(f"ElevenLabs was asked {sent}")
+        if fake.checks != 1:
+            problems.append(f"the balance was checked {fake.checks} times before the first use")
+        rows = [(c["op"], c["units"], c["unit"]) for c in providers.calls("elevenlabs") if c["op"] == "tts"]
+        if rows != [("tts", 44.0, "characters")]:
+            problems.append(f"ledger: {rows}")
+        before = len(TTS_CALLS)
+        speak_post("Take an umbrella just in case.")
+        if len(TTS_CALLS) != before or len(fake.tts) != 2 or fake.checks != 1:
+            problems.append(f"within a minute: edge-tts tried {len(TTS_CALLS) - before}x, {len(fake.tts)} backup "
+                            f"requests, {fake.checks} balance checks")
+        javid._edge_down["until"] = 0.0                      # a minute later
+        providers._balance["at"] -= providers.BALANCE_SEC + 1  # and the balance is 10 minutes old
+        before = len(TTS_CALLS)
+        speak_post("It should clear up by the evening.")
+        if len(TTS_CALLS) - before != javid.EDGE_ATTEMPTS or fake.checks != 2:
+            problems.append(f"a minute on, edge-tts wasn't first again ({len(TTS_CALLS) - before} tries) or the old "
+                            f"balance wasn't checked again ({fake.checks})")
+    with backup_voice(fake, edge_down=False):
+        n = len(fake.tts)
+        status, audio = speak_post("Good morning, Mahadi.")
+        if status != 200 or audio != b"ID3 fake mp3" or len(fake.tts) != n:
+            problems.append("with edge-tts working, the backup voice was asked")
+    return {"problems": problems}
+
+
+def voice_backup_refusals():
+    """No backup voice, so the notice: for Bangla until its voice is approved; at 90 % of the month (or a sentence that
+    would cross it, counting what was spoken since the last check); when the balance can't be checked; for a reply to a
+    personal turn while ElevenLabs has no personal_ok."""
+    problems = []
+    bangla = "আজ বিকেলে হালকা বৃষ্টি হতে পারে।"
+    with backup_voice(fake := FakeElevenLabs()):
+        if speak_post(bangla)[0] != 503 or fake.tts:
+            problems.append("a Bangla sentence went to ElevenLabs before its voice was approved")
+    with backup_voice(fake := FakeElevenLabs(), voices={"bn": {"approved": True}}):
+        speak_post(bangla)
+        body = (fake.tts or [{}])[0].get("body")
+        if body != {"text": bangla, "model_id": "eleven_v4_turbo", "language_code": "bn"}:
+            problems.append(f"with the Bangla voice approved, ElevenLabs was asked {body}")
+    with backup_voice(fake := FakeElevenLabs(used=9000)):
+        if speak_post("Okay.")[0] != 503 or fake.tts:
+            problems.append("at 90 % of the month's characters, ElevenLabs still spoke")
+    with backup_voice(fake := FakeElevenLabs(used=8990)):
+        crossing = speak_post("This one is over the line.")[0]       # 26 characters: 9,016, past 9,000
+        just_over = speak_post("Okay, done.")[0]                     # 11: 9,001
+        small = speak_post("Okay.")[0]                               # 5: 8,995
+        after = speak_post("Fine, ok.")[0]                           # 9 more after those 5, before a new check: 9,004
+        if (crossing, just_over, small, after) != (503, 503, 200, 503):
+            problems.append(f"near 90 %: {crossing}, {just_over}, {small}, {after} (wanted 503, 503, 200, 503)")
+    with backup_voice(fake := FakeElevenLabs()):
+        fake.down = True
+        if speak_post("The balance can't be checked.")[0] != 503 or fake.tts:
+            problems.append("the balance couldn't be checked, and ElevenLabs spoke anyway")
+    for personal_ok, want in ((False, 503), (True, 200)):
+        with backup_voice(fake := FakeElevenLabs(), registry={"elevenlabs": {"personal_ok": personal_ok}}):
+            javid._personal_speech.clear()
+            javid._personal_speech.append("Tomorrow you have lunch with Sam at 1 PM and the project review at 2:30.")
+            got = speak_post("Tomorrow you have lunch with Sam at 1 PM and the project review at 2:30.")[0]
+            fine = speak_post("Light rain is likely this afternoon.")[0]
+            if (got, fine) != (want, 200):
+                problems.append(f"personal_ok {personal_ok}: a personal reply got {got}, another sentence {fine}")
+    javid._personal_speech.clear()
+    return {"problems": problems}
+
+
+def voice_backup_cache():
+    """A fixed phrase the backup voice said is kept on disk (a restart doesn't spend its characters again); another short
+    sentence only in memory. The warm-up never uses the backup."""
+    problems = []
+    with backup_voice(fake := FakeElevenLabs()):
+        phrase = javid.phrase("ack", "en")             # "Yes?"
+        speak_post(phrase)
+        javid._tts_cache.clear()                        # a restart: the memory cache is gone
+        speak_post(phrase)
+        files = os.listdir(javid.TTS_DISK_CACHE) if os.path.isdir(javid.TTS_DISK_CACHE) else []
+        if len(fake.tts) != 1 or len(files) != 1:
+            problems.append(f"a fixed phrase: {len(fake.tts)} requests, {len(files)} files on disk")
+        elif oct(os.stat(os.path.join(javid.TTS_DISK_CACHE, files[0])).st_mode & 0o777) != "0o600":
+            problems.append("the saved clip isn't owner-only")
+        javid._edge_down["until"] = time.time() + 60
+        speak_post("Your tea is ready.")
+        speak_post("Your tea is ready.")
+        if len(fake.tts) != 2 or len(os.listdir(javid.TTS_DISK_CACHE)) != 1:
+            problems.append(f"a short sentence: {len(fake.tts) - 1} requests, saved to disk too")
+        n = len(fake.tts)
+        try:
+            javid.warm_phrases()
+        except RuntimeError:
+            pass                                        # edge-tts is down: the warm-up stops, as before
+        if len(fake.tts) != n:
+            problems.append("the warm-up used the backup voice")
+    return {"problems": problems}
+
+
+def voice_backup_panel():
+    """The Providers panel: ElevenLabs' characters a day (the last 7), its 90 % stop and its voices."""
+    problems = []
+    with backup_voice(fake := FakeElevenLabs()):
+        speak_post("The forecast says light rain this afternoon.")
+        row = next(p for p in providers.status()["providers"] if p["name"] == "elevenlabs")
+        days = row.get("per_day") or []
+        if len(days) != 7 or days[0]["units"] != 44 or days[0]["calls"] != 1 or any(d["units"] for d in days[1:]):
+            problems.append(f"per day: {days}")
+        if row.get("off_at") != 0.9 or (row.get("voices") or {}).get("bn", {}).get("approved") is not False:
+            problems.append(f"off_at {row.get('off_at')}, voices {row.get('voices')}")
+        if FAKE_KEYS["ELEVENLABS_API_KEY"] in json.dumps(providers.status()):
+            problems.append("the key is in the status")
+    page = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")).read()
+    if "per_day" not in page:
+        problems.append("the page doesn't show the characters per day")
+    for name in ("index.html", "telegram.html"):
+        text = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), name)).read()
+        if re.search(r"speechSynthesis|SpeechSynthesisUtterance", text):
+            problems.append(f"{name} uses the browser's voice")
+    return {"problems": problems}
+
+
 def refused_call(tool, why):
     return lambda r: None if (tool, why) in r.extra.get("refused", []) else \
         f"expected {tool} to be refused ({why}), refused: {r.extra.get('refused')}"
@@ -2842,7 +3042,8 @@ CASES = [
     Case("self: why the voice changes (the 2026-10-13 question)",
          ["I wanted to ask about one thing. When you are talking as a Javid, the voice is one and when you are "
           "talking about the task, the voice changes. Why is that?"],
-         [reply_has("andrew"), reply_has("pradeep"), reply_has("no other voice"), model_requests(0)], script=[]),
+         [reply_has("andrew"), reply_has("pradeep"), reply_has("backup voice from elevenlabs"), model_requests(0)],
+         script=[]),
     Case("self: weather sources (the 2026-10-15 question)",
          ["What type of sources are you using to find the weather? Because there are reliable and authentic "
           "thousands of websites."],
@@ -3194,6 +3395,15 @@ CASES += [
          [], [drive_ok], drive=chain_free_only, script=[]),
     Case("chain: Cloudflare counts neurons at the model's price and never goes past the free 10,000 a day",
          [], [drive_ok], drive=cloudflare_neurons, client_script=[]),
+    # ---------- the backup voice (2026-10-26): edge-tts, then ElevenLabs, then the notice; never the browser ----------
+    Case("voice: edge-tts first, every try; then ElevenLabs' fixed English voice, after a balance check", [],
+         [drive_ok], drive=voice_backup_order, script=[]),
+    Case("voice: no backup for unapproved Bangla, at 90 % of the month, without a balance, or for a personal reply", [],
+         [drive_ok], drive=voice_backup_refusals, script=[]),
+    Case("voice: the backup's fixed phrases are kept on disk, short sentences in memory; the warm-up never uses it", [],
+         [drive_ok], drive=voice_backup_cache, script=[]),
+    Case("voice: the Providers panel shows ElevenLabs' characters a day; no page uses the browser's voice", [],
+         [drive_ok], drive=voice_backup_panel, script=[]),
     Case("gate: a chat-only model gets no tools and no task; with only it left, a task turn is refused in code",
          [], [drive_ok], drive=tool_gate, client_script=[]),
     Case("gate: a call to a tool the round didn't offer never runs, and malformed arguments are refused, not a crash",
@@ -3280,7 +3490,7 @@ CASES += [
     Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
          [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 178, len(CASES)
+assert len(CASES) == 182, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -3625,6 +3835,54 @@ def certify(models: list[str], name_filter: str = "", resume: bool = False) -> i
     return 3 if incomplete else 0
 
 
+# ---------- --voice-sample: the listening test for the backup voices ----------
+VOICE_SAMPLES = {"en": "Hi Mahadi, this is Javid's backup voice. You'll only hear me when the usual voice can't answer.",
+                 "bn": "হ্যালো মাহাদি, আমি জাভেদের বিকল্প কণ্ঠ। মূল কণ্ঠ কাজ না করলে তখনই শুধু আমাকে শুনবে।"}
+
+
+def voice_sample() -> int:
+    """--voice-sample: ElevenLabs says one English and one Bangla sentence in its fixed backup voices (config/providers.yaml),
+    each played here (afplay) and saved in data/voice_samples/ for Mahadi to judge. The Bangla voice is tried while not
+    approved yet: this is how it gets approved. ~200 characters of the month's, counted in the real ledger."""
+    providers.REGISTRY_FILE = REAL["registry"]
+    providers.reload()
+    accounting(real=True)
+    if not providers.is_on("elevenlabs"):
+        print(f"ElevenLabs isn't set up: add {providers.key_env('elevenlabs')} to .env. Nothing was sent.")
+        return 2
+    providers.refresh_balance(wait=True)
+    b = providers._balance
+    if b["error"] or not b["data"]:
+        print(f"Couldn't check ElevenLabs' character balance ({(b['error'] or {}).get('kind', 'no answer')}). Nothing was sent.")
+        return 1
+    d = b["data"]
+    print(f"ElevenLabs ({d['tier'] or 'plan unknown'}): {d['used']:,.0f} of {d['amount']:,.0f} characters used this month; "
+          f"Javid stops at {providers.get('elevenlabs')['off_at'] or providers.OFF_AT:.0%}.\n")
+    folder = os.path.join(os.path.dirname(REAL["db"]) or ".", "voice_samples")
+    os.makedirs(folder, mode=0o700, exist_ok=True)
+    failed = 0
+    for lang, text in VOICE_SAMPLES.items():
+        v = providers.voices("elevenlabs").get(lang)
+        if not v:
+            print(f"{lang}: no voice set in config/providers.yaml")
+            failed += 1
+            continue
+        audio = javid._eleven(text, v, check=False)
+        if not audio:
+            print(f"FAIL  {lang}: {v['name']} ({v['model']}) didn't answer: see the [tts] line above")
+            failed += 1
+            continue
+        path = os.path.join(folder, f"elevenlabs-{lang}.mp3")
+        with os.fdopen(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+            f.write(audio)
+        print(f"{'English' if lang == 'en' else 'Bangla'}: {v['name']} on {v['model']}"
+              f"{'' if v['approved'] else ' (not approved yet)'} · {len(text)} characters · saved as {path}\n  “{text}”")
+        subprocess.run(["afplay", path])
+    print("\nIf the Bangla voice is good enough for you, set approved: true under elevenlabs → voices → bn in "
+          "config/providers.yaml (yours to set). If a voice is wrong, say which, and another voice gets the same test.")
+    return 1 if failed else 0
+
+
 # ---------- --live: one real call per provider ----------
 _SMOKE_MODEL: dict[str, str] = {}      # provider -> the model its smoke call used (its allowance may be per model)
 
@@ -3797,9 +4055,13 @@ def main() -> int:
     ap.add_argument("--certify", default="", help="comma-separated model ids: run the tool tests on each (real requests) "
                                                   "and save the results in config/model_tests.json")
     ap.add_argument("--resume", action="store_true", help="with --certify: skip the cases a model already has a result for")
+    ap.add_argument("--voice-sample", action="store_true",
+                    help="the listening test: ElevenLabs says one English and one Bangla sentence (real characters)")
     args = ap.parse_args()
     if args.live:
         return smoke_test(args.filter)
+    if args.voice_sample:
+        return voice_sample()
     llm = args.llm or args.use_120b or bool(args.models)
     # One model, no fallback: a fallback would mask that model's failures and mix results.
     chain = ([m.strip() for m in args.models.split(",") if m.strip()] if args.models

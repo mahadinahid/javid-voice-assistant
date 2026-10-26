@@ -63,7 +63,7 @@ traced too (`source: "cli"`).
 | 7 | Tools | Tasks and time (`javid.py`); calendar and public holidays (`calendar_tools.py`, Google Calendar API); headlines (`gnews.py`, Google News RSS, the search engines only as the fallback); web search and page reads (`web_tools.py` through the search router `search.py`: Tavily, Exa, Brave, Firecrawl, Cohere, by intent; decision record 2); skills (`skills.py`); agents (`agents.py`); exchange rates (`rates.py`); live prices (`markets.py`); weather, timers and sums (`weather.py`, `timers.py`, `calc.py`); memory proposals and past-chat search (`memory_store.py`). Results go back to the LLM for another round. A turn has at most `MAX_TOOL_ROUNDS` + 4 rounds (retries and rewrites use them up), and the last one is sent without tools so the model must answer. | `TOOL_MAP` in `javid.py` | `tools[]` (name, start, end) |
 | 8 | Checks | One retry or rewrite each for: an empty, garbled or malformed reply; a missing required tool; the wrong language; holiday dates not in the tool result; web figures without an official or second source. Then the web answer is trimmed and gets its source line, and a skill reply is split into spoken and screen parts. | `javid.py`: `think_stream`; `calendar_tools.check_holiday_reply`; `web_tools.check_reply`/`finalize`; `skills.split_reply` | `llm_done` → `reply_out` |
 | 9 | Stream out | NDJSON events. The reply text arrives as one `delta` once the final round is done (rounds are buffered, see 6). `say` ("Searching…") arrives as a web search starts. | `server.py`: `_traced`, `_reply_stream` | `reply_out`, `server_done` |
-| 10 | Text-to-speech | The page cuts the reply into sentences (`.!?` or `।` followed by a space) and requests each from `/speak` straight away. The server synthesizes with edge-tts, the one locked voice per language, with a cache, at most 3 sentences at once, and up to 3 tries (6, 8 then 10 s for the first audio, 4 s between chunks after that). A failure shows "voice unavailable", never another voice. | `index.html`: `feedSpeech`, `speakChunk`, `fetchAudio`; `server.py`: `speak_text`; `javid.py`: `synthesize` | `tts_first_request` |
+| 10 | Text-to-speech | The page cuts the reply into sentences (`.!?` or `।` followed by a space) and requests each from `/speak` straight away. The server synthesizes with edge-tts, the one locked voice per language, with a cache, at most 3 sentences at once, and up to 3 tries (6, 8 then 10 s for the first audio, 4 s between chunks after that). If every try fails, ElevenLabs' fixed backup voice speaks the sentence (decision record 4); if it can't, the page shows "voice unavailable", never the browser's voice. | `index.html`: `feedSpeech`, `speakChunk`, `fetchAudio`; `server.py`: `speak_text`; `javid.py`: `synthesize` | `tts_first_request` |
 | 11 | Playback | Clips play in order. Stop, Esc, push-to-talk or barge-in cut them off. | `index.html`: `playNext`, `stopSpeech`, `bargeIn` | `first_audio`, `first_answer_audio`, `tts_done` |
 | 12 | Records | The chat log, token usage, the usage ledger (every provider call in its own unit: `data/providers.db`), and the latency trace. | `javid.py`: `log_message`, `_record_usage`; `providers.py`: `record`; `tracing.py` | — |
 
@@ -381,4 +381,51 @@ harness fix below):
 - Letting a chat-only model take a tool turn without its tools: rejected; it would say "I've added it" with nothing
   behind it, which is what Qwen did even with the tools there.
 - Several runs per case: not done, to save quota (13 cases are ~40k tokens on Groq); a close model can be rerun.
+
+### 4. A backup voice: ElevenLabs after edge-tts (2026-10-26)
+
+**Context.** Javid's voice is edge-tts (Andrew, Pradeep in Bangla mode), locked since 2026-10-14 with no fallback:
+when edge-tts failed every try, the reply was text with a "voice unavailable" note. edge-tts is an unofficial endpoint
+and fails in streaks (once about half of all calls; a 403 on every call until the library was upgraded). On 2026-10-26
+Mahadi asked for ElevenLabs as the fallback: one fixed English voice, a Bangla voice only if it passes his listening
+test, its character balance checked before use and a stop at 90 % of the month, repeated phrases cached, and its
+characters a day on the Providers panel. Never the browser's voice.
+
+**Decision.**
+1. **Order**: edge-tts, its three tries unchanged; then ElevenLabs; then the notice. After a sentence fails on edge-tts,
+   the backup speaks first for 60 s, so an outage doesn't cost each sentence ~24 s of tries, then edge-tts is first
+   again. The page never speaks by itself (a scripted check fails if `speechSynthesis` appears in it).
+2. **Fixed voices** in `config/providers.yaml`: English is Eric (a premade American male voice) on
+   `eleven_flash_v2_5`, its fastest and cheapest model; Bangla the same voice on `eleven_v4_turbo` (Flash has no
+   Bengali), with `approved: false` until Mahadi has heard it (`regression.py --voice-sample` plays one sentence of
+   each and saves them). A voice not approved is never used: that language goes to the notice.
+3. **Budget**: before a call the balance must be known and at most 10 minutes old (else it's asked again; if that
+   fails, no backup). The guard counts ElevenLabs' own figure plus what Javid spoke since (the ledger, one character
+   per character, on the high side for Flash) and stops at `off_at: 0.90`, refusing a sentence that would cross it.
+4. **Privacy**: ElevenLabs has no `personal_ok`, so a reply to a turn that needed calendar, tasks, memory or past
+   chats isn't sent to it; those sentences get the notice. (edge-tts itself isn't covered by the rule: open in
+   `SECURITY.md`.)
+5. **Cache**: the fixed phrases' clips are kept on disk (`data/tts_cache/`), so they are paid for once; other short
+   sentences in memory; the warm-up never uses the backup.
+
+**Consequences.**
+- During an edge-tts outage the voice changes to the backup's: the thing the 2026-10-14 rule was there to prevent,
+  now chosen. A reply can start in Andrew and go on in the backup voice if edge-tts fails in the middle.
+- In Bangla mode, until the Bangla voice is approved, an outage still means text only; and a personal reply is never
+  spoken by the backup, in either language.
+- The free allowance is small (10,000 characters a month on the free plan, per the documented subscription response):
+  a long outage spends the month's 9,000 usable characters in about 15 news answers, then the notice again.
+- ElevenLabs' character cost per model isn't given in its responses, and its pricing pages disagree on credits per
+  character; counting one per character errs towards stopping early, and every balance check replaces the estimate.
+- Nothing was run live yet: there is no ELEVENLABS_API_KEY. The voice id, the models and the formats come from
+  ElevenLabs' documentation; `--voice-sample` is the first real request.
+
+**Alternatives considered.**
+- Trying the backup after one failed edge-tts try instead of three: rejected; Mahadi prefers the natural voice over
+  speed, and most edge-tts failures are single stalls. The 60 s skip covers real outages.
+- The browser's voice: rejected by Mahadi (it is what made the voice "change" on 2026-10-14).
+- Caching every spoken sentence on disk: rejected; replies hold personal content. Only Javid's fixed phrases are
+  stored.
+- `eleven_v3` for Bangla: kept as the next candidate if v4 Turbo fails the listening test (twice the price per
+  character).
 

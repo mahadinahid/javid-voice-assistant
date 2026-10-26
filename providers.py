@@ -59,7 +59,7 @@ USES = {
     "brave": "web search: news, and a second index for facts",
     "firecrawl": "reads a page Tavily can't (JavaScript)",
     "cohere": "reranks web search results",
-    "elevenlabs": "balance only: Javid's voice is edge-tts",
+    "elevenlabs": "the backup voice, only when edge-tts fails (Javid's voice is edge-tts)",
 }
 
 
@@ -137,7 +137,28 @@ def _normalize(raw: dict) -> dict:
                             if raw.get("soft_timeout_ms") is not None else None),
         "personal_ok": raw.get("personal_ok") is True,               # only an explicit true allows personal data
         "key_env": key_env, "base_url": base_url, "models": _models(name, raw.get("models")),
+        # off_at: this provider's own stop, below the usual OFF_AT (ElevenLabs stops at 90 % of the month's characters)
+        "off_at": (float(_num(raw["off_at"], f"{name}: off_at")) if raw.get("off_at") is not None else None),
+        "voices": _voices(name, raw.get("voices")),
     }
+
+
+def _voices(name: str, raw) -> dict[str, dict]:
+    """A voice provider's fixed voices by language: {voice_id, name, model, language_code, cost_per_char, approved}.
+    approved is false until Mahadi has listened to that voice and set it true (a voice not approved is never used)."""
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ValueError(f"{name}: voices must be a mapping of language to voice")
+    out = {}
+    for lang, v in raw.items():
+        if not isinstance(v, dict) or not all(isinstance(v.get(k), str) and v[k].strip() for k in ("voice_id", "model")):
+            raise ValueError(f"{name}: the {lang} voice needs a voice_id and a model")
+        out[str(lang)] = {"voice_id": v["voice_id"].strip(), "name": str(v.get("name") or v["voice_id"]),
+                          "model": v["model"].strip(), "language_code": v.get("language_code"),
+                          "cost_per_char": float(_num(v.get("cost_per_char", 1), f"{name}: cost_per_char") or 1),
+                          "approved": v.get("approved") is True}
+    return out
 
 
 def _models(name: str, raw) -> list[dict]:
@@ -256,6 +277,10 @@ def base_url(name: str) -> str | None:
         return None
     missing = [v for v in re.findall(r"\{([A-Z0-9_]+)\}", url) if not os.environ.get(v, "").strip()]
     return None if missing else re.sub(r"\{([A-Z0-9_]+)\}", lambda m: os.environ[m.group(1)].strip(), url)
+
+
+def voices(name: str) -> dict[str, dict]:
+    return dict((get(name) or {}).get("voices", {}))
 
 
 def models(name: str) -> list[dict]:
@@ -517,11 +542,12 @@ def usage(name: str, model: str = "", now: float | None = None) -> dict:
     return out
 
 
-def share_state(share: float | None) -> str:
-    """The guard's verdict on a share of an allowance: ready, reserve (>= 80 %) or off (>= 95 %)."""
+def share_state(share: float | None, off_at: float | None = None) -> str:
+    """The guard's verdict on a share of an allowance: ready, reserve (>= 80 %) or off (>= 95 %, or the provider's own
+    off_at)."""
     if share is None:
         return "ready"
-    return "off" if share >= OFF_AT else "reserve" if share >= RESERVE_AT else "ready"
+    return "off" if share >= (off_at or OFF_AT) else "reserve" if share >= RESERVE_AT else "ready"
 
 
 def _fmt(n: float) -> str:
@@ -555,11 +581,11 @@ def state(name: str, model: str = "", cost: float = 0.0, now: float | None = Non
     if u["amount"] == 0:
         return {"state": "off", "why": "no free tier", "until": None, "usage": u}
     if u["amount"] and u["used"] is not None:
-        verdict = share_state(u["share"])
+        verdict = share_state(u["share"], entry["off_at"])
         if verdict == "off":
             return {"state": "off", "why": f"{u['share']:.0%} of its free {u['unit']} used", "until": u["next_reset"],
                     "usage": u}
-        if cost and u["used"] + cost > u["amount"]:
+        if cost and u["used"] + cost > u["amount"] * (entry["off_at"] or 1.0):    # past the allowance, or the own stop
             return {"state": "off", "why": "this call would go past its free allowance", "until": u["next_reset"],
                     "usage": u}
         if verdict == "reserve":
@@ -737,6 +763,7 @@ def _fetch_balance() -> None:
                          timeout_s("elevenlabs", 10.0))
         reset_at = data.get("next_character_count_reset_unix")
         _balance.update(at=time.time(), error=None, data={
+            "checked_at": time.time(),
             "used": float(data["character_count"]), "amount": float(data["character_limit"]),
             "next_reset": float(reset_at) if reset_at else None, "tier": str(data.get("tier") or "")})
         record("elevenlabs", 0, op="balance", latency_ms=(time.time() - t0) * 1000, status="ok")
@@ -751,13 +778,33 @@ def _fetch_balance() -> None:
 
 
 def _elevenlabs_report(model: str = "") -> dict | None:
+    """The month's characters: ElevenLabs' own count at its last check (BALANCE_SEC old at most), plus what Javid has
+    spoken through it since (the ledger), so the 90 % stop holds between checks."""
     if is_on("elevenlabs") and time.time() - _balance["at"] > BALANCE_SEC and not cooldown("elevenlabs")[0]:
         refresh_balance()
     data = _balance["data"]
-    return {**{k: data[k] for k in ("used", "amount", "next_reset")}, "unit": "characters"} if data else None
+    if not data:
+        return None
+    since = used("elevenlabs", data.get("checked_at") or _balance["at"])
+    return {"used": data["used"] + since, "amount": data["amount"], "next_reset": data["next_reset"],
+            "unit": "characters", "checked_at": data.get("checked_at")}
 
 
 set_reporter("elevenlabs", _elevenlabs_report)
+
+
+def per_day(name: str, days: int = 7, ops: tuple = (), now: float | None = None) -> list[dict]:
+    """Units a day over the last `days` local days, newest first (the Providers panel: ElevenLabs' characters)."""
+    now = now or time.time()
+    start = _midnight(now, None).timestamp() - (days - 1) * 86400
+    rows = [c for c in calls(name, start) if not ops or c["op"] in ops]
+    out = []
+    for n in range(days):
+        day = _midnight(now, None) - timedelta(days=n)
+        lo, hi = day.timestamp(), (day + timedelta(days=1)).timestamp()
+        mine = [c for c in rows if lo <= c["ts"] < hi and c["status"] == "ok"]
+        out.append({"date": day.strftime("%Y-%m-%d"), "units": sum(c["units"] for c in mine), "calls": len(mine)})
+    return out
 
 
 # ---------- the Providers panel ----------
@@ -782,6 +829,10 @@ def status(now: float | None = None) -> dict:
             "window_start": (u or {}).get("window_start"), "rate_limit": e["rate_limit"], "costs": e["costs"],
             "calls": len(calls(name, (u or {}).get("window_start"))) if (u or {}).get("window_start") else None,
             "last_used": last_used(name), "last_error": last_error(name),
+            "off_at": e["off_at"] or OFF_AT,
+            **({"per_day": per_day(name, ops=("tts",), now=now), "voices": {
+                lang: {"name": v["name"], "model": v["model"], "approved": v["approved"]}
+                for lang, v in e["voices"].items()}} if e["kind"] == "tts" else {}),
         })
     return {"providers": rows, "errors": errors(), "reserve_at": RESERVE_AT, "off_at": OFF_AT, "now": now,
             "registry": os.path.relpath(REGISTRY_FILE, os.path.dirname(os.path.abspath(__file__)))}

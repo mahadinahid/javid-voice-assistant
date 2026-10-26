@@ -5,7 +5,9 @@ Day 7 polish: startup greeting, graceful Ctrl+C, network-safe search, file-handl
 """
 
 import asyncio
+import collections
 import contextlib
+import hashlib
 import io
 import json
 import os
@@ -69,8 +71,9 @@ KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
 LLM_MIN_REQUEST_TOKENS = 1500   # one request is ~0.6-1.7k tokens (prompt + the tools sent); a turn ~2 requests
 # LOCKED by the user: approved as "perfect" on 2026-10-13, made permanent on 2026-10-14 ("set this
 # voice for everything, don't change it again"). Every spoken word, web UI and CLI, is this voice
-# via edge-tts. There is deliberately no other engine and no fallback voice: if edge-tts fails,
-# the reply is shown as text, not spoken by something else. Never change this unless told to.
+# via edge-tts. The one fallback, since Mahadi asked for it on 2026-10-26, is ElevenLabs' fixed backup voice after
+# every edge-tts try has failed (synthesize, _eleven); then the reply is shown as text. No other engine, ever (no
+# browser speech, no macOS say). Never change this unless told to.
 EDGE_VOICE = "en-US-AndrewNeural"
 # Bangla mode's voice, LOCKED the same way (added 2026-10-14 when the user asked for Bangla mode):
 # AndrewNeural turns Bengali script into near-silence, so Bengali needs its own voice. Male bn-BD, to
@@ -2802,6 +2805,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                                   + code_tools + sorted(agents.tools_used())))
         basis = {**({"tools": used} if used else {}), **({"sources": links} if links else {})}
         messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {}), **basis})
+        if messages[turn_start].get("_needs_personal") and reply.strip():
+            _personal_speech.append(" ".join(reply.split()))     # the backup voice may not say it (_eleven)
         if reply.strip():
             log_message("assistant", reply.strip(), **basis,
                         **({"screen": screen} if screen else {}), **({"skill": skills.active()["name"]} if skills.active() else {}),
@@ -2820,7 +2825,8 @@ _TTS_CACHE_SIZE = 64
 
 # edge-tts is a free, unofficial Microsoft endpoint. It normally answers in ~1 s
 # but is erratic: stalls of 3-5 s and "no audio" failures come in streaks. Javid
-# waits and retries so the voice is always the locked one, never a substitute.
+# waits and retries so the voice is the locked one whenever edge-tts can give it; only after every try fails does the
+# backup voice speak (ElevenLabs, below), and without that, nothing: the reply is text with a "voice unavailable" note.
 EDGE_ATTEMPTS = 3
 # A try waits this long for its first audio (longer on each retry), then at most EDGE_STALL_SEC between chunks: a
 # slow sentence that is still arriving is kept. A fixed 6 s for the whole sentence threw those away during a slow
@@ -2875,21 +2881,141 @@ def _edge_or_none(text: str, voice: str) -> bytes | None:
     return None
 
 
-def synthesize(text: str, lang: str | None = None) -> tuple[bytes, str]:
-    """The language's voice (EDGE_VOICE / EDGE_VOICE_BN) as MP3 bytes. Raises if edge-tts is down
-    after EDGE_ATTEMPTS tries: there is no fallback voice."""
-    voice = voice_for(text, lang)
-    if (voice, text) in _tts_cache:
-        return _tts_cache[voice, text]
-    audio = _edge_or_none(text, voice)
-    if audio is None:
-        raise RuntimeError("edge-tts unavailable")
-    result = (audio, "audio/mpeg")
+# ---------- the backup voice: ElevenLabs (Mahadi, 2026-10-26: "edge-tts first, then ElevenLabs, then the notice") ----------
+# One fixed voice per language from config/providers.yaml (elevenlabs → voices); a voice is used only once Mahadi has
+# approved it after listening (Bangla isn't yet). Never a browser voice, macOS say or any other engine. Before each use
+# the character balance is known (asked from its API, cached providers.BALANCE_SEC), and it stops at 90 % of the month
+# (off_at). The privacy rule holds: a reply to a turn that needed personal data isn't sent to it without personal_ok.
+ELEVEN_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+ELEVEN_FORMAT = "mp3_44100_128"       # the same MP3 the page plays from edge-tts
+ELEVEN_PARALLEL = 2                   # the free tier's concurrent requests
+EDGE_DOWN_SEC = 60.0                  # after edge-tts failed every try, the next sentences skip it this long
+TTS_DISK_CACHE = os.path.join("data", "tts_cache")   # the backup voice's fixed phrases: they cost characters
+_eleven_slots = threading.BoundedSemaphore(ELEVEN_PARALLEL)
+_edge_down = {"until": 0.0}
+_personal_speech: collections.deque = collections.deque(maxlen=20)   # replies to personal turns (think_stream)
+
+
+def _eleven_post(url: str, headers: dict, params: dict, body: dict, timeout: float) -> bytes:
+    """One ElevenLabs text-to-speech request (regression.py swaps this for a fake)."""
+    import httpx
+    resp = httpx.post(url, headers=headers, params=params, json=body, timeout=timeout)
+    resp.raise_for_status()
+    return resp.content
+
+
+def _eleven_voice(text: str, lang: str | None) -> dict | None:
+    """The backup voice for this sentence, or None: ElevenLabs off (no key, turned off) or that language's voice not
+    approved. Bengali letters take the Bangla voice, as they take Pradeep's."""
+    if not providers.is_on("elevenlabs"):
+        return None
+    lang = "bn" if _BN_LETTERS.search(text) else (lang if lang in VOICES else get_language())
+    v = providers.voices("elevenlabs").get(lang)
+    return v if v and v["approved"] else None
+
+
+def _fixed_phrases() -> set[str]:
+    """The sentences of Javid's fixed phrases (both languages): the only clips kept on disk."""
+    return {" ".join(x.split()) for p in PHRASES.values() for t in p.values() for x in web_tools.sentences(t)}
+
+
+def _personal(text: str) -> bool:
+    """Part of a reply to a turn that needed calendar, tasks, memory or past chats."""
+    flat = " ".join(text.split())
+    return bool(flat) and any(flat in reply for reply in _personal_speech)
+
+
+def _eleven_budget(chars: float) -> tuple[bool, str]:
+    """May ElevenLabs speak this many characters now? Its balance must be known and fresh (asked again after
+    providers.BALANCE_SEC; if that check fails, no), and the month must stay under its 90 % stop."""
+    b = providers._balance
+    if time.time() - b["at"] > providers.BALANCE_SEC:
+        providers.refresh_balance(wait=True)
+    if b["error"] or not b["data"]:
+        return False, "its character balance couldn't be checked"
+    ok, st = providers.allow("elevenlabs", cost=chars)
+    return ok, st["why"]
+
+
+def _eleven(text: str, v: dict, check: bool = True) -> bytes | None:
+    """The backup voice `v` saying `text`, or None (not allowed now, or it failed). Fixed phrases come from the disk
+    cache once made, short sentences from memory, so a repeated phrase costs its characters once. check=False: the
+    listening test (regression.py --voice-sample) only; the budget still applies."""
+    key = (f"elevenlabs:{v['voice_id']}:{v['model']}", text)
+    if key in _tts_cache:
+        return _tts_cache[key][0]
+    flat = " ".join(text.split())
+    path = (os.path.join(TTS_DISK_CACHE, hashlib.sha256(f"{v['voice_id']}|{v['model']}|{flat}".encode()).hexdigest()
+                         + ".mp3") if flat in _fixed_phrases() else None)
+    if path and os.path.exists(path):
+        with open(path, "rb") as f:
+            audio = f.read()
+        _remember_clip(key, text, audio)
+        return audio
+    if check and _personal(text) and not providers.personal_ok("elevenlabs"):
+        print("[tts] backup voice: not for a reply with personal data (ElevenLabs has no personal_ok)")
+        return None
+    cost = len(text) * v["cost_per_char"]
+    ok, why = _eleven_budget(cost)
+    if not ok:
+        print(f"[tts] backup voice not used: {why}")
+        return None
+    body = {"text": text, "model_id": v["model"], **({"language_code": v["language_code"]} if v["language_code"] else {})}
+    headers = {"xi-api-key": os.environ.get(providers.key_env("elevenlabs"), "").strip(), "Accept": "audio/mpeg"}
+    t0 = time.time()
+    try:
+        with _eleven_slots:
+            audio = _eleven_post(ELEVEN_URL.format(voice_id=v["voice_id"]), headers, {"output_format": ELEVEN_FORMAT},
+                                 body, providers.timeout_s("elevenlabs", 10.0))
+        if not audio:
+            raise RuntimeError("ElevenLabs returned no audio")
+    except Exception as e:
+        kind = providers.error_kind(e)
+        providers.record("elevenlabs", 0, model=v["model"], op="tts", latency_ms=(time.time() - t0) * 1000,
+                         status=kind, detail=type(e).__name__)
+        if kind != "error" and (rest := providers.cooldown_seconds("elevenlabs", e)):
+            providers.cool("elevenlabs", rest, kind)
+        print(f"[tts] backup voice failed: {type(e).__name__} {_redact(str(e))[:100]}")
+        selfcheck.note_tts(False, type(e).__name__, engine="elevenlabs")
+        return None
+    providers.record("elevenlabs", cost, model=v["model"], op="tts", latency_ms=(time.time() - t0) * 1000)
+    selfcheck.note_tts(True, engine="elevenlabs")
+    if path:
+        os.makedirs(TTS_DISK_CACHE, mode=0o700, exist_ok=True)
+        with os.fdopen(os.open(path + ".tmp", os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as f:
+            f.write(audio)
+        os.replace(path + ".tmp", path)
+    _remember_clip(key, text, audio)
+    return audio
+
+
+def _remember_clip(key: tuple, text: str, audio: bytes) -> None:
     if len(text) <= _TTS_CACHE_MAX_CHARS:
         if len(_tts_cache) >= _TTS_CACHE_SIZE:
             _tts_cache.pop(next(iter(_tts_cache)))
-        _tts_cache[voice, text] = result
-    return result
+        _tts_cache[key] = (audio, "audio/mpeg")
+
+
+def synthesize(text: str, lang: str | None = None, backup: bool = True) -> tuple[bytes, str]:
+    """The language's locked voice (EDGE_VOICE / EDGE_VOICE_BN) as MP3 bytes. If edge-tts fails every try, the backup
+    voice (ElevenLabs, when its voice for the language is approved and it may take the sentence), and for
+    EDGE_DOWN_SEC after that the backup speaks first. Raises when neither can: the page shows "voice unavailable".
+    backup=False: edge-tts only (the warm-up: the backup costs characters)."""
+    voice = voice_for(text, lang)
+    if (voice, text) in _tts_cache:
+        return _tts_cache[voice, text]
+    alt = _eleven_voice(text, lang) if backup else None
+    if alt and time.time() < _edge_down["until"] and (audio := _eleven(text, alt)):
+        return audio, "audio/mpeg"
+    audio = _edge_or_none(text, voice)
+    if audio is not None:
+        _remember_clip((voice, text), text, audio)
+        return audio, "audio/mpeg"
+    if alt:
+        _edge_down["until"] = time.time() + EDGE_DOWN_SEC
+        if (audio := _eleven(text, alt)):
+            return audio, "audio/mpeg"
+    raise RuntimeError("edge-tts unavailable" + (" and the backup voice couldn't take it" if alt else ""))
 
 
 _WARM_FIRST = ("ack", "searching", "working")     # the ones said while Mahadi waits
@@ -2904,7 +3030,7 @@ def warm_phrases() -> list[tuple[str, str]]:
         for lang, text in PHRASES[key].items():
             for sentence in web_tools.sentences(text):
                 if len(sentence) <= _TTS_CACHE_MAX_CHARS:
-                    synthesize(sentence, lang)
+                    synthesize(sentence, lang, backup=False)      # never the backup's characters for a warm-up
                     done.append((sentence, voice_for(sentence, lang)))
     return done
 

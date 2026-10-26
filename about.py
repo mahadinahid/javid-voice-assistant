@@ -97,12 +97,13 @@ _SOURCE_KINDS = [
 
 _SPOKEN = {
     "voice": {
-        "en": "In English I always speak with Microsoft's Andrew neural voice, and in Bangla mode with Pradeep, both "
-              "through edge-tts; Bengali words are always Pradeep, because Andrew can't pronounce them. There's no "
-              "other voice: if that service fails, you get the reply as text with a voice-unavailable note, never a "
-              "different voice.",
-        "bn": "ইংরেজিতে আমি সবসময় Microsoft-এর Andrew নিউরাল ভয়েসে কথা বলি, আর বাংলা মোডে Pradeep-এর ভয়েসে, দুটোই "
-              "edge-tts দিয়ে। অন্য কোনো ভয়েস নেই: সার্ভিসটা কাজ না করলে উত্তর লেখা হিসেবে দেখাই, অন্য ভয়েসে কখনো না।"},
+        "en": "In English I speak with Microsoft's Andrew neural voice, and in Bangla mode with Pradeep, both through "
+              "edge-tts; Bengali words are always Pradeep, because Andrew can't pronounce them. Only if that service "
+              "fails does a backup voice from ElevenLabs read the reply, one fixed voice, used only for the languages "
+              "you've approved; without it you get the reply as text with a voice-unavailable note.",
+        "bn": "ইংরেজিতে আমি Microsoft-এর Andrew নিউরাল ভয়েসে কথা বলি, আর বাংলা মোডে Pradeep-এর ভয়েসে, দুটোই edge-tts "
+              "দিয়ে। সার্ভিসটা কাজ না করলে শুধু তখন ElevenLabs-এর একটা নির্দিষ্ট বিকল্প ভয়েস পড়ে, যে ভাষাগুলো তুমি "
+              "অনুমোদন করেছ শুধু সেগুলোয়; নইলে উত্তর লেখা হিসেবে দেখাই।"},
     "hearing": {
         "en": "I hear you through Groq's Whisper speech recognition. I only listen when you press talk, or in "
               "hands-free mode, where a conversation starts with 'Javid' and then goes on without my name until "

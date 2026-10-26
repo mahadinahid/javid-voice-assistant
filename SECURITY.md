@@ -91,6 +91,12 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   never a reply to a turn that needed calendar, tasks, memory or past chats while it has no `personal_ok`. Its key goes
   only in the `xi-api-key` header. Clips of Javid's fixed phrases are kept in `data/tts_cache/` (mode 600): no
   reply text is stored. edge-tts itself still gets every spoken reply (Microsoft), as before.
+- **Google Drive** (2026-10-26): Javid's own OAuth client with `drive.file` only (it sees only the files it made), its
+  own token `token_drive.json` (mode 600, gitignored), used only if its client id is Javid's and its scope exactly
+  `drive.file` (never another app's token, such as Hermes's). Saving is decided in code, never by the model, and asks
+  first unless Mahadi said "save"; on Telegram it waits for Approve. Only a report built from a reply is uploaded,
+  never a file: not the memory files, not chat history, and not a document holding a key, a sign-in secret or a
+  memory line. A saved brief can hold calendar and task lines (that's what a brief is), in Mahadi's own Drive.
 - **Which models may change data** (2026-10-25): only a model with a pass in `config/model_tests.json` (tracked, written
   by `regression.py --certify` from live tool tests: no unsafe call, tool-call accuracy ≥ 80 %) gets tools. Any other
   model is chat-only: no tools in its requests, never a turn that needs one, and a write tool refuses to run for it

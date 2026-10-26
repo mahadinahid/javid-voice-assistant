@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 import agents
 import calendar_tools
+import drive_tools
 import memory_store
 import providers
 import selfcheck
@@ -412,6 +413,24 @@ def sessions_delete(sid: str, request: Request):
 @app.get("/calendar")
 def calendar_agenda():
     return calendar_tools.agenda("today")
+
+
+@app.get("/drive")
+def drive_status():
+    """Google Drive for saving reports (drive_tools): connected, needs_auth, no_credentials or wrong_token."""
+    return {"status": drive_tools.status(), "folder": drive_tools.FOLDER_NAME}
+
+
+@app.post("/drive/connect")
+def drive_connect(request: Request):
+    """Opens Google's sign-in page (drive.file only: the files Javid makes) and waits up to 5 min for consent."""
+    _local_page_only(request)
+    try:
+        drive_tools.connect()
+    except Exception as e:
+        print(f"[drive] connect failed: {type(e).__name__}")
+        raise HTTPException(500, "Could not connect Google Drive")
+    return drive_status()
 
 
 @app.post("/calendar/connect")

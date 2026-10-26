@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 182 cases. The default run never calls a real API: 118 of them script the
+Regression check for Javid's agent behaviour: 192 cases. The default run never calls a real API: 128 of them script the
 model's part and replay recorded fixtures for every provider; the other 64 send prompts through the real LLM and tool
 loop and only run with --llm.
 
@@ -59,6 +59,7 @@ import yaml
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import approvals  # noqa: E402
 import calendar_tools as ct  # noqa: E402
+import drive_tools  # noqa: E402
 import gnews  # noqa: E402
 import javid  # noqa: E402
 import markets  # noqa: E402
@@ -312,6 +313,10 @@ timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings
 watches.WATCHES_FILE = os.path.join(SCRATCH, "watches.json")       # never fires the real watches
 tracing.TRACES_FILE = os.path.join(SCRATCH, "traces.jsonl")        # offline Telegram cases wrote into the real latency log
 javid.TTS_DISK_CACHE = os.path.join(SCRATCH, "tts_cache")           # the backup voice's saved phrases
+drive_tools.CREDENTIALS_FILE = os.path.join(SCRATCH, "credentials.json")  # Google Drive: never the real sign-in files
+drive_tools.TOKEN_FILE = os.path.join(SCRATCH, "token_drive.json")
+drive_tools.STATE_FILE = os.path.join(SCRATCH, "drive.json")
+drive_tools.CALENDAR_TOKEN_FILE = os.path.join(SCRATCH, "token.json")
 # Providers: a scratch copy of config/providers.yaml in which every provider may take personal data (the cases test
 # what Javid does, not Mahadi's personal_ok choices; the privacy cases set their own), and a scratch usage ledger.
 # Real requests (live cases, --live) are counted where real use is (accounting(True)).
@@ -786,6 +791,77 @@ WEB_PAGES = {BBS_URL: "Point-to-point inflation in September 2026 stood at 8.36 
              JS_PAGE: "Please enable JavaScript to view this site."}
 
 
+class FakeDrive:
+    """Google Drive's files API without the network, as drive.file shows it: only what Javid made. Keeps every folder
+    and document, and the HTML each document was uploaded as."""
+
+    def __init__(self):
+        self.items, self.n = {}, 0
+
+    class _Call:
+        def __init__(self, fn):
+            self.execute = fn
+
+    def files(self):
+        return self
+
+    def get(self, fileId, fields=""):
+        def run():
+            from googleapiclient.errors import HttpError
+            import httplib2
+            if fileId not in self.items:
+                raise HttpError(httplib2.Response({"status": 404}), b'{"error": {"code": 404}}')
+            return {"id": fileId, "trashed": self.items[fileId]["trashed"]}
+        return self._Call(run)
+
+    def list(self, q="", spaces="", fields="", pageSize=10):
+        def run():
+            name = re.search(r"name = '([^']*)'", q).group(1)
+            return {"files": [{"id": f["id"], "name": f["name"]} for f in self.items.values()
+                              if f["name"] == name and f["mimeType"] == drive_tools.FOLDER_MIME and not f["trashed"]]}
+        return self._Call(run)
+
+    def create(self, body, fields="", media_body=None):
+        def run():
+            self.n += 1
+            fid = f"f{self.n}"
+            self.items[fid] = {"id": fid, "name": body["name"], "mimeType": body.get("mimeType"),
+                               "parents": body.get("parents") or [], "trashed": False,
+                               "content": media_body.getbytes(0, media_body.size()).decode("utf-8") if media_body else ""}
+            return {"id": fid, "name": body["name"], "webViewLink": f"https://docs.google.com/document/d/{fid}/edit"}
+        return self._Call(run)
+
+    def folders(self, trashed=False):
+        return [f for f in self.items.values() if f["mimeType"] == drive_tools.FOLDER_MIME and f["trashed"] == trashed]
+
+    def docs(self):
+        return [f for f in self.items.values() if f["mimeType"] == drive_tools.DOC_MIME]
+
+
+def drive_not_connected():
+    raise drive_tools.NotConnected
+
+
+def drive_docs(n, name=None, has=()):
+    """Exactly n documents were saved in Javid Reports; the last one named /name/ and holding each of `has`."""
+    def check(r):
+        d = r.extra["drive"]
+        docs, folders = d.docs(), d.folders()
+        if len(docs) != n:
+            return f"{len(docs)} documents in Drive, wanted {n}: {[x['name'] for x in docs]}"
+        if not n:
+            return None
+        doc = docs[-1]
+        if [f["name"] for f in folders] != [drive_tools.FOLDER_NAME] or doc["parents"] != [folders[0]["id"]]:
+            return f"not in one Javid Reports folder: folders {[f['name'] for f in folders]}, parents {doc['parents']}"
+        if name and not re.search(name, doc["name"]):
+            return f"the document is named {doc['name']!r}, wanted /{name}/"
+        missing = [p for p in has if not re.search(p, doc["content"], re.I)]
+        return f"the document lacks {missing}" if missing else None
+    check.kind = "effect"
+    return check
+
+
 class FakeTavily:
     def __init__(self, down: bool = False, delay: float = 0.0, recorded: bool = False, honor_domains: bool = False):
         self.searches, self.extracts, self.down, self.delay, self.recorded = [], [], down, delay, recorded
@@ -1029,6 +1105,7 @@ class Case:
     engines: dict = None                         # FakeEngines' plan: how Exa, Brave, Firecrawl and Cohere answer
     tavily_delay: float = 0.0                    # the fake Tavily takes this long to answer a search
     tavily_recorded: bool = False                # the fake Tavily answers with the recorded responses
+    drive_connected: bool = True                 # the fake Google Drive is connected (else: not connected yet)
     chain: list = None                           # the model chain for the case (default: the run's one model)
     fake_validates: bool = True                  # the fake provider refuses calls to tools it wasn't offered (as Groq)
 
@@ -2404,6 +2481,123 @@ def voice_backup_panel():
     return {"problems": problems}
 
 
+DRIVE_CLIENT = "javid-test-client.apps.googleusercontent.com"
+
+
+def drive_sign_in_files(client=DRIVE_CLIENT, scopes=None):
+    """Scratch credentials.json (Javid's client) and token_drive.json (for `client`, with `scopes`)."""
+    with open(drive_tools.CREDENTIALS_FILE, "w") as f:
+        json.dump({"installed": {"client_id": DRIVE_CLIENT, "client_secret": "GOCSPX-test-client-secret-0123"}}, f)
+    with open(drive_tools.TOKEN_FILE, "w") as f:
+        json.dump({"client_id": client, "client_secret": "GOCSPX-test-client-secret-0123",
+                   "refresh_token": "1//test-refresh-token-0123456789", "token": "ya29.test-access-token-0123",
+                   "scopes": drive_tools.SCOPES if scopes is None else scopes, "expiry": "2999-01-01T00:00:00Z"}, f)
+
+
+def drive_own_token():
+    """Only a Drive token for Javid's own OAuth client, with drive.file and nothing more, is used: another app's
+    (Hermes's) or a broader one is refused, and the page is told to connect again."""
+    problems = []
+    drive_sign_in_files(client="hermes-client.apps.googleusercontent.com")
+    if drive_tools.status() != "wrong_token" or drive_tools._load_creds():
+        problems.append("another client's token was accepted")
+    drive_sign_in_files(scopes=["https://www.googleapis.com/auth/drive"])
+    if drive_tools.status() != "wrong_token":
+        problems.append("a token with full Drive access was accepted")
+    drive_sign_in_files(scopes=drive_tools.SCOPES + ["https://www.googleapis.com/auth/calendar.events"])
+    if drive_tools.status() != "wrong_token":
+        problems.append("a token with more than drive.file was accepted")
+    drive_sign_in_files()
+    if drive_tools.status() != "connected":
+        problems.append(f"Javid's own drive.file token: {drive_tools.status()}")
+    if oct(os.stat(drive_tools.TOKEN_FILE).st_mode & 0o777) not in ("0o600", "0o644") or \
+            (drive_tools._load_creds() and oct(os.stat(drive_tools.TOKEN_FILE).st_mode & 0o777) != "0o600"):
+        problems.append("the Drive token isn't kept owner-only")
+    return {"problems": problems}
+
+
+def drive_never_uploads():
+    """A document that would carry a line of memory, a key (an .env value or a key's shape) or a Google sign-in secret
+    is never uploaded; a clean one is."""
+    problems = []
+    drive_sign_in_files()
+    memory_store.write("user", ["My sister Nadia's birthday is on May 5th"])
+    base = {"spoken": "", "sources": [], "agent": "research", "skill": None, "asked": "Research tea prices"}
+    with env(EXA_API_KEY="exa-live-0123456789abcdef"):
+        for want, screen in (("memory", "Gift ideas:\n- My sister Nadia's birthday is on May 5th, so order early."),
+                             ("key", "Setup:\n- Use the key gsk_abcdefghijklmnopqrstuvwxyz0123 for the API."),
+                             ("key", "The account uses exa-live-0123456789abcdef as its key."),
+                             ("sign_in", "Notes: the client secret is GOCSPX-test-client-secret-0123."),
+                             ("saved", "Tea prices rose 4% in October, the Tea Board said.")):
+            got = drive_tools.save({**base, "screen": screen})["said"]
+            if got != want:
+                problems.append(f"{screen[:40]!r}: {got}, wanted {want}")
+    docs = drive_tools._service().docs()
+    if len(docs) != 1 or "Tea prices rose" not in docs[0]["content"]:
+        problems.append(f"uploaded: {[d['name'] for d in docs]}")
+    return {"problems": problems}
+
+
+def drive_folder_reuse():
+    """Javid Reports is made once and reused (by its kept id, or found by name), made again if it was trashed; a
+    "save it?" not answered on the very next message lapses."""
+    problems = []
+    fake = drive_tools._service()
+    report = {"spoken": "", "screen": "Headlines · Google News:\n1. Rain in Dhaka", "sources": [], "agent": None,
+              "skill": None, "asked": "news"}
+    drive_tools.save(report)
+    drive_tools.save(report)
+    if len(fake.folders()) != 1 or len(fake.docs()) != 2:
+        problems.append(f"two saves: {len(fake.folders())} folders, {len(fake.docs())} documents")
+    os.remove(drive_tools.STATE_FILE)                      # the kept id is gone: found again by name
+    drive_tools.save(report)
+    if len(fake.folders()) != 1:
+        problems.append("the folder wasn't found by name")
+    fake.folders()[0]["trashed"] = True                     # Mahadi trashed it
+    drive_tools.save(report)
+    if len(fake.folders()) != 1 or len(fake.folders(trashed=True)) != 1 or fake.docs()[-1]["parents"] != [fake.folders()[0]["id"]]:
+        problems.append("a trashed folder wasn't replaced")
+    drive_tools.new_turn()
+    drive_tools.ask(report)
+    drive_tools.new_turn()
+    drive_tools.answer("Show me the sports news")            # anything else first: the question is gone
+    drive_tools.new_turn()
+    if drive_tools.answer("yes") is not None:
+        problems.append("a yes two messages later still saved")
+    drive_tools.ask(report)
+    drive_tools.new_turn()
+    drive_tools.new_turn()                                  # a Telegram turn in between never answers it
+    if drive_tools.answer("yes") is not None:
+        problems.append("a yes after another turn still saved")
+    drive_tools.ask(report)
+    drive_tools._pending["at"] -= 5 * 60 + 1                # asked over five minutes ago
+    drive_tools.new_turn()
+    if drive_tools.answer("yes") is not None:
+        problems.append("a yes after five minutes still saved")
+    return {"problems": problems}
+
+
+def drive_on_telegram():
+    """On Telegram "save that" makes an Approve card, saved only when it's tapped."""
+    problems = []
+    fake = drive_tools._service()
+    javid.new_session()
+    javid.think("Show me the world news")
+    actions = []
+    events = list(javid.think_stream("Save that to my Drive.", gate=telegram_bot._gate(False, actions)))
+    reply = "".join(v for k, v in events if k == "delta")
+    if not reply.startswith("Tap Approve") or len(actions) != 1 or fake.docs():
+        problems.append(f"before Approve: {reply!r}, {len(actions)} card(s), {len(fake.docs())} saved")
+    elif not actions[0]["text"].startswith("Save to Google Drive: Headlines"):
+        problems.append(f"the card says {actions[0]['text']!r}")
+    else:
+        action, _ = approvals.take(actions[0]["id"])
+        out = approvals.run(action)
+        if "Saved it" not in out or len(fake.docs()) != 1:
+            problems.append(f"after Approve: {out!r}, {len(fake.docs())} saved")
+    return {"problems": problems}
+
+
 def refused_call(tool, why):
     return lambda r: None if (tool, why) in r.extra.get("refused", []) else \
         f"expected {tool} to be refused ({why}), refused: {r.extra.get('refused')}"
@@ -3395,6 +3589,35 @@ CASES += [
          [], [drive_ok], drive=chain_free_only, script=[]),
     Case("chain: Cloudflare counts neurons at the model's price and never goes past the free 10,000 a day",
          [], [drive_ok], drive=cloudflare_neurons, client_script=[]),
+    # ---------- Google Drive (drive_tools.py, 2026-10-26): long outputs saved as Google Docs in "Javid Reports" ----------
+    Case("drive: 'save that' after the headlines saves them in Javid Reports, titled, dated, with their sources",
+         ["Show me the world news", "Save that to my Drive."],
+         [drive_docs(1, r"^Headlines — \d{4}-\d{2}-\d{2}$", (r"<h1>Headlines</h1>", r"Saved by Javid on",
+                                                             r"<h2>Sources</h2>", r'<a href="http')),
+          reply_has("saved it to your google drive"), links_shown, model_requests(0)], script=[]),
+    Case("drive: without 'save', Javid asks first; a yes on the next message saves it",
+         ["Show me the world news", "Put that in my Google Drive.", "Yes."],
+         [lambda r: None if re.search("should i save", r.replies[1], re.I) else f"turn 2 said {r.replies[1]!r}",
+          drive_docs(1, r"^Headlines"), reply_has("saved it"), model_requests(0)], script=[]),
+    Case("drive: a no to 'save it?' saves nothing",
+         ["Show me the world news", "Put that in my Google Drive.", "No, don't."],
+         [drive_docs(0), reply_has("won.t save"), model_requests(0)], script=[]),
+    Case("drive: 'plan my day tomorrow and save it to Drive' saves the plan in the same turn",
+         ["Plan my day tomorrow and save it to Drive."],
+         [agent_ran("planner"), drive_docs(1, r"^Plan: ", (r"project review",)), reply_has("saved it to your google drive"),
+          model_requests(1)], tasks=T3, events=PLAN_EVENTS, script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
+    Case("drive: chat history and memory are never uploaded, whatever is asked",
+         ["Show me the world news", "Upload our chat history to my Google Drive."],
+         [drive_docs(0), reply_has("never upload"), model_requests(0)], script=[]),
+    Case("drive: a document carrying memory, a key or a sign-in secret isn't uploaded", [], [drive_ok],
+         drive=drive_never_uploads, script=[]),
+    Case("drive: only a token for Javid's own client, with drive.file and nothing more, is used", [], [drive_ok],
+         drive=drive_own_token, script=[]),
+    Case("drive: the folder is reused, made again if trashed; an unanswered 'save it?' lapses", [], [drive_ok],
+         drive=drive_folder_reuse, script=[]),
+    Case("drive: on Telegram a save waits for its Approve button", [], [drive_ok], drive=drive_on_telegram, script=[]),
+    Case("drive: not connected yet, it says so and saves nothing", ["Show me the world news", "Save that to my Drive."],
+         [drive_docs(0), reply_has("isn.t connected"), model_requests(0)], drive_connected=False, script=[]),
     # ---------- the backup voice (2026-10-26): edge-tts, then ElevenLabs, then the notice; never the browser ----------
     Case("voice: edge-tts first, every try; then ElevenLabs' fixed English voice, after a balance check", [],
          [drive_ok], drive=voice_backup_order, script=[]),
@@ -3490,7 +3713,7 @@ CASES += [
     Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
          [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 182, len(CASES)
+assert len(CASES) == 192, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -3535,6 +3758,12 @@ def run_case(case: Case) -> Result:
     web_tools._client = lambda: fake_web
     fake_engines = FakeEngines(case.engines)
     search._request = fake_engines.request
+    fake_drive = FakeDrive()
+    drive_tools._service = (lambda: fake_drive) if case.drive_connected else drive_not_connected
+    drive_tools._pending.clear()
+    for f in (drive_tools.STATE_FILE, drive_tools.TOKEN_FILE, drive_tools.CREDENTIALS_FILE, drive_tools.CALENDAR_TOKEN_FILE):
+        with contextlib.suppress(OSError):
+            os.remove(f)
     case_env = env(**(case.env or {}))
     case_env.__enter__()
     search.clear_cache()
@@ -3634,6 +3863,7 @@ def run_case(case: Case) -> Result:
         extra["sent"] = fake_llm.sent
     extra["engines"] = fake_engines.engines()
     extra["engine_calls"] = fake_engines.calls
+    extra["drive"] = fake_drive
 
     with open(javid.TASKS_FILE) as f:
         tasks = [l for l in f.read().splitlines() if l.strip()]

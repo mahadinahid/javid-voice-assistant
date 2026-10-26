@@ -33,6 +33,7 @@ import about
 import agents
 import calc
 import calendar_tools
+import drive_tools
 import markets
 import memory_store
 import news
@@ -453,7 +454,8 @@ def open_session(sid: str) -> bool:
              and not (e["role"] == "assistant" and _is_garbled(e["text"]))]
     # A reply keeps what it was based on (its tools and links), for "where did you get that?" after a restart.
     messages.extend({"role": e["role"], "content": e["text"],
-                     **{k: e[k] for k in ("tools", "sources") if e["role"] == "assistant" and e.get(k)}}
+                     **{k: e[k] for k in ("tools", "sources", "screen", "skill", "agent")
+                        if e["role"] == "assistant" and e.get(k)}}
                     for e in turns[-CONTEXT_TURNS:])
     return True
 
@@ -2468,6 +2470,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     skills.new_turn()
     memory_store.new_turn()
     agents.new_turn()
+    drive_tools.new_turn()
     _new_proposals.clear()
     refused_calls.clear()
     _round_model["id"] = None
@@ -2504,6 +2507,22 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
             tracing.mark("routing_done")
             yield ("memory", {"outcome": outcome, **proposal})
             reply = phrase("mem_saved" if outcome == "approved" else "mem_dropped", lang)
+            yield ("delta", reply)
+            return
+        # Google Drive (drive_tools): a yes/no to "save it to your Drive?" asked on the previous message, then a message
+        # that only asks to save the last long output ("save that to Drive", "put it in my Drive"). Decided in code.
+        drive = None if gate else drive_tools.answer(user_text)
+        want = None if drive else drive_tools.request(user_text, bool(drive_tools.last_report(messages[:turn_start])))
+        if drive or want:
+            tracing.mark("routing_done")
+            if drive and drive[0] == "drop":
+                reply = drive_tools.say("dropped", lang)
+            else:
+                reply, links = _drive_save("save" if drive else want,
+                                           drive[1] if drive else drive_tools.last_report(messages[:turn_start]), lang)
+                code_tools.append("save_report")
+                if links:
+                    yield ("sources", links)
             yield ("delta", reply)
             return
         # The language switch is done here, not by the model: it would forget it a turn later.
@@ -2778,6 +2797,17 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
         else:
             reply = phrase("stuck", lang)
             yield ("delta", reply)
+        if screen and reply and (keep := drive_tools.wants_save(user_text)):
+            report = {"spoken": reply, "screen": screen, "sources": links, "asked": user_text,
+                      "agent": via_agent["agent"] if via_agent else None,
+                      "skill": skills.active()["name"] if skills.active() else None}
+            said, saved_links = _drive_save(keep, report, lang)
+            code_tools.append("save_report")
+            if saved_links:
+                links = links + [{**saved_links[0], "n": len(links) + 1}]
+                yield ("sources", links)
+            yield ("delta", " " + said)
+            reply = f"{reply} {said}"
 
     except API_ERRORS:
         reply = phrase("api_failed", lang)
@@ -2804,7 +2834,9 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
         used = list(dict.fromkeys([c["function"]["name"] for m in messages[turn_start:] for c in m.get("tool_calls") or []]
                                   + code_tools + sorted(agents.tools_used())))
         basis = {**({"tools": used} if used else {}), **({"sources": links} if links else {})}
-        messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {}), **basis})
+        messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {}), **basis,
+                         **({"skill": skills.active()["name"]} if skills.active() else {}),
+                         **({"agent": via_agent["agent"]} if via_agent else {})})
         if messages[turn_start].get("_needs_personal") and reply.strip():
             _personal_speech.append(" ".join(reply.split()))     # the backup voice may not say it (_eleven)
         if reply.strip():
@@ -2812,6 +2844,23 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                         **({"screen": screen} if screen else {}), **({"skill": skills.active()["name"]} if skills.active() else {}),
                         **({"agent": via_agent["agent"]} if via_agent else {}))
         _finish_turn_usage()
+
+
+def _drive_save(want: str, report: dict | None, lang: str) -> tuple[str, list]:
+    """Save a long output to Google Drive (drive_tools) as asked: "save" now, "ask" first (a yes on the next message
+    saves it), "refuse" (memory, chat history, keys). On a channel whose writes need a button (Telegram), the save
+    waits for Approve instead. Returns (what Javid says, the saved document's link for the reply)."""
+    if want == "refuse":
+        return drive_tools.say("refused", lang), []
+    if not report:
+        return drive_tools.say("nothing", lang), []
+    if _write_gate:
+        _write_gate("save_report", {"report": report})
+        return drive_tools.say("approve", lang, title=drive_tools.title_of(report)), []
+    if want == "ask":
+        return drive_tools.ask(report, lang), []
+    done = drive_tools.save(report)
+    return drive_tools.say(done["said"], lang), drive_tools.link_source(done)
 
 
 def think(user_text: str) -> str:

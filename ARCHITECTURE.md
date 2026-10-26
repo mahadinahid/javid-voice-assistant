@@ -429,3 +429,34 @@ characters a day on the Providers panel. Never the browser's voice.
 - `eleven_v3` for Bangla: kept as the next candidate if v4 Turbo fails the listening test (twice the price per
   character).
 
+### 5. Long outputs saved to Google Drive (2026-10-26)
+
+**Context.** Research reports, morning briefs and plans are shown once, on the page or in Telegram, and then only
+live in the chat log. Mahadi wants them kept where he can read them later: Google Drive, through Javid's own Google
+sign-in (never Hermes's), as a write action that asks first, and never with memory, chat history or keys in it.
+
+**Decision.**
+1. **Least access**: the `drive.file` scope, so Javid sees only the files it creates, with its own token next to the
+   calendar's, from the same OAuth client. The code refuses a token for any other client id or with any other scope.
+2. **Decided in code**: no model tool. A message that only asks to save the last long output saves it if it says
+   "save" and otherwise asks, and only a yes on the next message saves; "do X and save it" saves at the end of that
+   turn; Telegram's saves wait for an Approve card like every other write.
+3. **What is uploaded**: a document built from the reply's screen part with a title, the date and the sources, as a
+   Google Doc in "Javid Reports" (made once, reused, made again if trashed). Checked before upload for keys, Google
+   sign-in secrets and memory lines; requests to save the chat or memory are refused.
+
+**Consequences.**
+- The model can't upload anything, so a page or a message it reads can't make Javid send data to Drive; the cost is
+  that only the wordings the code knows start a save (a message that opens with saving, or ends with "and save it").
+- A morning brief saved to Drive carries Mahadi's calendar and task lines into his own Drive, where Google already
+  holds his calendar.
+- The sign-in may need renewing weekly while the OAuth consent screen stays in Testing mode.
+- Nothing was run against the real Drive API yet (no sign-in); the requests follow its documented v3 files API.
+
+**Alternatives considered.**
+- A `save_report` tool for the model: rejected; the model would choose when to upload, and the agent's answer ends its
+  turn without a model round anyway.
+- The full `drive` scope (to reuse a folder Mahadi made himself): rejected; `drive.file` is enough for a folder Javid
+  makes, and nothing else in his Drive is reachable.
+- Plain text or Markdown files: rejected for Google Docs, which read well on the phone and keep the links.
+

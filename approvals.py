@@ -10,6 +10,7 @@ import secrets
 import time
 
 import calendar_tools
+import drive_tools
 import javid
 import memory_store
 
@@ -68,6 +69,14 @@ def _plan(tool: str, args: dict, refuse_memory: str | None):
             return "Nothing to save."
         file = args.get("file") if args.get("file") in memory_store.FILES else "user"
         return {"text": f"Save to memory: {text}", "args": {"text": text, "file": file}}
+    if tool == "save_report":          # Google Drive: bound to the document as it is now
+        report = args.get("report") or {}
+        if not report.get("screen"):
+            return "There's no report to save."
+        doc = drive_tools.document(report)
+        if (why := drive_tools.problem(doc)):
+            return drive_tools.say(why)
+        return {"text": f"Save to Google Drive: {doc['name']}", "report": report}
     return f"{tool} can't wait for approval."
 
 
@@ -122,6 +131,10 @@ def run(action: dict) -> str:
             except ValueError as e:
                 memory_store.reject(proposal["id"])
                 result = f"Not saved: {e}"
+    elif tool == "save_report":
+        done = drive_tools.save(action["report"])
+        result = drive_tools.say(done["said"]) + (f" {done['link']}" if done.get("link") else "")
+        return result
     else:
         return "Nothing was done."
     return result.split(". ")[0].rstrip(".") + "."     # the tool's first sentence: what happened

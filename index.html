@@ -1990,6 +1990,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
         <div class="panel">
             <div class="panel-title">Today</div>
             <div id="calendar-list"><p class="empty">Loading…</p></div>
+            <div id="drive-line" class="cal-note"></div>
         </div>
         <div class="panel" id="timers-panel" hidden>
             <div class="panel-title">Timers</div>
@@ -3224,6 +3225,40 @@ function renderCalendar(cal) {
     }
 }
 
+// ── Google Drive: where "save that" puts long outputs (drive_tools.py) ──────
+function renderDrive(d) {
+    const el = document.getElementById('drive-line');
+    if (!el) return;
+    if (d.status === 'connected') {
+        el.innerHTML = `Reports go to <b>${esc(d.folder)}</b> in your Google Drive. Say “save that”.`;
+    } else if (d.status === 'needs_auth' || d.status === 'wrong_token') {
+        el.innerHTML = `${d.status === 'wrong_token' ? 'The Drive sign-in isn’t Javid’s own: connect again. ' : ''}
+            <button id="drive-connect" class="cal-connect">Connect Google Drive</button>
+            <span class="mc-dim">only the files Javid makes</span>`;
+        document.getElementById('drive-connect').onclick = connectDrive;
+    } else {
+        el.innerHTML = '';
+    }
+}
+
+async function refreshDrive() {
+    try { renderDrive(await (await fetch('/drive')).json()); } catch { /* server down */ }
+}
+
+async function connectDrive() {
+    const btn = document.getElementById('drive-connect');
+    btn.disabled = true;
+    btn.textContent = 'Finish sign-in in the new tab…';
+    try {
+        const res = await fetch('/drive/connect', { method: 'POST' });
+        if (!res.ok) throw new Error(res.status);
+        renderDrive(await res.json());
+    } catch {
+        showToast('Google Drive connection failed — try again.');
+        refreshDrive();
+    }
+}
+
 async function refreshCalendar() {
     try { renderCalendar(await (await fetch('/calendar')).json()); } catch { /* server down */ }
 }
@@ -4226,6 +4261,7 @@ refreshWatches();
         const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
         refreshSidebar(await tr.json(), await mr.json());
         refreshCalendar();
+        refreshDrive();
         await refreshChats();
         await loadHistory();
         const { text } = await (await fetch('/greeting')).json();

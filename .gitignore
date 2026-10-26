@@ -7,6 +7,8 @@ memory.json
 chat_log.jsonl
 credentials.json
 token.json
+token_drive.json
+drive.json
 llm_usage.jsonl
 llm_turns.jsonl
 tavily_usage.jsonl

@@ -1864,7 +1864,8 @@ def drive_ok(r):
 
 
 def prov_seeded():
-    """config/providers.yaml as shipped: every provider, each allowance in its own unit, nothing personal allowed."""
+    """config/providers.yaml: every provider, each allowance in its own unit; personal data only where Mahadi set
+    personal_ok: true (Groq, 2026-10-26), and only an explicit true clears a provider."""
     providers.REGISTRY_FILE, scratch = REAL["registry"], providers.REGISTRY_FILE
     providers.reload()
     try:
@@ -1887,10 +1888,13 @@ def prov_seeded():
         a = e["allowance"]
         if (e["kind"], a["unit"], a["amount"]) != (kind, unit, amount):
             problems.append(f"{name}: {e['kind']}, {a['amount']} {a['unit']}")
-        if e["personal_ok"]:
-            problems.append(f"{name} ships with personal_ok: true")
         if a["verified"]:
             problems.append(f"{name}'s allowance is marked verified")
+    for raw, cleared in (({"personal_ok": True}, True), ({}, False), ({"personal_ok": "yes"}, False),
+                         ({"personal_ok": 1}, False), ({"personal_ok": False}, False)):
+        got = providers._normalize({"name": "probe", "kind": "llm", "env": "PROBE_KEY", **raw})["personal_ok"]
+        if got is not cleared:
+            problems.append(f"personal_ok given as {raw or 'nothing'} reads as {got}")
     if any(e["allowance"]["unit"] == "tokens" for n, e in es.items() if n != "groq"):
         problems.append("an allowance converted to tokens")
     if (es["groq"]["allowance"]["from"], es["elevenlabs"]["allowance"]["from"]) != ("headers", "api"):
@@ -3522,7 +3526,7 @@ CASES += [
          [agent_ran("planner"), screen_has("project review"), model_requests(1)], tasks=T3, events=PLAN_EVENTS,
          script=[PLAN_SPOKEN + "\nSCREEN:\n" + PLAN_SCREEN]),
     # ---------- providers: registry, usage ledger, budget guard, cooldowns (providers.py; fixtures/providers) ----------
-    Case("providers: the registry ships every provider in its own unit, none cleared for personal data", [],
+    Case("providers: the registry has every provider in its own unit; only an explicit personal_ok: true clears one", [],
          [drive_ok, model_requests(0)], drive=prov_seeded, script=[]),
     Case("providers: a provider is on only with every key it names; the startup line shows names, never keys", [],
          [drive_ok, model_requests(0)], drive=prov_keys, script=[]),

@@ -1820,6 +1820,11 @@ FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", 
 NO_PERSONAL = {"*": {"personal_ok": False}}     # the registry as shipped: no provider cleared for personal data
 FAKE_KEYS = {"EXA_API_KEY": "exa-test-0123456789abcdef", "ELEVENLABS_API_KEY": "el-test-0123456789abcdef",
              "DEEPSEEK_API_KEY": "sk-test-0123456789abcdef", "CLOUDFLARE_ACCOUNT_ID": "acct-test-123456"}
+# Every case's world has Tavily on, as Javid has it: its fake (FakeTavily) answers every search, so only the key's
+# presence counts. A placeholder, so a fresh clone with nothing but GROQ_API_KEY passes too (2026-11-01: without a
+# Tavily key in the environment, 18 search, news and provider cases failed), and a stray real request could never
+# spend a credit. A case's own env can still unset it.
+WORLD_ENV = {"TAVILY_API_KEY": "tvly-test-0123456789abcdef"}
 
 
 def fixture(name: str, folder: str = "providers") -> dict:
@@ -3974,7 +3979,7 @@ def run_case(case: Case) -> Result:
     for f in (drive_tools.STATE_FILE, drive_tools.TOKEN_FILE, drive_tools.CREDENTIALS_FILE, drive_tools.CALENDAR_TOKEN_FILE):
         with contextlib.suppress(OSError):
             os.remove(f)
-    case_env = env(**(case.env or {}))
+    case_env = env(**{**WORLD_ENV, **(case.env or {})})
     case_env.__enter__()
     search.clear_cache()
     rates._get_json = fake_rates(case.rates_up, case.ecb_up)

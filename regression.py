@@ -70,6 +70,7 @@ import search  # noqa: E402
 import selfcheck  # noqa: E402
 import skills  # noqa: E402
 import telegram_bot  # noqa: E402
+import themes  # noqa: E402
 import timers  # noqa: E402
 import tracing  # noqa: E402
 import watches  # noqa: E402
@@ -1863,6 +1864,161 @@ def drive_ok(r):
     return "; ".join(r.extra.get("problems", [])) or None
 
 
+# ---------- colour themes (themes.py; files in themes/, 2026-10-26) ----------
+@contextlib.contextmanager
+def theme_scratch():
+    """themes.THEMES_DIR pointed at an empty scratch folder: the real themes/ is only ever read."""
+    real, themes.THEMES_DIR = themes.THEMES_DIR, tempfile.mkdtemp(prefix="javid-themes-")
+    try:
+        yield themes.THEMES_DIR
+    finally:
+        themes.THEMES_DIR = real
+
+
+def theme_contrast():
+    """The presets in themes/ (read only) all load; and for any dark background, accent and glows, every text colour a
+    theme gets reads at 4.5:1 on its glass and pills. Only "buttons stand out" may fail, and such a theme isn't saved."""
+    import random
+    problems = []
+    real = themes.listing()
+    if real["problems"]:
+        problems.append(f"presets: {real['problems']}")
+    names = sorted(t["name"] for t in real["themes"])
+    if not {"Ember", "Graphite", "Ocean", "Orchid"} <= set(names):
+        problems.append(f"presets listed: {names}")
+    rng = random.Random(20261026)
+    colour = lambda top=256: "#" + "".join(f"{rng.randrange(top):02X}" for _ in range(3))
+    tried = 0
+    for _ in range(400):
+        seed = {"name": "Probe", "background": colour(56), "accent": colour(), "blur": rng.randrange(29),
+                "tint": round(rng.uniform(0.4, 0.85), 2)}
+        if rng.random() < 0.5:
+            seed["glows"] = [colour(), colour(), colour()]
+        try:
+            cleaned = themes.clean(seed)
+        except themes.ThemeError:
+            continue                                   # a background lighter than the rules allow
+        tried += 1
+        derived = themes.derive(cleaned)
+        problems += [f"{seed}: {c['what']} {c['ratio']}:1" for c in derived["checks"]
+                     if not c["ok"] and c["what"] != "Buttons stand out"]
+        problems += [f"{seed}: unsafe value {v!r}" for v in derived["tokens"].values() if re.search(r"[;{}<>\\]", v)]
+    if tried < 300:
+        problems.append(f"only {tried} of 400 random themes had a dark enough background")
+    return {"problems": problems[:6]}
+
+
+def theme_refusals():
+    """Checked before anything is saved: a light background, malformed colours or numbers, CSS slipped into a colour,
+    a missing name; an accent the buttons vanish into; ids that aren't a theme file's (path tricks, the looks' own
+    names); and hand-made files that are dim, broken or misnamed are reported, not used."""
+    problems = []
+    ok = {"name": "Probe", "background": "#06101C", "accent": "#5AB2FF"}
+    bad = {"a light background": {**ok, "background": "#F5F5F5"}, "a grey background": {**ok, "background": "#404040"},
+           "a named colour": {**ok, "accent": "red"}, "a short hex": {**ok, "accent": "#5AF"},
+           "CSS in a colour": {**ok, "accent": "#5AB2FF; background: url(https://example.com/x)"},
+           "two glows": {**ok, "glows": ["#1D4ED8", "#06B6D4"]}, "a blur of 80": {**ok, "blur": 80},
+           "a tint as text": {**ok, "tint": "0.5"}, "a blur of true": {**ok, "blur": True},
+           "a blank name": {**ok, "name": "  "}, "a 25-letter name": {**ok, "name": "x" * 25}, "a list": ["#06101C"]}
+    for label, seed in bad.items():
+        try:
+            themes.clean(seed)
+            problems.append(f"{label} was accepted")
+        except themes.ThemeError:
+            pass
+    if themes.clean({**ok, "name": " Sea\x07 "})["name"] != "Sea":
+        problems.append("a control character stayed in a name")
+    with theme_scratch() as folder:
+        try:
+            themes.create({**ok, "accent": "#0A1A2E"})
+            problems.append("an accent the buttons vanish into was saved")
+        except themes.ThemeError as e:
+            if "buttons stand out" not in str(e):
+                problems.append(f"the refusal doesn't say why: {e}")
+        for theme_id in ("../ocean", "Ocean", "glass", "aurora", "overdrive", "classic", "preview", "a/b", "", "x" * 33):
+            for name, call in (("delete", themes.delete), ("update", lambda i: themes.update(i, ok))):
+                try:
+                    call(theme_id)
+                    problems.append(f"{name} took {theme_id!r} as a theme")
+                except themes.ThemeError:
+                    pass
+                except KeyError:
+                    problems.append(f"{name} looked for {theme_id!r} on disk")
+        for file, body in (("good.json", json.dumps(ok)), ("dim.json", json.dumps({**ok, "accent": "#0A1A2E"})),
+                           ("broken.json", "{not json"), ("glass.json", json.dumps(ok)), ("Bad Name.json", json.dumps(ok))):
+            with open(os.path.join(folder, file), "w") as f:
+                f.write(body)
+        listed = themes.listing()
+        if [t["id"] for t in listed["themes"]] != ["good"] or len(listed["problems"]) != 4:
+            problems.append(f"listed {[t['id'] for t in listed['themes']]}, problems {listed['problems']}")
+        if os.listdir(folder) != sorted(os.listdir(folder)) and len(os.listdir(folder)) != 5:
+            problems.append(f"the folder changed: {os.listdir(folder)}")
+    return {"problems": problems}
+
+
+def theme_routes():
+    """The page makes, changes and deletes themes through /themes, and only the page can (Host and Origin checked);
+    each theme is a small JSON file in themes/, named after it; the preview writes nothing."""
+    from fastapi.testclient import TestClient   # no `with`: the server's startup (warm-up, pings) doesn't run
+    import server
+    problems = []
+    with theme_scratch() as folder:
+        client = TestClient(server.app)
+        local = {"host": "localhost:8000", "origin": "http://localhost:8000"}
+        seed = {"name": "Deep Sea", "background": "#06101C", "accent": "#5AB2FF",
+                "glows": ["#1D4ED8", "#06B6D4", "#8B5CF6"], "blur": 16, "tint": 0.6}
+        for label, response in (
+                ("made without the page's Origin", client.post("/themes", json=seed)),
+                ("made from another site", client.post("/themes", json=seed,
+                                                       headers={"host": "localhost:8000", "origin": "http://evil.example"})),
+                ("previewed without the page's Origin", client.post("/themes/preview", json=seed))):
+            if response.status_code != 403:
+                problems.append(f"a theme was {label}: {response.status_code}")
+        preview = client.post("/themes/preview", json=seed, headers=local)
+        if preview.status_code != 200 or "--accent" not in preview.json().get("tokens", {}) or os.listdir(folder):
+            problems.append(f"preview: {preview.status_code}, folder {os.listdir(folder)}")
+        light = client.post("/themes/preview", json={**seed, "background": "#EEEEEE"}, headers=local)
+        if light.status_code != 400 or "too light" not in light.json().get("detail", ""):
+            problems.append(f"a light preview: {light.status_code} {light.text[:100]}")
+        made = client.post("/themes", json=seed, headers=local).json()
+        again = client.post("/themes", json=seed, headers=local).json()
+        if (made.get("id"), again.get("id")) != ("deep-sea", "deep-sea-2"):
+            problems.append(f"made {made.get('id')} and {again.get('id')}")
+        path = os.path.join(folder, "deep-sea.json")
+        with open(path) as f:
+            if json.load(f) != seed:
+                problems.append("the file isn't the theme as given")
+        if oct(os.stat(path).st_mode & 0o777) != "0o644":
+            problems.append(f"the file's mode is {oct(os.stat(path).st_mode & 0o777)}")
+        if [t["id"] for t in client.get("/themes").json()["themes"]] != ["deep-sea", "deep-sea-2"]:
+            problems.append("GET /themes doesn't list both")
+        if client.put("/themes/deep-sea", json={**seed, "name": "X"}).status_code != 403:
+            problems.append("a theme was changed without the page's Origin")
+        renamed = client.put("/themes/deep-sea", json={**seed, "name": "Abyss"}, headers=local)
+        with open(path) as f:
+            if renamed.status_code != 200 or json.load(f)["name"] != "Abyss":
+                problems.append(f"rename: {renamed.status_code}")
+        if client.put("/themes/nope", json=seed, headers=local).status_code != 404:
+            problems.append("changing a theme that isn't there didn't say so")
+        if client.delete("/themes/deep-sea").status_code != 403 or not os.path.exists(path):
+            problems.append("a theme was deleted without the page's Origin")
+        if client.delete("/themes/deep-sea", headers=local).status_code != 200 or os.path.exists(path):
+            problems.append("delete didn't remove the file")
+        if client.delete("/themes/deep-sea", headers=local).status_code != 404:
+            problems.append("deleting it twice didn't say it's gone")
+        dots = client.delete("/themes/%2E%2E", headers=local).status_code           # reaches the route: refused
+        slash = client.delete("/themes/..%2Fserver.py", headers=local).status_code  # never matches the route
+        if dots != 400 or slash not in (400, 404) or not os.path.exists(server.__file__):
+            problems.append(f"path tricks: {dots}, {slash}")
+        if sorted(os.listdir(folder)) != ["deep-sea-2.json"]:
+            problems.append(f"the folder holds {os.listdir(folder)}")
+    page = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")).read()
+    if 'aria-controls="theme-menu"' not in page or "/themes/preview" not in page or "javid-theme-vars" not in page:
+        problems.append("the page has no theme list, editor or saved colours")
+    return {"problems": problems}
+
+
+
 def prov_seeded():
     """config/providers.yaml: every provider, each allowance in its own unit; personal data only where Mahadi set
     personal_ok: true (Groq, 2026-10-26), and only an explicit true clears a provider."""
@@ -3631,6 +3787,13 @@ CASES += [
          [drive_ok], drive=voice_backup_cache, script=[]),
     Case("voice: the Providers panel shows ElevenLabs' characters a day; no page uses the browser's voice", [],
          [drive_ok], drive=voice_backup_panel, script=[]),
+    # ---------- colour themes (2026-10-26): files in themes/, checked and worked out by themes.py ----------
+    Case("themes: the presets load, and any dark theme's text reads at 4.5:1 on its glass and pills", [],
+         [drive_ok, model_requests(0)], drive=theme_contrast, script=[]),
+    Case("themes: light, malformed or vanishing themes and path tricks are refused; broken files are reported", [],
+         [drive_ok, model_requests(0)], drive=theme_refusals, script=[]),
+    Case("themes: only the page makes, changes and deletes themes, each a JSON file in themes/; preview writes nothing",
+         [], [drive_ok, model_requests(0)], drive=theme_routes, script=[]),
     Case("gate: a chat-only model gets no tools and no task; with only it left, a task turn is refused in code",
          [], [drive_ok], drive=tool_gate, client_script=[]),
     Case("gate: a call to a tool the round didn't offer never runs, and malformed arguments are refused, not a crash",
@@ -3717,7 +3880,7 @@ CASES += [
     Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
          [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 192, len(CASES)
+assert len(CASES) == 195, len(CASES)
 
 
 def print_token_summary() -> None:

@@ -1,0 +1,8 @@
+{
+  "name": "Orchid",
+  "background": "#10091A",
+  "accent": "#C99BFF",
+  "glows": ["#9333EA", "#EC4899", "#6366F1"],
+  "blur": 18,
+  "tint": 0.58
+}

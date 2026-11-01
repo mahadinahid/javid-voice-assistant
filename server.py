@@ -22,6 +22,7 @@ import providers
 import selfcheck
 import skills
 import telegram_bot
+import themes
 import timers
 import tracing
 import watches
@@ -719,6 +720,49 @@ def reject_memory(pid: str, request: Request):
     _ok_or_404(memory_store.reject(pid))
     return _memory_json()
 
+
+
+# ---------- colour themes (themes.py: one JSON file each in themes/) ----------
+@app.get("/themes")
+def themes_list():
+    """Every usable colour theme with its colours worked out, and what's wrong with any file that isn't."""
+    return themes.listing()
+
+
+def _theme_call(fn, *args):
+    try:
+        return fn(*args)
+    except themes.ThemeError as e:
+        raise HTTPException(400, str(e))
+    except KeyError:
+        raise HTTPException(404, "There's no theme by that name.")
+
+
+@app.post("/themes/preview")
+def themes_preview(body: dict, request: Request):
+    """The editor's live preview: a theme's colours and contrast checks, nothing saved."""
+    _local_page_only(request)
+    return _theme_call(lambda data: themes.derive(themes.clean(data)), body)
+
+
+@app.post("/themes")
+def themes_create(body: dict, request: Request):
+    _local_page_only(request)
+    return _theme_call(themes.create, body)
+
+
+@app.put("/themes/{theme_id}")
+def themes_update(theme_id: str, body: dict, request: Request):
+    _local_page_only(request)
+    return _theme_call(themes.update, theme_id, body)
+
+
+@app.delete("/themes/{theme_id}")
+def themes_delete(theme_id: str, request: Request):
+    _local_page_only(request)
+    if not _theme_call(themes.delete, theme_id):
+        raise HTTPException(404, "There's no theme by that name.")
+    return {"ok": True}
 
 if __name__ == "__main__":
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")

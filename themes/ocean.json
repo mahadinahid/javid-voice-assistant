@@ -1,0 +1,8 @@
+{
+  "name": "Ocean",
+  "background": "#06101C",
+  "accent": "#5AB2FF",
+  "glows": ["#1D4ED8", "#06B6D4", "#8B5CF6"],
+  "blur": 18,
+  "tint": 0.58
+}

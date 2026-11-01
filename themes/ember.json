@@ -1,0 +1,8 @@
+{
+  "name": "Ember",
+  "background": "#140A07",
+  "accent": "#FF9F45",
+  "glows": ["#EA580C", "#F43F5E", "#FACC15"],
+  "blur": 18,
+  "tint": 0.58
+}

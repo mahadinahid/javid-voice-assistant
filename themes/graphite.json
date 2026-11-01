@@ -1,0 +1,8 @@
+{
+  "name": "Graphite",
+  "background": "#0B0D10",
+  "accent": "#E2E8F0",
+  "glows": ["#475569", "#64748B", "#94A3B8"],
+  "blur": 18,
+  "tint": 0.6
+}

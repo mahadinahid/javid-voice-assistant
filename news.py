@@ -17,7 +17,6 @@ Headlines are quoted as their outlets wrote them; one whose figure no second out
 """
 import math
 import re
-import time
 from datetime import datetime, timezone
 
 import gnews
@@ -133,7 +132,7 @@ def request(text: str) -> dict | None:
     count, t = _count(t)
     spans = _spans(t)
     topics = []
-    for i, (start, end, key) in enumerate(spans):
+    for i, (start, _end, key) in enumerate(spans):
         if i and not _UNION.search(t[spans[i - 1][1]:start]):
             # Two topics with no "and" between them name one subject ("Bangladesh cricket team", "AI news from
             # China"): that's a specific search, unless one is part of the other ("sports news in cricket").

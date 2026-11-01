@@ -26,7 +26,6 @@ import themes
 import timers
 import tracing
 import watches
-import web_tools
 from javid import (
     _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
     clear_provider_key, get_language, is_noise, llm_status, phrase, providers_status,

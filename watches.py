@@ -20,7 +20,6 @@ import re
 import threading
 import time
 import uuid
-from datetime import datetime
 
 import gnews
 import markets

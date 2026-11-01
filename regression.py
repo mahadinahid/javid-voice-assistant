@@ -38,6 +38,7 @@ import contextlib
 import copy
 import functools
 import io
+import itertools
 import json
 import math
 import os
@@ -178,7 +179,7 @@ class FailingCommunicate(FakeCommunicate):
 
     async def stream(self):
         raise RuntimeError("NoAudioReceived")
-        yield  # noqa: unreachable (makes this an async generator, as edge-tts's is)
+        yield   # never reached: it makes this an async generator, as edge-tts's is
 
 
 class FakeElevenLabs:
@@ -309,7 +310,6 @@ memory_store.HISTORY_FILE = javid.HISTORY_FILE   # search_history indexes the sc
 javid.SESSIONS_FILE = os.path.join(SCRATCH, "sessions.json")      # chats made by the suite stay in scratch
 javid.LLM_TURNS_FILE = os.path.join(SCRATCH, "llm_turns.jsonl")   # the Models panel averages real turns only
 javid.LANGUAGE_FILE = os.path.join(SCRATCH, "language.json")      # never flips the real reply language
-web_tools.USAGE_FILE = os.path.join(SCRATCH, "tavily_usage.jsonl")
 timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings or lists the real timers
 watches.WATCHES_FILE = os.path.join(SCRATCH, "watches.json")       # never fires the real watches
 tracing.TRACES_FILE = os.path.join(SCRATCH, "traces.jsonl")        # offline Telegram cases wrote into the real latency log
@@ -1432,17 +1432,21 @@ class FakeTelegram:
                 for mid, p in self.sent if p.get("reply_markup")]
 
 
-def tg_message(user, text=None, voice=False, forward=False, _n=[0]):
-    _n[0] += 1
-    msg = {"message_id": _n[0], "chat": {"id": user, "type": "private"}, "from": {"id": user},
+_TG_UPDATES = itertools.count(1)        # Telegram update ids, as the Bot API numbers them
+_TG_PRESSES = itertools.count(9001)     # button presses get their own range
+
+
+def tg_message(user, text=None, voice=False, forward=False):
+    n = next(_TG_UPDATES)
+    msg = {"message_id": n, "chat": {"id": user, "type": "private"}, "from": {"id": user},
            **({"voice": {"file_id": "voice1", "duration": 2}} if voice else {"text": text}),
            **({"forward_origin": {"type": "user", "sender_user": {"id": 3333}, "date": 0}} if forward else {})}
-    return {"update_id": _n[0], "message": msg}
+    return {"update_id": n, "message": msg}
 
 
-def tg_press(user, data, message_id, _n=[9000]):
-    _n[0] += 1
-    return {"update_id": _n[0], "callback_query": {"id": f"cb{_n[0]}", "from": {"id": user}, "data": data,
+def tg_press(user, data, message_id):
+    n = next(_TG_PRESSES)
+    return {"update_id": n, "callback_query": {"id": f"cb{n}", "from": {"id": user}, "data": data,
                                                    "message": {"message_id": message_id, "chat": {"id": OWNER},
                                                                "text": "Approve this?"}}}
 
@@ -2018,6 +2022,43 @@ def theme_routes():
     return {"problems": problems}
 
 
+
+def news_cricket_topic():
+    """'Cricket news': a sport searched on the general sports sites also matches their menus (2026-11-01: tennis,
+    boxing and Formula 1 among the cricket), so only headlines that name cricket are kept from that search; the
+    cricket outlets' and sections' own results stand; a story both give is listed once; section pages, points tables
+    and scorecards are left out. (FakeGoogleNews keys a search by its words alone, so the two are told apart here by
+    their site lists.)"""
+    import urllib.parse
+    sections = [gn("Bangladesh announce squad for second Windies Test", "ICC", "icc-cricket.com", 2),
+                gn("IPL 2026 News – Latest Cricket Updates, Match Reports & Breaking Stories", "Cricbuzz", "cricbuzz.com", 1),
+                gn("ICC Men's Cricket World Cup 2027 Points Table", "Cricbuzz", "cricbuzz.com", 1),
+                gn("20th Match, National Cricket League at Bogra, Oct 31-Nov 3 2026", "ESPN", "espn.com", 3)]
+    wider = [gn("Harriet Dart beats Lilli Tagger to win first WTA Tour title", "Sky Sports", "skysports.com", 2),
+             gn("Hamilton takes first proper pole for Ferrari, Antonelli starts fourth", "Reuters", "reuters.com", 3),
+             gn("Seifert guides New Zealand to consolation win over India in fifth T20I", "Reuters", "reuters.com", 4),
+             gn("Bangladesh announce squad for the second Windies Test", "BBC", "bbc.com", 2)]
+    fake, real_get = FakeGoogleNews(), gnews._get
+
+    def routed(url):
+        q = urllib.parse.unquote(url)
+        items = sections if "site:bbc.com/sport/cricket" in q else wider if "site:apnews.com" in q else []
+        GNEWS_FIXTURES.insert(0, (r"^en:search:cricket$", items))
+        try:
+            return fake.get(url)
+        finally:
+            GNEWS_FIXTURES.pop(0)
+
+    gnews._get = routed
+    try:
+        gnews._cache.clear()
+        titles = [i["title"] for g in gnews.headlines(["cricket"], per_topic=6) for i in g["items"]]
+    finally:
+        gnews._get = real_get
+        gnews._cache.clear()
+    want = ["Bangladesh announce squad for second Windies Test",
+            "Seifert guides New Zealand to consolation win over India in fifth T20I"]
+    return {"problems": [] if titles == want else [f"cricket headlines: {titles}"]}
 
 def prov_seeded():
     """config/providers.yaml: every provider, each allowance in its own unit; personal data only where Mahadi set
@@ -2621,7 +2662,7 @@ def voice_backup_cache():
 def voice_backup_panel():
     """The Providers panel: ElevenLabs' characters a day (the last 7), its 90 % stop and its voices."""
     problems = []
-    with backup_voice(fake := FakeElevenLabs()):
+    with backup_voice(FakeElevenLabs()):
         speak_post("The forecast says light rain this afternoon.")
         row = next(p for p in providers.status()["providers"] if p["name"] == "elevenlabs")
         days = row.get("per_day") or []
@@ -3124,6 +3165,8 @@ CASES = [
           reply_has(r"\b3\b|৩|তিন", "3 open tasks"), screen_has(r"padma|পদ্মা", "the Bangladesh headline")],
          tasks=T3, lang="bn"),
     # news-digest
+    Case("news: cricket keeps only cricket: menus on general sports sites don't make a tennis story cricket", [],
+         [drive_ok, model_requests(0)], drive=news_cricket_topic, script=[]),
     Case("news: three from Asia and three from Europe, in code", ["Give me world news headlines, three from Asia and three from Europe."],
          [called("news_headlines"), not_called("web_search", "read_page", "delegate"), numbered_lines_at_least(4),
           screen_has(r"japan|thailand", "an Asia story"), screen_has(r"migration|rail", "a Europe story"),
@@ -3521,7 +3564,7 @@ def tts_under_load():
                 state["calls"][self.text] = state["calls"].get(self.text, 0) + 1
                 first_try_of_stalled = self.text.startswith("Stalls") and state["calls"][self.text] == 1
             try:
-                for i in range(5):
+                for _ in range(5):
                     await asyncio.sleep(0.12)
                     yield {"type": "audio", "data": b"ID3 fake mp3"}
                     if first_try_of_stalled:
@@ -3880,7 +3923,7 @@ CASES += [
     Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
          [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 195, len(CASES)
+assert len(CASES) == 196, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -4182,7 +4225,7 @@ def certify(models: list[str], name_filter: str = "", resume: bool = False) -> i
             if case.name in done:
                 continue
             r, why = None, ""
-            for attempt in range(INFRA_RETRIES + 1):
+            for _ in range(INFRA_RETRIES + 1):
                 if QUOTA_HIT:
                     why = "the model's limit was reached"
                     break
@@ -4404,8 +4447,8 @@ def smoke_test(name_filter: str = "") -> int:
                 providers.cool(name, rest, status)
         ms = round((time.time() - t0) * 1000)
         if name != "elevenlabs":
-            providers.record(name, units, op="smoke", latency_ms=ms, status=status,
-                             detail="" if status == "ok" else note[:80])
+            providers.record(name, units, model=_SMOKE_MODEL.get(name, ""), op="smoke", latency_ms=ms,
+                             status=status, detail="" if status == "ok" else note[:80])
         u = providers.usage(name, _SMOKE_MODEL.get(name, ""))
         left = (f"{web_tools._count(u['used'])} of {u['amount']:,.0f} {u['unit']} {'today' if u['per'] == 'day' else 'this ' + u['per']}"
                 if u.get("amount") and u.get("used") is not None else "usage reported by the provider" if u.get("from")
@@ -4497,7 +4540,7 @@ def main() -> int:
         notes, timing = [], []      # timing: (seconds per turn, tokens) of each completed run
         for n in range(args.repeat):
             r, problems, detail, tools = None, [], "", "-"
-            for attempt in range(INFRA_RETRIES + 1):
+            for _ in range(INFRA_RETRIES + 1):
                 if QUOTA_HIT:
                     break
                 signal.alarm(RUN_TIMEOUT_SEC)

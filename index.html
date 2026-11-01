@@ -872,8 +872,7 @@ header h1 {
 .mc-ping.bad { color: #ff9cab; }
 .models-controls { margin-top: 4px; }
 .models-controls code,
-.mc-state code,
-.models-onkey code {
+.mc-state code {
     padding: 1px 6px;
     border-radius: 5px;
     border: 1px solid var(--line);
@@ -881,7 +880,6 @@ header h1 {
     font: 11px var(--mono);
     color: var(--text-2);
 }
-.models-onkey { margin-top: 16px; font-size: 11.5px; line-height: 1.7; color: var(--text-3); }
 .mc-ctl { display: flex; gap: 4px; margin-left: auto; }
 .mc-ctl button {
     width: 24px;
@@ -3857,8 +3855,8 @@ function renderChats() {
     }
     const item = c => `<div class="chat-item${c.id === activeChat ? ' active' : ''}" data-id="${esc(c.id)}" title="${esc(c.title || 'New chat')}">
         <span class="chat-title${c.title ? '' : ' untitled'}">${esc(c.title || 'New chat')}</span>
-        <button class="pin-btn${c.pinned ? ' pinned' : ''}" title="${c.pinned ? 'Unpin' : 'Pin'}">${c.pinned ? '📌' : '⚲'}</button>
-        <button class="del-chat" title="Delete chat">✕</button></div>`;
+        <button class="pin-btn${c.pinned ? ' pinned' : ''}" title="${c.pinned ? 'Unpin' : 'Pin'}" aria-label="${c.pinned ? 'Unpin' : 'Pin'} ${esc(c.title || 'New chat')}">${c.pinned ? '📌' : '⚲'}</button>
+        <button class="del-chat" title="Delete chat" aria-label="Delete chat ${esc(c.title || 'New chat')}">✕</button></div>`;
     let html = '';
     const pinned = rows.filter(c => c.pinned);
     if (pinned.length) html += '<div class="chats-group">Pinned</div>' + pinned.map(item).join('');
@@ -4081,12 +4079,15 @@ async function connectCalendar() {
 function renderTasks(tasks) {
     const tl = document.getElementById('tasks-list');
     tl.innerHTML = tasks.length
-        ? tasks.map(t => `
+        ? tasks.map(t => {
+            const text = esc(stripTimestamp(t.text));
+            return `
             <div class="task-item${t.done ? ' done' : ''}" data-n="${t.number}">
-                <button class="check-btn" title="${t.done ? 'Mark not done' : 'Mark done'}">✓</button>
-                <span class="item-text" title="Click to edit">${esc(stripTimestamp(t.text))}</span>
-                <button class="del-btn" title="Delete">✕</button>
-            </div>`).join('')
+                <button class="check-btn" title="${t.done ? 'Mark not done' : 'Mark done'}" aria-label="${t.done ? 'Mark not done' : 'Mark done'}: ${text}">✓</button>
+                <span class="item-text" title="Click to edit">${text}</span>
+                <button class="del-btn" title="Delete" aria-label="Delete task: ${text}">✕</button>
+            </div>`;
+        }).join('')
         : '<p class="empty">No tasks yet.</p>';
 }
 
@@ -4128,7 +4129,7 @@ function renderMemory(memory) {
             <div class="memory-item" data-file="${f}" data-i="${i}">
                 <span class="mem-dot">•</span>
                 <span class="item-text" title="Click to edit">${esc(t)}</span>
-                <button class="del-btn" title="Delete">✕</button>
+                <button class="del-btn" title="Delete" aria-label="Delete from memory: ${esc(t)}">✕</button>
             </div>`).join('')).join('')
         : '<p class="empty">Nothing stored yet.</p>';
     const pend = document.getElementById('memory-pending');
@@ -4229,12 +4230,15 @@ function startEdit(span, save) {
 
 function armDelete(btn, remove) {
     if (btn.classList.contains('confirm')) { remove(); return; }
+    const label = btn.getAttribute('aria-label');
     btn.classList.add('confirm');
     btn.textContent = 'Delete?';
+    if (label) btn.setAttribute('aria-label', `${label}. Press again to confirm`);
     setTimeout(() => {
         if (!btn.isConnected) return;
         btn.classList.remove('confirm');
         btn.textContent = '✕';
+        if (label) btn.setAttribute('aria-label', label);
     }, 2500);
 }
 
@@ -5301,7 +5305,7 @@ function renderTimers() {
         <div class="timer-item ${t.kind}" data-id="${esc(t.id)}">
             <span class="timer-left">${esc(timerWhen(t, now))}</span>
             <span class="timer-label" title="${esc(t.label)}">${esc(t.label || (t.kind === 'timer' ? 'Timer' : 'Reminder'))}</span>
-            <button class="del-btn" data-cancel="${esc(t.id)}" title="Cancel">✕</button>
+            <button class="del-btn" data-cancel="${esc(t.id)}" title="Cancel" aria-label="Cancel ${esc(t.label || (t.kind === 'timer' ? 'timer' : 'reminder'))}">✕</button>
         </div>`).join('');
 }
 
@@ -5387,7 +5391,7 @@ function syncWatches(list) {
                 <span class="timer-label" title="${esc(w.label)}">${esc(w.label)}</span>
                 ${w.status ? `<span class="watch-status">${esc(w.status)}</span>` : ''}
             </span>
-            <button class="del-btn" data-unwatch="${esc(w.id)}" title="Stop watching">✕</button>
+            <button class="del-btn" data-unwatch="${esc(w.id)}" title="Stop watching" aria-label="Stop watching ${esc(w.label)}">✕</button>
         </div>`).join('');
 }
 

@@ -50,6 +50,9 @@ CRYPTO_SITES = ["coindesk.com", "theblock.co", "decrypt.co", "cointelegraph.com"
                 "bloomberg.com", "cnbc.com", "forbes.com"]
 SPORT_SITES = ["espncricinfo.com", "cricbuzz.com", "espn.com", "bbc.com", "skysports.com", "theguardian.com",
                "reuters.com", "apnews.com", "icc-cricket.com", "thedailystar.net"]
+CRICKET_SITES = ["espncricinfo.com", "cricbuzz.com", "icc-cricket.com", "bbc.com/sport/cricket", "skysports.com/cricket",
+                 "theguardian.com/sport/cricket", "espn.com/cricket", "reuters.com/sports/cricket",
+                 "thedailystar.net/sports/cricket", "en.prothomalo.com/sports/cricket"]
 
 # key: (English name, Bangla name, English feed, Bangla feed). A feed is ("top",), ("section", NAME) or
 # ("search", query, sites); a Bangla feed of None uses the English one.
@@ -87,7 +90,7 @@ TOPICS = {
                                               "stablecoin)", CRYPTO_SITES), ("search", "ক্রিপ্টো OR বিটকয়েন", None)),
     "sport": ("Sport", "খেলা", ("search", '(cricket OR "Premier League" OR "Champions League" OR "La Liga" OR FIFA OR '
                                          'soccer OR T20 OR ODI)', SPORT_SITES), ("section", "SPORTS")),
-    "cricket": ("Cricket", "ক্রিকেট", ("search", "cricket", SPORT_SITES), ("search", "ক্রিকেট", None)),
+    "cricket": ("Cricket", "ক্রিকেট", ("search", "cricket", CRICKET_SITES), ("search", "ক্রিকেট", None)),
     "football": ("Football", "ফুটবল", ("search", '(soccer OR "Premier League" OR "Champions League" OR "La Liga" OR '
                                                '"Serie A" OR Bundesliga OR FIFA OR UEFA)', SPORT_SITES),
                  ("search", "ফুটবল", None)),
@@ -178,6 +181,8 @@ _JUNK = re.compile(r"\blatest news\b|\bnews (?:&|and) updates\b|\bbreaking news,
                    r"\bshould you buy\b|\b(?:stocks?|cryptos?|coins?) to (?:buy|watch|consider)\b|\brock-solid\b|"
                    r"\bmillionaire\b|\bif i could tell\b|\bmost upside\b|\btop \d+ (?:stocks?|cryptos?|coins?)\b|"
                    r"\bdeals? of the day\b|\bhighlights \||^\w+ videos\b|\bmatch highlights\b|"
+                   r"\blatest (?:\w+ )?updates\b|\bmatches, stats\b|^\d+(?:st|nd|rd|th) (?:match|test|odi|t20i?)\b|"
+                   r"\bquizzes\b|\bpoints table$|\bauction tracker\b|\bstats (?:&|and) head-to-head\b|"
                    r"টিভিতে আজকের খেলা|আজকের রাশিফল|খেলার সূচি", re.I)
 _STRIP_PREFIX = re.compile(r"^(?:exclusive|breaking|update|updated)\s*:\s*", re.I)
 
@@ -220,7 +225,7 @@ def _clean_title(title: str, source: str) -> str:
     for suffix in (f" - {source}", f" – {source}", f" | {source}"):
         if source and title.endswith(suffix):
             title = title[: -len(suffix)]
-    if " | " in title and len((tail := title.rsplit(" | ", 1)[1]).split()) <= 4:
+    if " | " in title and len(title.rsplit(" | ", 1)[1].split()) <= 4:
         title = title.rsplit(" | ", 1)[0]       # "...great purge | Barney Ronay": the author or section
     return title.strip()
 
@@ -331,6 +336,17 @@ def topic_feed(key: str, lang: str = "en") -> tuple:
     return (entry[3] or entry[2]) if lang == "bn" else entry[2]
 
 
+# A sport's name searched on general sports sites also matches their menus: on 2026-11-01 half of "cricket news" was
+# tennis, boxing and Formula 1 from pages with "Cricket" in the navigation. So cricket searches its own outlets and the
+# big sites' cricket sections (CRICKET_SITES), plus the general sports sites with only the headlines that name it
+# kept: words no other sport uses (not "batter", baseball's too; not "spins", Formula 1's; not "21st century").
+_CRICKET_WORDS = re.compile(
+    r"\bcricket|\bT20I?s?\b|\bODIs?\b|\b(?:IPL|BPL|PSL|WPL|WTC)\b|\bBig Bash\b|\bAshes\b|\bwickets?\b|"
+    r"(?<!st )(?<!nd )(?<!rd )(?<!th )\bcentur(?:y|ies)\b|\bbowl(?:er|ers|ing|ed)\b|\bbats(?:man|men)\b|"
+    r"\bspinners?\b|\bpace(?:man|men)\b|\bseamers?\b|\ball-rounders?\b|\btri-series\b|"
+    r"\b(?:first|second|third|fourth|fifth) Test\b|\bTest (?:series|match|squad|side|captain)\b", re.I)
+WIDER = {"cricket": (("search", "cricket", SPORT_SITES), _CRICKET_WORDS)}   # topic: (extra feed, headlines kept)
+
 # A region's or country's stories in the world section come first: Google's editors ranked those, while a search
 # ranks by match (its first "Asia" story was posh British schools opening in India).
 _FROM_WORLD = {"asia", "europe", "middle east", "africa", "americas", "usa", "war", *COUNTRIES}
@@ -355,9 +371,17 @@ def headlines(topics: list[str], per_topic: int = 3, lang: str = "en", fresh: bo
         else:
             feed = ("search", f'"{topic}"' if " " in topic else topic, None if lang == "bn" else WORLD_SITES + BIZ_SITES)
         try:
-            items = _rank(fetch(feed_url(feed, lang), fresh), feed[0] != "search", lang, per_topic + 6)
+            raw = fetch(feed_url(feed, lang), fresh)
         except Exception as e:
             return {"topic": topic, "items": [], "error": type(e).__name__}
+        if topic in WIDER and lang == "en":
+            wider, about = WIDER[topic]
+            try:
+                raw = raw + [i for i in fetch(feed_url(wider, lang), fresh) if about.search(i["title"])
+                             and not any(same_story(i["title"], r["title"]) for r in raw)]
+            except Exception:
+                pass        # its own outlets still answer
+        items = _rank(raw, feed[0] != "search", lang, per_topic + 6)
         if topic in _FROM_WORLD and feed[0] == "search":
             try:
                 pattern = dict(ALIASES)[topic] if topic in COUNTRIES else _terms(feed[1])

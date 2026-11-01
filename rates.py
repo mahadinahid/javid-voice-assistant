@@ -29,7 +29,6 @@ ECB_URL = "https://api.frankfurter.dev/v1/latest?base=USD&symbols=CNY,CZK"
 AGG_URL = "https://open.er-api.com/v6/latest/USD"
 CACHE_SEC = 15 * 60
 TIMEOUT_SEC = 8
-CURRENCIES = ("USD", "BDT", "CNY", "CZK")
 NAMES = {"USD": "US dollar", "BDT": "taka", "CNY": "yuan", "CZK": "Czech koruna"}
 _PLURAL = {**NAMES, "USD": "US dollars"}
 

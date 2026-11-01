@@ -17,10 +17,8 @@ Rules enforced here, not left to the prompt:
   - a query that would carry personal data (a task, a memory line, a calendar result) isn't sent to an engine
     without personal_ok (privacy_check, set by javid.py).
 """
-import json
 import os
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from email.utils import parsedate_to_datetime
@@ -30,7 +28,6 @@ import gnews
 import providers
 import search
 
-USAGE_FILE = "tavily_usage.jsonl"    # before the usage ledger: one line per call (imported into it once)
 DAILY_CREDIT_CAP = search.DAILY_CAPS["tavily"]
 MAX_RESULTS = search.MAX_HITS
 NEWS_DAYS = 7          # default time filter for news questions

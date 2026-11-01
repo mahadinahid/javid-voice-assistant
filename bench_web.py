@@ -88,7 +88,7 @@ def report(path: str) -> None:
     rows = [json.loads(line) for line in open(path) if line.strip()]
     for label in dict.fromkeys(r["label"] for r in rows):
         rs = [r for r in rows if r["label"] == label]
-        med = lambda k: statistics.median(r[k] for r in rs)
+        med = lambda k, rs=rs: statistics.median(r[k] for r in rs)
         print(f"{label}: n={len(rs)} · first audio median {med('first_audio'):.2f} s · first answer audio median "
               f"{med('first_answer_audio'):.1f} s (range {min(r['first_answer_audio'] for r in rs):.1f}-"
               f"{max(r['first_answer_audio'] for r in rs):.1f}) · credits an answer {statistics.mean(r['credits'] for r in rs):.2f}"

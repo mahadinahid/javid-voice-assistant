@@ -13,7 +13,7 @@ import re
 import threading
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 
 import calendar_tools   # _parse_day / _parse_time: the same day and time words as the calendar
 

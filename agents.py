@@ -19,7 +19,7 @@ import json
 import os
 import re
 import uuid
-from datetime import date, timedelta
+from datetime import date
 
 import calendar_tools
 import skills

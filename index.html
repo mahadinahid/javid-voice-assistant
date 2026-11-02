@@ -251,6 +251,19 @@ header h1 {
 .theme-btn:hover,
 .chats-toggle:hover { color: var(--text); border-color: rgba(var(--violet-rgb), 0.55); background: rgba(var(--violet-rgb), 0.1); }
 .new-chat-btn { color: #fff; border-color: transparent; background: var(--grad); box-shadow: 0 6px 18px rgba(var(--blue-rgb), 0.28); }
+.panels-btn { position: relative; }
+.panels-btn[aria-expanded="true"] { color: var(--text); border-color: rgba(var(--violet-rgb), 0.55); background: rgba(var(--violet-rgb), 0.1); }
+.panels-btn::after {          /* a dot while a timer runs, a watch is set or a memory waits for approval (below) */
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #FFD166;
+    box-shadow: 0 0 0 2px var(--bg), 0 0 8px rgba(255, 209, 102, 0.8);
+}
+html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pending .mem-card) .panels-btn::after { content: ''; }
 .new-chat-btn:hover { transform: translateY(-1px); box-shadow: 0 9px 24px rgba(var(--violet-rgb), 0.42); }
 
 /* Reply language: English / Bangla */
@@ -444,19 +457,37 @@ header h1 {
 /* ── Layout ── */
 .layout { display: flex; flex: 1; overflow: hidden; }
 
-/* ── Sidebar ── */
+/* ── The panels (2026-11-02): Today, timers, tasks, skills, agents, memory, the providers and latency open from the
+   header's ▦ Dashboard button as a dropdown under it (.layout.panels-open; the script sets --panels-x) instead of
+   taking a column, so the ball and the conversation get the width. Each look skins it below ── */
 .sidebar {
-    width: 272px;
-    flex-shrink: 0;
+    position: absolute;
+    top: 8px;
+    left: var(--panels-x, 12px);
+    z-index: 20;
+    width: 296px;
+    max-height: calc(100% - 16px);
     display: flex;
     flex-direction: column;
     gap: 12px;
-    padding: 16px 12px 16px 16px;
+    padding: 12px 10px;
     overflow-y: auto;
     scrollbar-width: thin;
     scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
-    border-right: 1px solid var(--line);
-    background: linear-gradient(180deg, rgba(10, 12, 20, 0.55), rgba(8, 9, 15, 0.3));
+    border: 1px solid var(--line-strong);
+    border-radius: var(--r-lg);
+    background: var(--bg-elev);
+    box-shadow: var(--shadow);
+    visibility: hidden;
+    opacity: 0;
+    transform: translateY(-6px);
+    transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s;
+}
+.layout.panels-open .sidebar {
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+    transition: opacity 0.18s ease, transform 0.18s ease;
 }
 .panel {
     position: relative;
@@ -1125,6 +1156,51 @@ header h1 {
 .chat::-webkit-scrollbar { width: 4px; }
 .chat::-webkit-scrollbar-thumb { border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
 
+/* Side by side (2026-11-02): when the main area has room for both (main.side, set by the script), the voice ball and
+   the talk buttons take its left and the conversation its right, so replies don't scroll up under the ball. The
+   ball grows there: Orbit's globe sizes itself (its block), the other balls are zoomed */
+.main.side {
+    display: grid;
+    grid-template-columns: clamp(300px, 34%, 440px) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto auto minmax(0, 1fr);       /* the left side centred top to bottom */
+    gap: 22px 32px;
+    padding: 18px 24px;
+}
+.main.side .orb-section { grid-area: 2 / 1; }
+html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
+.main.side .controls {          /* Hold to talk on its own row; Hands-free shares the next with Stop */
+    grid-area: 3 / 1;
+    justify-self: center;
+    flex-wrap: wrap;
+    width: min(100%, 300px);
+}
+.main.side .talk-btn { flex: 1 1 100%; justify-content: center; }
+.main.side :is(.hf-btn, .stop-btn) {        /* one line each, so Stop never moves the ball */
+    flex: 1 1 0;
+    align-self: stretch;
+    align-items: center;
+    justify-content: center;
+    padding-inline: 12px;
+    white-space: nowrap;
+}
+.main.side .chat-section {
+    grid-area: 1 / 2 / -1;
+    align-self: stretch;
+    justify-self: start;
+    max-width: 900px;
+    position: relative;
+}
+.main.side .chat-section::before {          /* the line between the two sides */
+    content: '';
+    position: absolute;
+    top: 4%;
+    bottom: 4%;
+    left: -16px;
+    width: 1px;
+    background: linear-gradient(transparent, rgba(var(--violet-rgb), 0.3) 25%, rgba(var(--violet-rgb), 0.3) 75%, transparent);
+    pointer-events: none;
+}
+
 .message {
     display: flex;
     flex-direction: column;
@@ -1611,7 +1687,6 @@ header h1 {
 
 /* ── Narrower windows ── */
 @media (max-width: 1180px) {
-    .sidebar { width: 236px; }
     .chats { width: 224px; }
 }
 
@@ -1672,7 +1747,19 @@ html:is([data-theme="glass"], [data-theme="orbit"]) .chat .glass { -webkit-backd
 
 /* — Layout: the header and the chats panel float like the cards — */
 html:is([data-theme="glass"], [data-theme="orbit"]) header { margin: 12px 12px 0; padding: 9px 12px 9px 16px; }
-html:is([data-theme="glass"], [data-theme="orbit"]) .sidebar { padding: 14px 10px 14px 12px; border-right: none; background: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .sidebar {      /* the panels' dropdown: frosted glass */
+    border-color: var(--glass-border);
+    border-radius: var(--glass-radius);
+    background: color-mix(in srgb, var(--bg-elev) 92%, transparent);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+            backdrop-filter: blur(18px) saturate(140%);
+    box-shadow: 0 24px 60px -16px rgba(0, 0, 0, 0.8), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+html:is([data-theme="glass"], [data-theme="orbit"]) .panels-btn[aria-expanded="true"] {
+    color: var(--text);
+    border-color: var(--pill-border-hover);
+    background: var(--pill-bg-hover);
+}
 html:is([data-theme="glass"], [data-theme="orbit"]) .chats { margin: 14px 12px 12px 0; padding: 14px 12px; }
 html:is([data-theme="glass"], [data-theme="orbit"]) .input-row { --glass-radius: 999px; }
 html:is([data-theme="glass"], [data-theme="orbit"]) .input-row:focus-within {
@@ -1994,36 +2081,45 @@ html[data-theme="orbit"] .chats-new span.plus { background: rgba(255, 255, 255, 
 html[data-theme="orbit"] .orb-section { position: relative; }
 html[data-theme="orbit"] .orb-wrapper { width: 236px; height: 220px; }
 html[data-theme="orbit"] .orb { opacity: 0; animation: none !important; }
-html[data-theme="orbit"] .globe {
+html[data-theme="orbit"] .globe {        /* sized from the wrapper (236 px, or more beside the conversation) */
     display: block;
     position: absolute;
     left: 50%;
     top: 50%;
     z-index: 2;
-    width: 236px;
-    height: 236px;
+    width: 100%;
+    height: auto;
+    aspect-ratio: 1;
     transform: translate(-50%, -50%);
     pointer-events: none;
 }
-html[data-theme="orbit"] .orb-ring { inset: auto; left: 50%; top: 50%; width: 128px; height: 128px; margin: -64px 0 0 -64px; }
-html[data-theme="orbit"] .orb-wrapper::after {      /* a scan line sweeping down the globe */
-    content: '';
+html[data-theme="orbit"] .orb-ring {      /* the listening rings, just outside the globe: 128 px at 236 */
+    inset: auto;
+    left: 50%;
+    top: 50%;
+    width: calc(100% * 128 / 236);
+    height: auto;
+    aspect-ratio: 1;
+    margin: calc(100% * -64 / 236) 0 0 calc(100% * -64 / 236);
+}
+html[data-theme="orbit"] .orb-wrapper::after {      /* a scan line sweeping down the globe: drawn at the top of */
+    content: '';                                    /* the band it sweeps, which moves down its own height */
     position: absolute;
     left: 10%;
     right: 10%;
-    top: 0;
+    top: calc(100% * 14 / 220);
+    height: calc(100% * 192 / 220);
     z-index: 3;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, rgba(56, 225, 255, .6), transparent);
-    box-shadow: 0 0 8px rgba(56, 225, 255, .5);
+    background: linear-gradient(90deg, transparent, rgba(56, 225, 255, .6), transparent) 0 0 / 100% 1px no-repeat;
+    filter: drop-shadow(0 0 3px rgba(56, 225, 255, .9));
     pointer-events: none;
     animation: orbit-scan 6s ease-in-out infinite;
 }
 @keyframes orbit-scan {
-    0%       { transform: translateY(14px); opacity: 0; }
-    12%      { opacity: .75; }
-    50%      { transform: translateY(206px); opacity: .75; }
-    62%, 100% { transform: translateY(206px); opacity: 0; }
+    0%        { transform: translateY(0); opacity: 0; }
+    12%       { opacity: .75; }
+    50%       { transform: translateY(100%); opacity: .75; }
+    62%, 100% { transform: translateY(100%); opacity: 0; }
 }
 /* Readouts beside the globe: home and the local time, the reply language */
 html[data-theme="orbit"] .hud {
@@ -2050,6 +2146,39 @@ html[data-theme="orbit"] .hud::after {          /* a short line pointing at the 
 html[data-theme="orbit"] .hud-left::after { left: calc(100% + 6px); }
 html[data-theme="orbit"] .hud-right::after { right: calc(100% + 6px); transform: scaleX(-1); }
 @media (max-width: 1180px) { html[data-theme="orbit"] .hud { display: none; } }
+
+/* — Side by side (the shared rules lay it out): the readouts go above the globe, and the globe grows with its
+     column and the window's height, up to 320 px — */
+html[data-theme="orbit"] .main.side .orb-section {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas: "home time" "globe globe" "label label";
+    gap: 12px 16px;
+    justify-items: center;
+    width: 100%;
+}
+html[data-theme="orbit"] .main.side .orb-wrapper {
+    grid-area: globe;
+    width: clamp(236px, min(100% - 24px, 100vh - 390px), 320px);
+    height: auto;
+    aspect-ratio: 236 / 220;
+}
+html[data-theme="orbit"] .main.side .orb-label { grid-area: label; }
+html[data-theme="orbit"] .main.side .hud {       /* the readouts above the globe, underlined toward it */
+    display: block;
+    position: relative;
+    top: auto;
+    padding-bottom: 6px;
+}
+html[data-theme="orbit"] .main.side .hud-left { grid-area: home; justify-self: start; right: auto; text-align: left; }
+html[data-theme="orbit"] .main.side .hud-right { grid-area: time; justify-self: end; left: auto; text-align: right; }
+html[data-theme="orbit"] .main.side .hud::after { top: auto; bottom: 0; width: 100%; }
+html[data-theme="orbit"] .main.side .hud-left::after { left: 0; }
+html[data-theme="orbit"] .main.side .hud-right::after { right: 0; }
+html[data-theme="orbit"] .sidebar {         /* the panels' dropdown in deep space */
+    background: rgba(4, 9, 18, .92);
+    box-shadow: 0 24px 60px -16px rgba(0, 0, 0, .85), inset 0 1px 0 rgba(160, 230, 255, .08);
+}
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OVERDRIVE theme: black and red, angular panels, a reactor core for the orb.
@@ -2192,14 +2321,25 @@ html[data-theme="overdrive"] :is(.theme-menu, .theme-editor) {
     box-shadow: 0 18px 50px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 42, 42, 0.12);
 }
 html[data-theme="overdrive"] .theme-group { color: var(--od-muted); font-family: var(--od-font); letter-spacing: 0.14em; }
+html[data-theme="overdrive"] .sidebar {         /* the panels' dropdown: the theme menu's plate */
+    border-radius: 0;
+    border-color: var(--od-dim);
+    background: #0a0505;
+    box-shadow: 0 18px 50px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 42, 42, 0.12);
+    scrollbar-color: var(--od-dim) transparent;
+}
+html[data-theme="overdrive"] .panels-btn[aria-expanded="true"] { color: #fff; border-color: var(--od-red); background: rgba(255, 42, 42, 0.16); }
+html[data-theme="overdrive"] .panels-btn::after { top: 4px; right: 4px; border-radius: 0; background: var(--od-amber); box-shadow: 0 0 8px var(--od-amber); }
+html[data-theme="overdrive"] .main.side .chat-section::before {
+    background: linear-gradient(transparent, rgba(255, 42, 42, 0.35) 25%, rgba(255, 42, 42, 0.35) 75%, transparent);
+}
 html[data-theme="overdrive"] .theme-tick { color: var(--od-red); }
 html[data-theme="overdrive"] .theme-row:hover { background: rgba(255, 42, 42, 0.1); }
 html[data-theme="overdrive"] .lang-toggle button { color: #dba49d; font-family: var(--od-font); letter-spacing: 0.1em; }
 html[data-theme="overdrive"] .lang-toggle button:hover { color: #fff; }
 html[data-theme="overdrive"] .lang-toggle button.on { background: var(--od-red); color: #000; font-weight: 700; }
 
-/* Side panels: HUD plates */
-html[data-theme="overdrive"] .sidebar,
+/* Side panels: HUD plates (the panels' dropdown has the theme menu's plate, above) */
 html[data-theme="overdrive"] .chats {
     background: rgba(9, 3, 3, 0.9);
     border-color: var(--od-line);
@@ -2610,6 +2750,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
             <span class="status-dot"></span><span id="status-text">Connecting…</span>
         </span>
     </div>
+    <button id="panels-btn" class="theme-btn panels-btn" aria-expanded="false" aria-controls="panels"
+            title="Today, timers, tasks, skills, agents, memory and providers">▦ Dashboard</button>
     <div class="theme-pick">
         <button id="theme-btn" class="theme-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="theme-menu" title="Themes">Glass</button>
         <div id="theme-menu" class="theme-menu" role="dialog" aria-label="Themes" hidden></div>
@@ -2626,7 +2768,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 <div class="layout">
 
     <!-- ── Sidebar ── -->
-    <aside class="sidebar">
+    <aside id="panels" class="sidebar">
         <div class="panel glass">
             <div class="panel-title">Today</div>
             <div id="calendar-list"><p class="empty">Loading…</p></div>
@@ -3004,12 +3146,13 @@ const orbitGlobe = (() => {
         { r: 1.62, incl: -0.42, node: 2.1, speed: 0.38, phase: 2.0 },
         { r: 1.82, incl: 1.32, node: 4.0, speed: 0.26, phase: 4.1 },
     ];
-    const SIZE = 236, C = SIZE / 2, R = 58;       // CSS px: the canvas, its centre, the globe's radius
+    const SIZE = 236, C = SIZE / 2, R = 58;       // the canvas, its centre, the globe's radius: drawn in these units,
+                                                  // scaled to the canvas's size (236 px, more beside the conversation)
     const TILT = 0.41, cosT = Math.cos(TILT), sinT = Math.sin(TILT);      // Earth's tilt, the north pole toward us
     const RING_R = 1.2, RING_INCL = 0.2, RING_SLOTS = 44;
     const CYAN = '56, 225, 255', GOLD = '255, 209, 102';
 
-    let canvas = null, ctx = null, dpr = 1, dots = null, grid = null, orbitLines = null, glow, body, shine;
+    let canvas = null, ctx = null, dpr = 1, size = SIZE, sizer = null, dots = null, grid = null, orbitLines = null, glow, body, shine;
     let running = false, still = false, raf = 0, last = 0, acc = 0, frameNo = 0, watcher = null, clockTimer = 0;
     let spin = -HOME[0] * Math.PI / 180, cosA = 1, sinA = 0;     // Dhaka faces us first
     let ringPhase = 0, satTime = 0, pulseTime = 0, lastSecond = -1, nextArc = 0;
@@ -3062,8 +3205,10 @@ const orbitGlobe = (() => {
 
     function fit() {
         dpr = Math.min(2, window.devicePixelRatio || 1);
-        canvas.width = canvas.height = Math.round(SIZE * dpr);
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        size = canvas.getBoundingClientRect().width || SIZE;
+        canvas.width = canvas.height = Math.round(size * dpr);
+        const k = dpr * size / SIZE;
+        ctx.setTransform(k, 0, 0, k, 0, 0);
         glow = ctx.createRadialGradient(C, C, R * 0.9, C, C, R * 1.4);
         glow.addColorStop(0, `rgba(${CYAN}, 0.38)`);
         glow.addColorStop(0.35, `rgba(${CYAN}, 0.12)`);
@@ -3325,11 +3470,12 @@ const orbitGlobe = (() => {
         if (second !== lastSecond) { lastSecond = second; hud(); }
     }
 
-    function refit() {
-        if (Math.min(2, window.devicePixelRatio || 1) === dpr) return;
+    function refit() {          // a new pixel density or size: resizing clears the canvas, so draw again at once
+        if (Math.min(2, window.devicePixelRatio || 1) === dpr && canvas.getBoundingClientRect().width === size) return;
         fit();
-        if (still) draw(performance.now(), 0);
+        draw(performance.now(), 0);
     }
+
 
     function start() {
         if (running) return;
@@ -3342,6 +3488,8 @@ const orbitGlobe = (() => {
         last = acc = 0;
         still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;     // asked at each start
         window.addEventListener('resize', refit);
+        sizer = new ResizeObserver(refit);      // beside the conversation or above it, the window's height
+        sizer.observe(canvas);
         hud();
         if (still) {
             draw(performance.now(), 0);
@@ -3361,6 +3509,8 @@ const orbitGlobe = (() => {
         watcher = null;
         clearInterval(clockTimer);
         window.removeEventListener('resize', refit);
+        if (sizer) sizer.disconnect();
+        sizer = null;
         arcs.length = 0;
     }
 
@@ -4364,6 +4514,43 @@ function setChatsVisible(on) {
 document.getElementById('chats-toggle').addEventListener('click', () =>
     setChatsVisible(document.querySelector('.layout').classList.contains('chats-hidden')));
 try { if (localStorage.getItem('javid-chats-hidden') === '1') setChatsVisible(false); } catch {}
+
+// The voice ball beside the conversation when the main area has room for both (CSS: .main.side), in every look:
+// a 300+ px column for the ball and the talk buttons, 420+ for the conversation. Checked on any change of the
+// main area's width: the window, the chats panel, the zoom.
+const SIDE_AT = 790;
+(() => {
+    const main = document.querySelector('.main');
+    const arrange = () => main.classList.toggle('side', main.clientWidth >= SIDE_AT);
+    new ResizeObserver(arrange).observe(main);
+    arrange();
+})();
+
+// The dashboard: the panels open from the header's ▦ button (CSS: .layout.panels-open). A click outside, the
+// button again or Escape closes it; Escape then does nothing else (it would also stop Javid speaking).
+const panelsBtn = document.getElementById('panels-btn');
+const panelsBox = document.getElementById('panels');
+const panelsOpen = () => document.querySelector('.layout').classList.contains('panels-open');
+function placePanels() {        // under the button, right edges together, kept on screen
+    const r = panelsBtn.getBoundingClientRect(), w = panelsBox.offsetWidth;
+    document.querySelector('.layout').style.setProperty('--panels-x', `${Math.max(12, Math.min(r.right - w, innerWidth - w - 12))}px`);
+}
+function setPanels(open) {
+    document.querySelector('.layout').classList.toggle('panels-open', open);
+    panelsBtn.setAttribute('aria-expanded', String(open));
+    if (open) placePanels();
+}
+panelsBtn.addEventListener('click', () => setPanels(!panelsOpen()));
+document.addEventListener('click', e => {      // the path, not closest(): a click can re-render what it hit
+    if (panelsOpen() && !e.composedPath().some(n => n === panelsBox || n === panelsBtn)) setPanels(false);
+});
+document.addEventListener('keydown', e => {
+    if (e.key !== 'Escape' || !panelsOpen()) return;
+    e.stopImmediatePropagation();
+    setPanels(false);
+    panelsBtn.focus();
+}, true);
+window.addEventListener('resize', () => { if (panelsOpen()) placePanels(); });
 
 async function chatsApi(method, url, body) {
     try {

@@ -5,7 +5,7 @@ loop (`javid.py`) and a Telegram bot (`telegram_bot.py`). It holds API keys, a G
 memory and every chat. This file lists what it defends against, how, and what is still open.
 
 Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; providers and personal data
-2026-10-25).
+2026-10-25; colour themes, Groq cleared for personal data, and the status of items 3 and 4 updated 2026-11-02).
 
 ## Threats
 
@@ -66,8 +66,9 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
 - **Registry** (`config/providers.yaml`): every outside service with a key or an allowance. A provider is called only
   when it is enabled there and every key it names is in `.env`; the start-up line and the Providers panel show
   variable names, never values (the model keys' last 4 characters in the key controls are open item 7).
-- **Personal data only where Mahadi allows it**: `personal_ok` is false for every provider until he sets it after
-  reading its data policy. A provider without it gets each request without the memory block, the chat history, the
+- **Personal data only where Mahadi allows it**: `personal_ok` is false for a provider until he sets it after
+  reading its data policy. He set it for Groq (2026-10-26, committed 2026-11-02); it is false for every other
+  provider. A provider without it gets each request without the memory block, the chat history, the
   older-chat summary, the carried calendar facts and earlier drafts, and isn't offered the calendar, task, memory or
   past-chat tools. A turn that needs those (by its words, required tools or agent, a personal tool's result, or a model
   reaching for a personal tool) goes only to providers with `personal_ok`; with none, nothing is sent and Javid says
@@ -100,8 +101,9 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
 - **Which models may change data** (2026-10-25): only a model with a pass in `config/model_tests.json` (tracked, written
   by `regression.py --certify` from live tool tests: no unsafe call, tool-call accuracy ≥ 80 %) gets tools. Any other
   model is chat-only: no tools in its requests, never a turn that needs one, and a write tool refuses to run for it
-  even if a call reaches it. A tool the round didn't offer never runs, whatever the provider passes through, and
-  malformed tool arguments are refused instead of crashing the turn.
+  even if a call reaches it. A tool the round didn't offer never runs, whatever the provider passes through (though
+  the first such call in a turn has the round asked again with every tool: see open item 3), and malformed tool
+  arguments are refused instead of crashing the turn.
 - **The usage ledger** (`data/providers.db`, mode 600) holds provider, model, units, latency, status and an error's
   class name per call: no query, no message text, no key.
 - Tests: `regression.py -k privacy` (stripped requests, refusals, search queries, a model reaching for the calendar,
@@ -109,6 +111,20 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   `-k gate:` (chat-only models, the second locks, calls outside the offered tools, malformed arguments),
   `-k providers` (keys, windows, guard, cooldowns, the panel's JSON without keys), `-k "tests: the default run"`
   (no network in the default run).
+
+## Colour themes (added 2026-10-26)
+
+- A theme file in `themes/`, and every request from the theme editor, holds only a name, `#RRGGBB` colours and two
+  numbers, checked by `themes.clean` before anything reaches the page: no CSS text, URL or script from a theme ever
+  does, and the name is shown as text. File names (the theme's id) are lower-case letters, digits and dashes, so no
+  request reaches outside `themes/`; a file over 16 KB isn't read.
+- Making, changing and deleting a theme (`POST /themes`, `POST /themes/preview`, `PUT` and `DELETE /themes/{id}`) go
+  through `_local_page_only`. `GET /themes` has no check, like the other read routes (open item 1); it holds only
+  theme names and colours.
+- The page keeps the chosen theme's colours in `localStorage`, and the head script applies only `--name` variables
+  whose values hold none of `;{}<>\`.
+- Tests: `regression.py -k themes:` (light, malformed or injected colours and path tricks refused; only the page
+  writes; the presets and 400 random themes keep text at 4.5:1).
 
 ## Open (found in the 2026-10-21 audit, not fixed yet)
 
@@ -119,14 +135,18 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
 2. **Write confirmation on the web page and CLI**: only Telegram has the Approve gate. On the page, `delete_task`
    runs at once, and `delete_event`'s "confirm" is set by the model, not by Mahadi's words. In hands-free mode a
    delete should need a tap.
-3. **Prompt injection on the web path**: web results go to the model as raw text, and the dispatcher runs any
-   tool the model names, even one it wasn't offered. Planned: wrap web, page and calendar text as untrusted data,
-   refuse writes and memory after web content in a turn, and refuse tools that weren't offered.
-4. **Personal data to providers**: the router is in place (2026-10-25, above), but no provider has `personal_ok` yet,
-   so calendar, task and memory requests are refused until Mahadi clears one; the data terms of Groq, Gemini and IFM
-   K2 are his to read. Not routed, so not covered: Whisper (voice clips to Groq), edge-tts (spoken replies to
-   Microsoft), Telegram. The search check is best effort and doesn't look at chat history. The dispatcher still runs a
-   tool the model wasn't offered (item 3); a personal tool's result is then only sent to providers with `personal_ok`.
+3. **Prompt injection on the web path**: web results go to the model as raw text. Since 2026-10-25 a call to a tool
+   the round didn't offer never runs, but the first one in a turn has the round asked again with every tool offered
+   (that is how a follow-up such as "yes" reaches the tool it needs), so it doesn't stop an injected instruction from
+   reaching a write tool on the web page; on Telegram the Approve button still catches it. Planned: wrap web, page and
+   calendar text as untrusted data, and refuse writes and memory after web content in a turn.
+4. **Personal data to providers**: the router is in place (2026-10-25, above), and Mahadi cleared Groq: calendar,
+   task, memory and past-chat requests go to Groq's models and to no other provider. When Groq's models can't take
+   one (resting, or at their allowance), Javid says so rather than send it elsewhere. The data terms of Gemini,
+   OpenRouter, Cloudflare and IFM K2 are still his to read before clearing any of them. Not routed, so not covered:
+   Whisper (voice clips to Groq), edge-tts (spoken replies to Microsoft), Telegram. The search check is best effort and
+   doesn't look at chat history. A model that reaches for a personal tool it wasn't offered makes the turn personal,
+   so the retry goes only to providers with `personal_ok`.
 5. **Dependencies**: `certifi` 2026.7.22 has PYSEC-2026-4320 (fixed in 2026.10.19). The 51 packages pulled in
    by the direct ones aren't pinned, and the unused `ddgs` is installed.
 6. **Logs**: `javid._redact` doesn't know Tavily, Telegram or Google refresh-token shapes, and a few error prints

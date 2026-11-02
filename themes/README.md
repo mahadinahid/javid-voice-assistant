@@ -1,7 +1,7 @@
 # Colour themes
 
 Each `.json` file here is a colour theme: Javid's Glass look in your own colours. They're listed under the header's
-theme button, after the built-in looks (Glass, Aurora, Overdrive), and the list re-reads this folder each time it opens.
+theme button, after the built-in looks (Glass and Overdrive), and the list re-reads this folder each time it opens.
 
 Make one in the app (theme button → **+ New theme**: the page changes as you pick, and you can edit or delete it later
 with ✎), or write a file yourself:

@@ -8,14 +8,12 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <script id="theme-boot">
-// The saved theme applies before the first paint. Glass is the default; Aurora (the old default) can still be picked
-// until AURORA_UNTIL, then it's Glass. 'classic' was the old default's saved value: Glass now. A colour theme from
-// themes/ is the Glass look in its own colours: the ones it had last time ('javid-theme-vars') go on <html> now, and
-// the main script refreshes them from /themes.
-const AURORA_UNTIL = new Date('2026-11-02T00:00:00').getTime();
+// The saved theme applies before the first paint: Glass, Overdrive, or a colour theme from themes/, which is the Glass
+// look in its own colours (the ones it had last time, 'javid-theme-vars', go on <html> now; the main script refreshes
+// them from /themes). 'aurora' and 'classic', saved by older versions, mean Glass.
 try {
     const saved = localStorage.getItem('javid-theme') || 'glass';
-    const theme = saved === 'overdrive' ? 'overdrive' : saved === 'aurora' && Date.now() < AURORA_UNTIL ? 'aurora' : 'glass';
+    const theme = saved === 'overdrive' ? 'overdrive' : 'glass';
     document.documentElement.dataset.theme = theme;
     if (!['glass', 'aurora', 'overdrive', 'classic'].includes(saved)) {
         const cached = JSON.parse(localStorage.getItem('javid-theme-vars') || 'null');
@@ -37,9 +35,10 @@ try {
 </script>
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
-   THEMES. Three looks share the component rules below: GLASS (the default),
-   AURORA (until 2026-11-02) and OVERDRIVE, each restyling them under its own
-   html[data-theme]. A colour theme from themes/ is Glass in its own colours:
+   THEMES. Two looks share the component rules below, GLASS (the default) and
+   OVERDRIVE, each restyling them under its own html[data-theme]. (The rules
+   began as the first look, Aurora's, removed 2026-11-02; Overdrive still
+   builds on its values.) A colour theme from themes/ is Glass in its own colours:
    themes.py works out the variables, the page sets them on <html> (they outrank
    :root's). Class names here are what the script depends on.
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -112,8 +111,7 @@ try {
     --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
     color-scheme: dark;
 }
-/* The old Aurora values: the Aurora theme (selectable until 2026-11-02) and Overdrive, which was built on them */
-html[data-theme="aurora"],
+/* Overdrive's base values: the first look's, which Overdrive was built on (its own block further down changes the rest) */
 html[data-theme="overdrive"] {
     --bg: #06070c;
     --bg-elev: #0d0f19;
@@ -167,24 +165,6 @@ body {
     -webkit-font-smoothing: antialiased;
     text-rendering: optimizeLegibility;
 }
-/* Aurora light behind everything: slow-drifting colour fields (clicks pass through) */
-body::before {
-    content: '';
-    position: fixed;
-    inset: -15%;
-    z-index: 0;
-    pointer-events: none;
-    background:
-        radial-gradient(38% 34% at 18% 12%, rgba(var(--violet-rgb), 0.20), transparent 70%),
-        radial-gradient(32% 30% at 86% 8%, rgba(var(--cyan-rgb), 0.13), transparent 70%),
-        radial-gradient(42% 38% at 62% 96%, rgba(255, 111, 181, 0.09), transparent 70%),
-        radial-gradient(30% 30% at 50% 42%, rgba(var(--blue-rgb), 0.07), transparent 70%);
-    animation: aurora-drift 30s ease-in-out infinite alternate;
-}
-@keyframes aurora-drift {
-    from { transform: translate3d(0, 0, 0) scale(1); }
-    to   { transform: translate3d(-3%, 2%, 0) scale(1.08); }
-}
 header, .layout { position: relative; z-index: 1; }
 header { z-index: 3; }                  /* the theme list opens over the panels below */
 button { font-family: inherit; }
@@ -209,9 +189,7 @@ header {
     border-radius: 50%;
     background: radial-gradient(circle at 34% 28%, #fff 0 7%, #c9bfff 16%, #8b7cff 34%, #4a6dff 58%, #141a46 86%);
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 18px rgba(var(--violet-rgb), 0.55);
-    animation: mark-glow 5s ease-in-out infinite;
 }
-@keyframes mark-glow { 50% { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 26px rgba(63, 208, 255, 0.55); } }
 header h1 {
     font-family: var(--font-display);
     font-size: 15px;
@@ -343,7 +321,6 @@ header h1 {
 }
 .theme-choose[aria-pressed="true"] { color: var(--text); font-weight: 600; }
 .theme-row-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.theme-note { font-size: 11px; font-weight: 400; color: var(--text-3); }
 .theme-tick { color: var(--violet); visibility: hidden; }
 .theme-choose[aria-pressed="true"] .theme-tick { visibility: visible; }
 .theme-edit {
@@ -953,7 +930,7 @@ header h1 {
     overflow: hidden;
 }
 
-/* ── Orb: an iridescent sphere (a blurred, turning colour wheel under a glass highlight) over a soft halo ── */
+/* ── Orb: a sphere under a glass highlight, with rings for listening; each look restyles it ── */
 .orb-section { display: flex; flex-direction: column; align-items: center; gap: 14px; flex-shrink: 0; }
 .orb-wrapper {
     position: relative;
@@ -963,21 +940,6 @@ header h1 {
     align-items: center;
     justify-content: center;
 }
-.orb-aura {
-    position: absolute;
-    inset: -40px;
-    z-index: 0;
-    border-radius: 50%;
-    pointer-events: none;
-    background: radial-gradient(circle, var(--aura, rgba(116, 110, 255, 0.34)) 0%, transparent 62%);
-    animation: aura-breathe 5s ease-in-out infinite;
-}
-@keyframes aura-breathe { 50% { transform: scale(1.08); opacity: 0.85; } }
-.orb-wrapper:has(.orb.listening) .orb-aura { --aura: rgba(255, 93, 140, 0.45); }
-.orb-wrapper:has(.orb.thinking) .orb-aura { --aura: rgba(160, 110, 255, 0.48); }
-.orb-wrapper:has(.orb.speaking) .orb-aura { --aura: rgba(var(--cyan-rgb), 0.42); }
-.orb-wrapper:has(.orb.standby) .orb-aura { --aura: rgba(var(--mint-rgb), 0.24); }
-.orb-wrapper:has(.orb.followup) .orb-aura { --aura: rgba(var(--blue-rgb), 0.42); }
 .orb-ring {
     position: absolute;
     inset: 16px;
@@ -988,10 +950,6 @@ header h1 {
     pointer-events: none;
 }
 .orb {
-    --o1: #8b7cff;
-    --o2: #3fd0ff;
-    --o3: #5b8cff;
-    --swirl: 12s;
     position: relative;
     z-index: 2;
     width: 136px;
@@ -1003,17 +961,6 @@ header h1 {
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.07), 0 20px 50px rgba(20, 24, 70, 0.6), inset 0 -12px 30px rgba(0, 0, 0, 0.45);
     transition: box-shadow 0.6s, filter 0.6s;
 }
-.orb::before {
-    content: '';
-    position: absolute;
-    inset: -30%;
-    z-index: -1;
-    border-radius: 50%;
-    background: conic-gradient(from 0deg, var(--o1), var(--o2), var(--o3), var(--o1));
-    filter: blur(16px);
-    opacity: 0.9;
-    animation: orb-swirl var(--swirl) linear infinite;
-}
 .orb::after {
     content: '';
     position: absolute;
@@ -1024,9 +971,8 @@ header h1 {
         radial-gradient(circle at 33% 26%, rgba(255, 255, 255, 0.9) 0 5%, rgba(255, 255, 255, 0.24) 14%, transparent 38%),
         radial-gradient(circle at 50% 118%, rgba(0, 0, 0, 0.5), transparent 60%);
 }
-@keyframes orb-swirl { to { transform: rotate(360deg); } }
 
-/* — Idle: slow violet-to-cyan breathing — */
+/* — Idle: slow breathing — */
 .orb.idle { animation: breathe 4s ease-in-out infinite; }
 @keyframes breathe {
     0%, 100% { transform: scale(1); }
@@ -1034,7 +980,6 @@ header h1 {
 }
 /* — Listening: warm pink pulse with rings — */
 .orb.listening {
-    --o1: #ff6fb5; --o2: #ff5d73; --o3: #ffa35c; --swirl: 2.6s;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 60px rgba(255, 93, 140, 0.5);
     animation: listen-pulse 0.8s ease-in-out infinite;
 }
@@ -1048,9 +993,8 @@ header h1 {
     0%   { transform: scale(1); opacity: 0.8; }
     100% { transform: scale(1.7); opacity: 0; }
 }
-/* — Thinking: a fast violet swirl — */
+/* — Thinking: a quick violet pulse — */
 .orb.thinking {
-    --o1: #9a7dff; --o2: #d36bff; --o3: #3fd0ff; --swirl: 1.6s;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 60px rgba(154, 125, 255, 0.5);
     animation: think-pulse 1.2s ease-in-out infinite;
 }
@@ -1060,7 +1004,6 @@ header h1 {
 }
 /* — Speaking: a bright cyan wave — */
 .orb.speaking {
-    --o1: #3fd0ff; --o2: #3ee0a8; --o3: #5b8cff; --swirl: 3s;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 64px rgba(var(--cyan-rgb), 0.5);
     animation: speak-wave 0.36s ease-in-out infinite alternate;
 }
@@ -1070,13 +1013,11 @@ header h1 {
 }
 /* — Hands-free standby: waiting for "Javid" — a dim teal breath — */
 .orb.standby {
-    --o1: #3ee0a8; --o2: #1fb39a; --o3: #3fd0ff; --swirl: 16s;
     filter: saturate(0.8) brightness(0.85);
     animation: breathe 4.5s ease-in-out infinite;
 }
 /* — Follow-up window: no wake word needed — blue with a soft ring — */
 .orb.followup {
-    --o1: #5b8cff; --o2: #3fd0ff; --o3: #9a7dff; --swirl: 5s;
     box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 56px rgba(var(--blue-rgb), 0.45);
     animation: breathe 1.8s ease-in-out infinite;
 }
@@ -1668,11 +1609,7 @@ header h1 {
 }
 
 @media (prefers-reduced-motion: reduce) {
-    body::before,
-    .brand-mark,
     .orb,
-    .orb::before,
-    .orb-aura,
     .message,
     .skill-item.running,
     .tool-note { animation: none !important; }
@@ -1700,7 +1637,6 @@ html[data-theme="glass"] body {
         radial-gradient(40% 32% at 50% 0%, var(--glow-3), transparent 75%),
         var(--bg);
 }
-html[data-theme="glass"] body::before { content: none; }       /* Aurora's drifting light */
 
 /* — The glass surface — */
 html[data-theme="glass"] .glass {
@@ -1742,7 +1678,6 @@ html[data-theme="glass"] .brand-mark,
 html[data-theme="glass"] .message.javid .msg-who::before {
     background: radial-gradient(circle at 34% 28%, var(--orb-1) 0%, var(--orb-2) 12%, var(--orb-3) 38%, var(--orb-4) 72%, var(--orb-5) 100%);
     box-shadow: inset 0 -2px 5px rgba(var(--orb-shade-rgb), 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
-    animation: none;
 }
 html[data-theme="glass"] :is(.panel-title, .mem-section, .chats-group, .prov-kind, .ctl-block h3) {
     font-size: 11px;
@@ -1807,7 +1742,6 @@ html[data-theme="glass"] .message.user .msg-bubble {
 }
 
 /* — Orb: a glass sphere. The state animations are the old ones at about half the movement — */
-html[data-theme="glass"] .orb-aura { display: none; }
 html[data-theme="glass"] .orb {
     background: radial-gradient(circle at 34% 28%, var(--orb-1) 0%, var(--orb-2) 12%, var(--orb-3) 38%, var(--orb-4) 72%, var(--orb-5) 100%);
     box-shadow:
@@ -1817,7 +1751,6 @@ html[data-theme="glass"] .orb {
         0 22px 44px -16px rgba(0, 0, 0, 0.7),
         0 0 48px rgba(var(--violet-rgb), 0.18);
 }
-html[data-theme="glass"] .orb::before { content: none; }       /* Aurora's colour swirl */
 html[data-theme="glass"] .orb::after {
     background:
         radial-gradient(circle at 36% 25%, rgba(255, 255, 255, 0.9) 0 3.5%, rgba(255, 255, 255, 0.28) 10%, transparent 26%),
@@ -1870,318 +1803,9 @@ html[data-theme="glass"] :is(.text-input, .chats-search, .add-task, .key-input, 
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   AURORA (the default until 2026-10-26, selectable until 2026-11-02; then
-   delete this block, "aurora" in the old-token selector and the switcher's
-   entry): the shared rules in Aurora's tokens, plus this polish. A deeper
-   backdrop with a fine grain, frosted fills, a bright specular edge on each
-   surface, glossy primary buttons. Every rule is scoped to
-   html[data-theme="aurora"]. backdrop-filter is used only where it can see the
-   backdrop: inside .chat and .suggest (masked, so they're backdrop roots) a
-   blur would show nothing, so the bubbles there get a richer fill instead.
-   ═══════════════════════════════════════════════════════════════════════════ */
-html[data-theme="aurora"] {
-    --g-tint: rgba(13, 16, 31, 0.44);
-    --g-tint-strong: rgba(13, 16, 31, 0.74);
-    --g-fill: linear-gradient(160deg, rgba(255, 255, 255, 0.115) 0%, rgba(255, 255, 255, 0.045) 36%, rgba(255, 255, 255, 0.02) 100%);
-    --g-edge: rgba(255, 255, 255, 0.105);
-    --g-sheen: linear-gradient(150deg, rgba(255, 255, 255, 0.34) 0%, rgba(255, 255, 255, 0.08) 18%, rgba(255, 255, 255, 0.02) 40%,
-                               rgba(255, 255, 255, 0) 72%, rgba(150, 130, 255, 0.20) 100%);
-    --g-blur: blur(28px) saturate(175%);
-    --g-depth: inset 0 1px 0 rgba(255, 255, 255, 0.09), inset 0 -1px 0 rgba(0, 0, 0, 0.22),
-               0 24px 48px -24px rgba(0, 0, 0, 0.75), 0 2px 10px rgba(0, 0, 0, 0.22);
-    --g-gloss: linear-gradient(180deg, rgba(255, 255, 255, 0.26) 0%, rgba(255, 255, 255, 0.07) 46%, rgba(255, 255, 255, 0) 64%);
-    --g-pill: linear-gradient(180deg, rgba(255, 255, 255, 0.095), rgba(255, 255, 255, 0.025));
-    --g-pill-hover: linear-gradient(180deg, rgba(168, 152, 255, 0.22), rgba(91, 140, 255, 0.07));
-    --text-3: #8b92ae;          /* muted text a step lighter: it sits on glass now, not on black */
-    --text-4: #646c8a;
-}
-html[data-theme="aurora"] body {
-    background: radial-gradient(130% 95% at 50% -12%, #161d50 0%, #0a0d22 48%, #05060d 100%);
-    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
-}
-html[data-theme="aurora"] body::before {
-    background:
-        radial-gradient(34% 30% at 13% 9%, rgba(128, 96, 255, 0.50), transparent 70%),
-        radial-gradient(30% 28% at 89% 5%, rgba(30, 190, 255, 0.36), transparent 70%),
-        radial-gradient(28% 36% at 6% 62%, rgba(104, 76, 255, 0.24), transparent 70%),
-        radial-gradient(26% 34% at 95% 58%, rgba(36, 170, 255, 0.20), transparent 70%),
-        radial-gradient(40% 34% at 74% 99%, rgba(255, 80, 165, 0.24), transparent 70%),
-        radial-gradient(30% 32% at 26% 92%, rgba(30, 222, 184, 0.18), transparent 70%),
-        radial-gradient(24% 22% at 50% 24%, rgba(84, 110, 255, 0.22), transparent 70%);
-}
-/* A fine grain and a vignette over the light (the grain is what makes frosted glass look like a material) */
-html[data-theme="aurora"] body::after {
-    content: '';
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    pointer-events: none;
-    background:
-        radial-gradient(ellipse at 50% 42%, transparent 60%, rgba(0, 0, 0, 0.30) 100%),
-        url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 0.055 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-}
-html[data-theme="aurora"] ::selection { background: rgba(139, 124, 255, 0.4); color: #fff; }
-html[data-theme="aurora"] :is(button, a, summary):focus-visible { outline: 2px solid rgba(170, 160, 255, 0.8); outline-offset: 2px; }
-
-/* ── The specular edge: a light line that is brightest at the top left, like light catching a glass rim ── */
-html[data-theme="aurora"] :is(.panel, .msg-screen, .input-row, .message.javid .msg-bubble, .chats-new, .mem-card)::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    border-radius: inherit;
-    padding: 1px;
-    background: var(--g-sheen);
-    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-    -webkit-mask-composite: xor;
-            mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
-            mask-composite: exclude;
-    pointer-events: none;
-}
-
-/* ── Header: a frosted bar with a thin line of light under it ── */
-html[data-theme="aurora"] header {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.065), rgba(255, 255, 255, 0.012)), rgba(8, 10, 22, 0.40);
-    border-bottom-color: transparent;
-    box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.07), 0 12px 32px -14px rgba(0, 0, 0, 0.65);
-    -webkit-backdrop-filter: var(--g-blur);
-            backdrop-filter: var(--g-blur);
-}
-html[data-theme="aurora"] header::after {
-    content: '';
-    position: absolute;
-    left: 6%;
-    right: 6%;
-    bottom: -1px;
-    height: 1px;
-    pointer-events: none;
-    background: linear-gradient(90deg, transparent, rgba(160, 140, 255, 0.6) 30%, rgba(63, 208, 255, 0.55) 70%, transparent);
-    opacity: 0.55;
-}
-html[data-theme="aurora"] .brand-mark {
-    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1), 0 0 20px rgba(139, 124, 255, 0.6);
-}
-
-/* ── Glass pills: header buttons, the hands-free button, quick actions, ghost buttons ── */
-html[data-theme="aurora"] :is(.theme-btn, .chats-toggle, .hf-btn, .suggest button, .load-earlier, .btn-ghost, .status-pill) {
-    background: var(--g-pill);
-    border-color: var(--g-edge);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 4px 14px -6px rgba(0, 0, 0, 0.55);
-    transition: color 0.2s, border-color 0.2s, background 0.2s, box-shadow 0.25s, transform 0.2s;
-}
-html[data-theme="aurora"] :is(.theme-btn, .chats-toggle, .hf-btn, .btn-ghost, .status-pill) {
-    -webkit-backdrop-filter: blur(16px) saturate(160%);
-            backdrop-filter: blur(16px) saturate(160%);
-}
-html[data-theme="aurora"] :is(.theme-btn, .chats-toggle, .suggest button, .load-earlier, .btn-ghost):hover:not(:disabled) {
-    color: var(--text);
-    border-color: rgba(176, 164, 255, 0.45);
-    background: var(--g-pill-hover);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16), 0 10px 24px -10px rgba(112, 100, 255, 0.7);
-}
-html[data-theme="aurora"] :is(.theme-btn, .chats-toggle, .suggest button, .hf-btn, .btn-ghost, .new-chat-btn, .send-btn, .talk-btn):active:not(:disabled) {
-    transform: translateY(0) scale(0.97);
-}
-html[data-theme="aurora"] .hf-btn:hover {
-    color: var(--text);
-    border-color: rgba(62, 224, 168, 0.5);
-    background: linear-gradient(180deg, rgba(62, 224, 168, 0.16), rgba(62, 224, 168, 0.04));
-}
-html[data-theme="aurora"] .hf-btn.active {
-    color: #8ff5d0;
-    border-color: rgba(62, 224, 168, 0.65);
-    background: linear-gradient(180deg, rgba(62, 224, 168, 0.22), rgba(62, 224, 168, 0.07));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 0 26px rgba(62, 224, 168, 0.26);
-}
-html[data-theme="aurora"] .status-pill.down { border-color: rgba(255, 190, 85, 0.3); }
-html[data-theme="aurora"] .lang-toggle {
-    background: rgba(0, 0, 0, 0.22);
-    border-color: var(--g-edge);
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.45), 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-
-/* ── Glossy primary buttons: a gradient with light on its upper half ── */
-html[data-theme="aurora"] :is(.new-chat-btn, .send-btn, .lang-toggle button.on, .chats-new span.plus, .src-n) {
-    background: var(--g-gloss), var(--grad);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.42), inset 0 -1px 0 rgba(20, 20, 60, 0.25), 0 8px 22px -8px rgba(91, 120, 255, 0.8);
-    text-shadow: 0 1px 1px rgba(20, 20, 70, 0.3);
-}
-html[data-theme="aurora"] :is(.new-chat-btn, .send-btn):hover:not(:disabled) {
-    transform: translateY(-1px);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.5), inset 0 -1px 0 rgba(20, 20, 60, 0.25), 0 14px 30px -10px rgba(139, 124, 255, 0.95);
-}
-html[data-theme="aurora"] .send-btn:disabled { box-shadow: none; }
-
-/* ── Panels: frosted cards on the side columns ── */
-html[data-theme="aurora"] :is(.sidebar, .chats) {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.008));
-    border-color: transparent;
-}
-html[data-theme="aurora"] .sidebar { box-shadow: inset -1px 0 0 rgba(255, 255, 255, 0.055); }
-html[data-theme="aurora"] .chats { box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.055); }
-html[data-theme="aurora"] .panel {
-    border-color: var(--g-edge);
-    background: var(--g-fill), var(--g-tint);
-    box-shadow: var(--g-depth);
-    -webkit-backdrop-filter: var(--g-blur);
-            backdrop-filter: var(--g-blur);
-    transition: border-color 0.3s, box-shadow 0.3s;
-}
-html[data-theme="aurora"] .panel:hover {
-    border-color: rgba(255, 255, 255, 0.16);
-    box-shadow: var(--g-depth), 0 0 0 1px rgba(150, 140, 255, 0.06), 0 18px 40px -26px rgba(110, 100, 255, 0.55);
-}
-html[data-theme="aurora"] .panel-title { color: var(--text-2); letter-spacing: 0.14em; }
-html[data-theme="aurora"] .panel-title::before { border-radius: 50%; box-shadow: 0 0 0 3px rgba(139, 124, 255, 0.12), 0 0 12px rgba(139, 124, 255, 0.8); }
-html[data-theme="aurora"] :is(.task-item, .memory-item, .event-item, .timer-item) { border-bottom-color: rgba(255, 255, 255, 0.06); }
-html[data-theme="aurora"] :is(.add-task, .chats-search, .key-input) {
-    background-color: rgba(0, 0, 0, 0.2);
-    border-color: rgba(255, 255, 255, 0.085);
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.4), 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-html[data-theme="aurora"] .mem-card { position: relative; }
-
-/* ── The orb in a glass lens ── */
-html[data-theme="aurora"] .orb-wrapper::before {
-    content: '';
-    position: absolute;
-    inset: 1px;
-    z-index: 1;
-    border-radius: 50%;
-    pointer-events: none;
-    background: radial-gradient(circle at 30% 18%, rgba(255, 255, 255, 0.20), rgba(255, 255, 255, 0.05) 40%, rgba(255, 255, 255, 0.015) 70%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.30), inset 0 0 0 1px rgba(255, 255, 255, 0.09),
-                0 30px 60px -32px rgba(90, 100, 255, 0.7);
-    -webkit-backdrop-filter: blur(6px) saturate(140%);
-            backdrop-filter: blur(6px) saturate(140%);
-}
-html[data-theme="aurora"] .orb::after {
-    background:
-        radial-gradient(circle at 33% 25%, rgba(255, 255, 255, 0.95) 0 4.5%, rgba(255, 255, 255, 0.28) 13%, transparent 36%),
-        radial-gradient(ellipse 40% 18% at 62% 84%, rgba(255, 255, 255, 0.16), transparent 70%),
-        radial-gradient(circle at 50% 118%, rgba(0, 0, 0, 0.5), transparent 60%);
-}
-html[data-theme="aurora"] .orb-label {
-    background: var(--g-pill);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 6px 18px -8px rgba(0, 0, 0, 0.6);
-    -webkit-backdrop-filter: blur(16px) saturate(160%);
-            backdrop-filter: blur(16px) saturate(160%);
-}
-html[data-theme="aurora"] .talk-btn {
-    background: linear-gradient(180deg, rgba(40, 44, 84, 0.92), rgba(16, 18, 38, 0.92)) padding-box, var(--grad) border-box;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 10px 30px -8px rgba(91, 120, 255, 0.55);
-}
-html[data-theme="aurora"] .talk-btn:hover { box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18), 0 14px 36px -8px rgba(139, 124, 255, 0.75); }
-html[data-theme="aurora"] .talk-btn.active {
-    background: var(--g-gloss), linear-gradient(135deg, #ff6fb5, #ff5d73) padding-box, linear-gradient(135deg, #ff6fb5, #ff5d73) border-box;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 0 0 6px rgba(255, 93, 115, 0.14), 0 12px 34px rgba(255, 93, 115, 0.45);
-}
-html[data-theme="aurora"] .stop-btn {
-    background: linear-gradient(180deg, rgba(255, 93, 115, 0.18), rgba(255, 93, 115, 0.05));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10);
-}
-
-/* ── Conversation: your messages as lit glass, Javid's as clear glass ── */
-html[data-theme="aurora"] .message.user .msg-bubble {
-    background: var(--g-gloss), linear-gradient(135deg, #7a6cff 0%, #5d7fff 58%, #47a6ff 120%);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34), inset 0 -1px 0 rgba(20, 20, 70, 0.2), 0 16px 32px -14px rgba(84, 110, 255, 0.75);
-    text-shadow: 0 1px 1px rgba(20, 20, 70, 0.22);
-}
-html[data-theme="aurora"] .message.javid .msg-bubble {
-    position: relative;
-    border-color: var(--g-edge);
-    background: var(--g-fill), rgba(18, 21, 40, 0.55);
-    box-shadow: var(--g-depth);
-}
-html[data-theme="aurora"] .msg-screen {
-    position: relative;
-    border-color: var(--g-edge);
-    background: var(--g-fill), rgba(16, 19, 36, 0.58);
-    box-shadow: var(--g-depth);
-}
-html[data-theme="aurora"] .rs-num-n {
-    background: linear-gradient(180deg, rgba(160, 145, 255, 0.26), rgba(139, 124, 255, 0.12));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12);
-}
-html[data-theme="aurora"] :is(.msg-sources a, .msg-skill) {
-    background: var(--g-pill);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.09), 0 4px 12px -6px rgba(0, 0, 0, 0.5);
-}
-html[data-theme="aurora"] .msg-sources a { border-color: var(--g-edge); }
-html[data-theme="aurora"] .msg-sources a:hover {
-    border-color: rgba(176, 164, 255, 0.45);
-    background: var(--g-pill-hover);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 10px 22px -10px rgba(112, 100, 255, 0.7);
-}
-
-/* ── Composer: a floating glass capsule ── */
-html[data-theme="aurora"] .input-row {
-    position: relative;
-    border-color: rgba(255, 255, 255, 0.12);
-    background: var(--g-fill), rgba(14, 17, 34, 0.5);
-    box-shadow: var(--g-depth), 0 18px 44px -16px rgba(0, 0, 0, 0.7);
-    -webkit-backdrop-filter: var(--g-blur);
-            backdrop-filter: var(--g-blur);
-}
-html[data-theme="aurora"] .input-row:focus-within {
-    border-color: rgba(160, 145, 255, 0.55);
-    box-shadow: var(--g-depth), 0 0 0 4px rgba(139, 124, 255, 0.13), 0 0 36px -6px rgba(110, 120, 255, 0.45);
-}
-
-/* ── Chats (right column) ── */
-html[data-theme="aurora"] .chats-new {
-    position: relative;
-    border-color: var(--g-edge);
-    background: var(--g-fill), var(--g-tint);
-    box-shadow: var(--g-depth);
-}
-html[data-theme="aurora"] .chats-new:hover { background: var(--g-pill-hover), var(--g-tint); }
-html[data-theme="aurora"] .chat-item { transition: background 0.18s, color 0.18s, box-shadow 0.18s; }
-html[data-theme="aurora"] .chat-item:hover {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.075), rgba(255, 255, 255, 0.025));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
-}
-html[data-theme="aurora"] .chat-item.active {
-    color: #fff;
-    background: linear-gradient(135deg, rgba(154, 125, 255, 0.28), rgba(63, 208, 255, 0.10));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), inset 2px 0 0 var(--violet), 0 8px 20px -12px rgba(110, 100, 255, 0.7);
-}
-
-/* ── Dialogs, the toast and the timer alarm ── */
-html[data-theme="aurora"] .modal {
-    background: rgba(4, 5, 12, 0.5);
-    -webkit-backdrop-filter: blur(14px) saturate(130%);
-            backdrop-filter: blur(14px) saturate(130%);
-}
-html[data-theme="aurora"] .modal-card {
-    border-color: rgba(255, 255, 255, 0.13);
-    background: var(--g-fill), var(--g-tint-strong);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.13), 0 40px 90px -24px rgba(0, 0, 0, 0.85);
-    -webkit-backdrop-filter: var(--g-blur);
-            backdrop-filter: var(--g-blur);
-}
-html[data-theme="aurora"] .model-card {
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.06), rgba(255, 255, 255, 0.018));
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.07), 0 10px 26px -18px rgba(0, 0, 0, 0.8);
-}
-html[data-theme="aurora"] .toast {
-    background: linear-gradient(180deg, rgba(255, 120, 140, 0.16), rgba(255, 93, 115, 0.05)), rgba(32, 10, 18, 0.72);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 18px 44px -14px rgba(0, 0, 0, 0.75);
-    -webkit-backdrop-filter: blur(20px) saturate(150%);
-            backdrop-filter: blur(20px) saturate(150%);
-}
-html[data-theme="aurora"] .ring {
-    background: linear-gradient(180deg, rgba(255, 200, 110, 0.18), rgba(255, 170, 80, 0.05)), rgba(36, 24, 8, 0.78);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.12), 0 18px 50px -12px rgba(0, 0, 0, 0.7), 0 0 40px rgba(255, 190, 85, 0.16);
-    -webkit-backdrop-filter: blur(22px) saturate(150%);
-            backdrop-filter: blur(22px) saturate(150%);
-}
-html[data-theme="aurora"] .ring button { background: var(--g-gloss), linear-gradient(135deg, #ffbe55, #ff8a5c); box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4); }
-
-
-/* ═══════════════════════════════════════════════════════════════════════════
    OVERDRIVE theme: black and red, angular panels, a reactor core for the orb.
-   Toggled with the ⚡ button in the header and saved per browser. Everything is
-   scoped to html[data-theme="overdrive"]; Aurora above stays as it is.
+   Chosen from the header's theme list and saved per browser. Everything is
+   scoped to html[data-theme="overdrive"]; the shared rules above stay as they are.
    ═══════════════════════════════════════════════════════════════════════════ */
 html[data-theme="overdrive"] {
     --od-red: #ff2a2a;
@@ -2616,11 +2240,8 @@ html[data-theme="overdrive"] .ring {
 html[data-theme="overdrive"] .ring-text small { color: var(--od-amber); }
 html[data-theme="overdrive"] .ring button { border-radius: 0; border-color: var(--od-red); background: var(--od-red); color: #000; font-weight: 700; }
 
-/* Overdrive on top of Aurora's newer pieces: switch off its decorations, restyle what's new */
-html[data-theme="overdrive"] body::before,
+/* Overdrive on top of the shared rules' newer pieces: switch off their decorations, restyle what's new */
 html[data-theme="overdrive"] .brand-mark,
-html[data-theme="overdrive"] .orb-aura,
-html[data-theme="overdrive"] .orb::before,
 html[data-theme="overdrive"] .message.javid .msg-who::before { display: none; }
 html[data-theme="overdrive"] header,
 html[data-theme="overdrive"] .panel,
@@ -2809,7 +2430,6 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
                 <div id="orb" class="orb idle"></div>
                 <div class="orb-ring"></div>
                 <div class="orb-ring"></div>
-                <div class="orb-aura" aria-hidden="true"></div>
             </div>
             <span id="orb-label" class="orb-label idle">Ready</span>
         </div>
@@ -4895,7 +4515,7 @@ document.querySelectorAll('.lang-toggle button').forEach(b => b.addEventListener
     } catch { showToast('Could not change the language — is the server running?'); }
 }));
 
-// ── Themes. The looks are this page's CSS: Glass, Aurora (offered until AURORA_UNTIL) and Overdrive. Colour themes are
+// ── Themes. The looks are this page's CSS: Glass and Overdrive. Colour themes are
 // the files in themes/ (GET /themes: each a palette on the Glass look, its colours worked out and contrast-checked by
 // themes.py), whose variables go on <html>. The header's theme button opens the list; "+ New theme" and ✎ open the
 // editor, which shows its colours on the whole page as you pick and saves through POST/PUT /themes. The choice is saved
@@ -4903,7 +4523,6 @@ document.querySelectorAll('.lang-toggle button').forEach(b => b.addEventListener
 // /themes answers) ──
 const LOOKS = [
     { id: 'glass', name: 'Glass', bg: '#06120E', accent: '#4ADE9F' },
-    { id: 'aurora', name: 'Aurora', note: 'until 2 Nov', bg: '#06070C', accent: '#8B7CFF', until: AURORA_UNTIL },
     { id: 'overdrive', name: 'Overdrive', bg: '#050404', accent: '#FF2A2A' },
 ];
 const NEW_THEME = { name: 'My theme', background: '#06120E', accent: '#4ADE9F', blur: 18, tint: 0.58 };   // Glass's colours
@@ -4915,13 +4534,12 @@ const themeBtn = document.getElementById('theme-btn');
 const themeMenu = document.getElementById('theme-menu');
 const themeEditor = document.getElementById('theme-editor');
 
-const looks = () => LOOKS.filter(t => !t.until || Date.now() < t.until);
-const findTheme = id => looks().find(t => t.id === id) || colourThemes.find(t => t.id === id);
+const findTheme = id => LOOKS.find(t => t.id === id) || colourThemes.find(t => t.id === id);
 const currentThemeId = () => document.documentElement.dataset.palette || document.documentElement.dataset.theme;
 function savedThemeId() {
     try {
         const id = localStorage.getItem('javid-theme');
-        return !id || id === 'classic' ? 'glass' : id;
+        return !id || id === 'classic' || id === 'aurora' ? 'glass' : id;    // older versions' names for Glass
     } catch { return 'glass'; }
 }
 
@@ -5020,7 +4638,6 @@ function themeRow(theme, editable) {
     name.className = 'theme-row-name';
     name.textContent = theme.name;
     choose.append(swatch(theme.bg || theme.background, theme.accent), name);
-    if (theme.note) choose.append(Object.assign(document.createElement('span'), { className: 'theme-note', textContent: theme.note }));
     const tick = Object.assign(document.createElement('span'), { className: 'theme-tick', textContent: '✓' });
     tick.setAttribute('aria-hidden', 'true');
     choose.append(tick);
@@ -5037,7 +4654,7 @@ function themeRow(theme, editable) {
 }
 
 function renderThemeMenu() {
-    const parts = [themeText('theme-group', 'Built in'), ...looks().map(t => themeRow(t, false)),
+    const parts = [themeText('theme-group', 'Built in'), ...LOOKS.map(t => themeRow(t, false)),
                    themeText('theme-group', 'Colour themes')];
     if (colourThemes.length) parts.push(...colourThemes.map(t => themeRow(t, true)));
     else parts.push(themeText('theme-empty', themesLoaded ? 'None yet: make one below.'

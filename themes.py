@@ -4,7 +4,7 @@ A theme file gives a name, a background, an accent, optionally three glow colour
 derive() works out every other colour the page uses from those and checks that text stays readable: at least 4.5:1
 wherever it appears, measured at the brightest glow and through the glass's tint, as Glass itself was checked. A
 theme that can't be made readable is refused, so no theme can leave Javid unreadable. The page sets the derived
-colours as CSS variables on <html>; the looks themselves (Glass, Aurora, Overdrive) stay CSS in index.html.
+colours as CSS variables on <html>; the looks themselves (Glass, Overdrive) stay CSS in index.html.
 Light backgrounds aren't supported: the glass's white edges and fills are made for dark ones.
 """
 
@@ -15,8 +15,8 @@ import re
 import tempfile
 
 THEMES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "themes")
-RESERVED = ("glass", "aurora", "overdrive", "classic", "preview")   # the looks in index.html, Aurora's old saved name,
-                                                                     # and the editor's route
+RESERVED = ("glass", "aurora", "overdrive", "classic", "preview")   # the looks in index.html, the names older
+                                                                     # versions saved, and the editor's route
 ID_RE = re.compile(r"[a-z0-9][a-z0-9-]{0,31}")
 HEX_RE = re.compile(r"#[0-9a-fA-F]{6}")
 NAME_MAX = 24

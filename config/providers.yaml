@@ -60,7 +60,7 @@ providers:
       per_model: true
     reset: headers         # Groq's daily limits refill continuously, not at midnight
     timeout_ms: 60000
-    personal_ok: false     # Groq also does speech recognition (Whisper), which isn't routed: every voice clip goes there
+    personal_ok: true     # Groq also does speech recognition (Whisper), which isn't routed: every voice clip goes there
     models:
       - openai/gpt-oss-20b
       - openai/gpt-oss-120b

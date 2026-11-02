@@ -28,7 +28,9 @@ and is now a web app with 25 tools, two agents, a Telegram bot and its own test 
 - **Long answers, kept.** Reports, briefs and plans can be saved as Google Docs in a "Javid Reports" folder.
 - **It knows itself.** "Is everything working?" runs a self-check; "where did you get that?" names the source of
   the last answer.
-- **Your look.** Glass (the default), Overdrive, and colour themes you can make in the app with a live preview.
+- **Your look.** Orbit (the default): a sci-fi look where the voice ball is a holographic globe, with satellites
+  and a ring of letters orbiting it and light arcing out from Dhaka while Javid thinks. Or Glass, Overdrive, and
+  colour themes you can make in the app with a live preview.
 
 ## How it works
 

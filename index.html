@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="glass">
+<html lang="en" data-theme="orbit">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -8,14 +8,14 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <script id="theme-boot">
-// The saved theme applies before the first paint: Glass, Overdrive, or a colour theme from themes/, which is the Glass
-// look in its own colours (the ones it had last time, 'javid-theme-vars', go on <html> now; the main script refreshes
-// them from /themes). 'aurora' and 'classic', saved by older versions, mean Glass.
+// The saved theme applies before the first paint: Orbit (the default), Glass, Overdrive, or a colour theme from themes/,
+// which is the Glass look in its own colours (the ones it had last time, 'javid-theme-vars', go on <html> now; the
+// main script refreshes them from /themes). 'aurora' and 'classic', saved by older versions, mean Glass.
 try {
-    const saved = localStorage.getItem('javid-theme') || 'glass';
-    const theme = saved === 'overdrive' ? 'overdrive' : 'glass';
+    const saved = localStorage.getItem('javid-theme') || 'orbit';
+    const theme = saved === 'overdrive' || saved === 'orbit' ? saved : 'glass';
     document.documentElement.dataset.theme = theme;
-    if (!['glass', 'aurora', 'overdrive', 'classic'].includes(saved)) {
+    if (!['orbit', 'glass', 'aurora', 'overdrive', 'classic'].includes(saved)) {
         const cached = JSON.parse(localStorage.getItem('javid-theme-vars') || 'null');
         if (cached && cached.id === saved) {
             for (const [name, value] of Object.entries(cached.tokens || {})) {
@@ -31,12 +31,18 @@ try {
             href: 'https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap' });
         document.head.appendChild(font);
     }
+    if (theme === 'orbit') {
+        const font = Object.assign(document.createElement('link'), { id: 'orbit-font', rel: 'stylesheet',
+            href: 'https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Share+Tech+Mono&display=swap' });
+        document.head.appendChild(font);
+    }
 } catch {}
 </script>
 <style>
 /* ═══════════════════════════════════════════════════════════════════════════
-   THEMES. Two looks share the component rules below, GLASS (the default) and
-   OVERDRIVE, each restyling them under its own html[data-theme]. (The rules
+   THEMES. Three looks share the component rules below, ORBIT (the default),
+   GLASS and OVERDRIVE, each restyling them under its own html[data-theme]; Orbit
+   builds on Glass's rules. (The rules
    began as the first look, Aurora's, removed 2026-11-02; Overdrive still
    builds on its values.) A colour theme from themes/ is Glass in its own colours:
    themes.py works out the variables, the page sets them on <html> (they outrank
@@ -932,6 +938,7 @@ header h1 {
 
 /* ── Orb: a sphere under a glass highlight, with rings for listening; each look restyles it ── */
 .orb-section { display: flex; flex-direction: column; align-items: center; gap: 14px; flex-shrink: 0; }
+.globe, .hud { display: none; }          /* Orbit's globe and readouts (its block shows them) */
 .orb-wrapper {
     position: relative;
     width: 168px;
@@ -1617,7 +1624,7 @@ header h1 {
 
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   GLASS (the default theme since 2026-10-26): frosted panels over a dark green
+   GLASS (the default 2026-10-26 to 11-02; Orbit is built on it): frosted panels over a dark green
    backdrop with three still glows. Every colour and size is a token in :root;
    the shared rules above take them through --violet, --violet-rgb and so on.
    - .glass is the one glass surface (tint, blur, border, shadow, radius): the
@@ -1628,9 +1635,10 @@ header h1 {
      --label 6.1:1 on glass and 4.9:1 on a pill. The old dimmer greys
      (--text-3, --text-4) are --label here, so nothing falls under 4.5:1.
    - No coloured glows except the orb's own; nothing in the background moves.
-   Every rule is scoped to html[data-theme="glass"].
+   Every rule is scoped to html:is([data-theme="glass"], [data-theme="orbit"]):
+   Orbit, further down, keeps this structure and brings its own colours and visuals.
    ═══════════════════════════════════════════════════════════════════════════ */
-html[data-theme="glass"] body {
+html:is([data-theme="glass"], [data-theme="orbit"]) body {
     background:
         radial-gradient(55% 50% at 0% 0%, var(--glow-1), transparent 72%),
         radial-gradient(50% 50% at 100% 100%, var(--glow-2), transparent 72%),
@@ -1639,7 +1647,7 @@ html[data-theme="glass"] body {
 }
 
 /* — The glass surface — */
-html[data-theme="glass"] .glass {
+html:is([data-theme="glass"], [data-theme="orbit"]) .glass {
     background: var(--glass-bg);
     -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(140%);
             backdrop-filter: blur(var(--glass-blur)) saturate(140%);
@@ -1652,7 +1660,7 @@ html[data-theme="glass"] .glass {
     :root { --glass-bg: var(--glass-fallback); }
 }
 /* Javid's bubble: its own rule outranks .glass, so the surface is restated, with the bubble's tail */
-html[data-theme="glass"] .message.javid .msg-bubble {
+html:is([data-theme="glass"], [data-theme="orbit"]) .message.javid .msg-bubble {
     background: var(--glass-bg);
     border-color: var(--glass-border);
     border-radius: 18px 18px 18px 6px;
@@ -1660,81 +1668,81 @@ html[data-theme="glass"] .message.javid .msg-bubble {
 }
 /* The chat column's top fade is a mask, which makes the column its own backdrop: a blur on the bubbles inside
    would see nothing behind them and only cost GPU time, so they keep the tint without it. */
-html[data-theme="glass"] .chat .glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .chat .glass { -webkit-backdrop-filter: none; backdrop-filter: none; }
 
 /* — Layout: the header and the chats panel float like the cards — */
-html[data-theme="glass"] header { margin: 12px 12px 0; padding: 9px 12px 9px 16px; }
-html[data-theme="glass"] .sidebar { padding: 14px 10px 14px 12px; border-right: none; background: none; }
-html[data-theme="glass"] .chats { margin: 14px 12px 12px 0; padding: 14px 12px; }
-html[data-theme="glass"] .input-row { --glass-radius: 999px; }
-html[data-theme="glass"] .input-row:focus-within {
+html:is([data-theme="glass"], [data-theme="orbit"]) header { margin: 12px 12px 0; padding: 9px 12px 9px 16px; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .sidebar { padding: 14px 10px 14px 12px; border-right: none; background: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .chats { margin: 14px 12px 12px 0; padding: 14px 12px; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .input-row { --glass-radius: 999px; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .input-row:focus-within {
     border-color: rgba(var(--violet-rgb), 0.7);
     box-shadow: var(--glass-shadow), 0 0 0 3px rgba(var(--violet-rgb), 0.22);
 }
 
 /* — Brand, avatars and type — */
-html[data-theme="glass"] header h1 { background: none; color: var(--text); }
-html[data-theme="glass"] .brand-mark,
-html[data-theme="glass"] .message.javid .msg-who::before {
+html:is([data-theme="glass"], [data-theme="orbit"]) header h1 { background: none; color: var(--text); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .brand-mark,
+html:is([data-theme="glass"], [data-theme="orbit"]) .message.javid .msg-who::before {
     background: radial-gradient(circle at 34% 28%, var(--orb-1) 0%, var(--orb-2) 12%, var(--orb-3) 38%, var(--orb-4) 72%, var(--orb-5) 100%);
     box-shadow: inset 0 -2px 5px rgba(var(--orb-shade-rgb), 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
 }
-html[data-theme="glass"] :is(.panel-title, .mem-section, .chats-group, .prov-kind, .ctl-block h3) {
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.panel-title, .mem-section, .chats-group, .prov-kind, .ctl-block h3) {
     font-size: 11px;
     font-weight: 600;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--label);
 }
-html[data-theme="glass"] .panel-title::before { content: none; }
-html[data-theme="glass"] .panel-title .link-btn { font-size: 11px; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .panel-title::before { content: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .panel-title .link-btn { font-size: 11px; }
 
 /* — Secondary buttons and chips: glass pills (a fill and an edge, no blur) — */
-html[data-theme="glass"] :is(.theme-btn, .chats-toggle, .status-pill, .lang-toggle, .talk-btn, .hf-btn, .btn-ghost,
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.theme-btn, .chats-toggle, .status-pill, .lang-toggle, .talk-btn, .hf-btn, .btn-ghost,
         .load-earlier, .suggest button, .skill-item, .msg-sources a, .mem-card button, .mc-ctl button, .orb-label) {
     background: var(--pill-bg);
     border: 1px solid var(--pill-border);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
 }
-html[data-theme="glass"] :is(.theme-btn, .chats-toggle, .talk-btn, .hf-btn, .btn-ghost, .load-earlier, .suggest button,
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.theme-btn, .chats-toggle, .talk-btn, .hf-btn, .btn-ghost, .load-earlier, .suggest button,
         .skill-item, .msg-sources a, .mem-card button, .mc-ctl button):hover:not(:disabled):not(.active):not(.running) {
     background: var(--pill-bg-hover);
     border-color: var(--pill-border-hover);
     color: var(--text);
 }
-html[data-theme="glass"] .talk-btn { color: var(--text); }
-html[data-theme="glass"] .talk-btn.active { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
-html[data-theme="glass"] .hf-btn.active,
-html[data-theme="glass"] .skill-item.running {
+html:is([data-theme="glass"], [data-theme="orbit"]) .talk-btn { color: var(--text); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .talk-btn.active { background: var(--accent); border-color: transparent; color: var(--accent-ink); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .hf-btn.active,
+html:is([data-theme="glass"], [data-theme="orbit"]) .skill-item.running {
     background: var(--accent-soft);
     border-color: rgba(var(--violet-rgb), 0.55);
     color: var(--violet-soft);
     box-shadow: none;
     animation: none;
 }
-html[data-theme="glass"] .lang-toggle button.on {
+html:is([data-theme="glass"], [data-theme="orbit"]) .lang-toggle button.on {
     background: rgba(255, 255, 255, 0.14);
     color: var(--text);
     box-shadow: inset 0 0 0 1px rgba(var(--violet-rgb), 0.5);
 }
 
 /* — Primary buttons: solid accent, dark text — */
-html[data-theme="glass"] :is(.new-chat-btn, .send-btn, .chats-new, .mem-card button.approve, .te-save) {
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.new-chat-btn, .send-btn, .chats-new, .mem-card button.approve, .te-save) {
     border: 1px solid transparent;
     background: var(--accent);
     color: var(--accent-ink);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 6px 16px -8px rgba(0, 0, 0, 0.55);
 }
-html[data-theme="glass"] :is(.new-chat-btn, .send-btn, .chats-new, .mem-card button.approve, .te-save):hover:not(:disabled) {
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.new-chat-btn, .send-btn, .chats-new, .mem-card button.approve, .te-save):hover:not(:disabled) {
     background: var(--accent-hover);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35), 0 8px 18px -8px rgba(0, 0, 0, 0.6);
 }
-html[data-theme="glass"] .chats-new span.plus { background: rgba(6, 18, 14, 0.14); color: var(--accent-ink); }
-html[data-theme="glass"] .task-item.done .check-btn,
-html[data-theme="glass"] .src-n { color: var(--accent-ink); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .chats-new span.plus { background: rgba(6, 18, 14, 0.14); color: var(--accent-ink); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .task-item.done .check-btn,
+html:is([data-theme="glass"], [data-theme="orbit"]) .src-n { color: var(--accent-ink); }
 
 /* — Messages — */
-html[data-theme="glass"] .message.user .msg-bubble {
+html:is([data-theme="glass"], [data-theme="orbit"]) .message.user .msg-bubble {
     border: 1px solid var(--user-border);
     background: var(--user-bubble);
     color: var(--text);
@@ -1742,7 +1750,7 @@ html[data-theme="glass"] .message.user .msg-bubble {
 }
 
 /* — Orb: a glass sphere. The state animations are the old ones at about half the movement — */
-html[data-theme="glass"] .orb {
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb {
     background: radial-gradient(circle at 34% 28%, var(--orb-1) 0%, var(--orb-2) 12%, var(--orb-3) 38%, var(--orb-4) 72%, var(--orb-5) 100%);
     box-shadow:
         inset 0 -16px 30px rgba(var(--orb-shade-rgb), 0.55),
@@ -1751,56 +1759,297 @@ html[data-theme="glass"] .orb {
         0 22px 44px -16px rgba(0, 0, 0, 0.7),
         0 0 48px rgba(var(--violet-rgb), 0.18);
 }
-html[data-theme="glass"] .orb::after {
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb::after {
     background:
         radial-gradient(circle at 36% 25%, rgba(255, 255, 255, 0.9) 0 3.5%, rgba(255, 255, 255, 0.28) 10%, transparent 26%),
         radial-gradient(70% 38% at 50% 96%, rgba(var(--orb-2-rgb), 0.3), transparent 70%);
 }
-html[data-theme="glass"] .orb.idle      { animation: glass-breathe 5s ease-in-out infinite; }
-html[data-theme="glass"] .orb.listening { filter: brightness(1.06) saturate(1.1); animation: glass-pulse 1s ease-in-out infinite; }
-html[data-theme="glass"] .orb.thinking  { filter: hue-rotate(14deg); animation: glass-think 1.6s ease-in-out infinite; }
-html[data-theme="glass"] .orb.speaking  { filter: brightness(1.08); animation: glass-wave 0.42s ease-in-out infinite alternate; }
-html[data-theme="glass"] .orb.standby   { filter: saturate(0.6) brightness(0.8); animation: glass-breathe 6s ease-in-out infinite; }
-html[data-theme="glass"] .orb.followup  { animation: glass-breathe 2.4s ease-in-out infinite; }
-html[data-theme="glass"] .orb.listening ~ .orb-ring:nth-child(2) { border-color: rgba(var(--violet-rgb), 0.45); animation: glass-ring 1.8s ease-out infinite; }
-html[data-theme="glass"] .orb.listening ~ .orb-ring:nth-child(3) { border-color: rgba(var(--violet-rgb), 0.3); animation: glass-ring 1.8s ease-out 0.9s infinite; }
-html[data-theme="glass"] .orb.followup ~ .orb-ring:nth-child(2) { border-color: rgba(var(--violet-rgb), 0.3); animation: glass-ring 2.4s ease-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.idle      { animation: glass-breathe 5s ease-in-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.listening { filter: brightness(1.06) saturate(1.1); animation: glass-pulse 1s ease-in-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.thinking  { filter: hue-rotate(14deg); animation: glass-think 1.6s ease-in-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.speaking  { filter: brightness(1.08); animation: glass-wave 0.42s ease-in-out infinite alternate; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.standby   { filter: saturate(0.6) brightness(0.8); animation: glass-breathe 6s ease-in-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.followup  { animation: glass-breathe 2.4s ease-in-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.listening ~ .orb-ring:nth-child(2) { border-color: rgba(var(--violet-rgb), 0.45); animation: glass-ring 1.8s ease-out infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.listening ~ .orb-ring:nth-child(3) { border-color: rgba(var(--violet-rgb), 0.3); animation: glass-ring 1.8s ease-out 0.9s infinite; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb.followup ~ .orb-ring:nth-child(2) { border-color: rgba(var(--violet-rgb), 0.3); animation: glass-ring 2.4s ease-out infinite; }
 @keyframes glass-breathe { 50% { transform: scale(1.02); } }
 @keyframes glass-pulse   { 50% { transform: scale(1.035); } }
 @keyframes glass-think   { 50% { transform: scale(1.015); filter: hue-rotate(14deg) brightness(1.1); } }
 @keyframes glass-wave    { to  { transform: scale(1.035); } }
 @keyframes glass-ring    { 0% { transform: scale(1); opacity: 0.6; } 100% { transform: scale(1.35); opacity: 0; } }
-html[data-theme="glass"] .orb-label { color: var(--label); }
-html[data-theme="glass"] .orb-label.listening,
-html[data-theme="glass"] .orb-label.followup { color: var(--accent-text); border-color: rgba(var(--violet-rgb), 0.45); }
-html[data-theme="glass"] .orb-label.thinking { color: var(--cyan-soft); border-color: rgba(var(--cyan-rgb), 0.4); }
-html[data-theme="glass"] .orb-label.speaking { color: var(--violet-soft); border-color: rgba(var(--violet-rgb), 0.45); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb-label { color: var(--label); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb-label.listening,
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb-label.followup { color: var(--accent-text); border-color: rgba(var(--violet-rgb), 0.45); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb-label.thinking { color: var(--cyan-soft); border-color: rgba(var(--cyan-rgb), 0.4); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .orb-label.speaking { color: var(--violet-soft); border-color: rgba(var(--violet-rgb), 0.45); }
 
 /* — The old theme's coloured glows, off — */
-html[data-theme="glass"] :is(.status-dot, .status-pill.down .status-dot, .m-dot.serving, .model-card.serving, .mem-card) { box-shadow: none; }
-html[data-theme="glass"] .ring { box-shadow: 0 16px 50px rgba(0, 0, 0, 0.55); }
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.status-dot, .status-pill.down .status-dot, .m-dot.serving, .model-card.serving, .mem-card) { box-shadow: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .ring { box-shadow: 0 16px 50px rgba(0, 0, 0, 0.55); }
 
 /* — Readable when dimmed: past events and switched-off providers keep 4.5:1 — */
-html[data-theme="glass"] .event-item.past { opacity: 1; color: var(--label); }
-html[data-theme="glass"] .event-item.past .event-time { background: rgba(255, 255, 255, 0.05); color: var(--label); }
-html[data-theme="glass"] :is(.model-card.missing, .model-card.disabled, .model-card.nokey) { opacity: 0.8; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .event-item.past { opacity: 1; color: var(--label); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .event-item.past .event-time { background: rgba(255, 255, 255, 0.05); color: var(--label); }
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.model-card.missing, .model-card.disabled, .model-card.nokey) { opacity: 0.8; }
 
 /* — Dialogs: a solid card over a dark scrim (no blur: only the panels above have one) — */
-html[data-theme="glass"] .modal { background: var(--scrim); -webkit-backdrop-filter: none; backdrop-filter: none; }
-html[data-theme="glass"] .modal-card { background: var(--bg-elev); border-color: var(--glass-border); }
-html[data-theme="glass"] .chats-search {
+html:is([data-theme="glass"], [data-theme="orbit"]) .modal { background: var(--scrim); -webkit-backdrop-filter: none; backdrop-filter: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .modal-card { background: var(--bg-elev); border-color: var(--glass-border); }
+html:is([data-theme="glass"], [data-theme="orbit"]) .chats-search {
     background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%239CB5AA' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E");
 }
 
 /* — Keyboard focus: an accent ring on everything (fields with their own accent ring keep that one) — */
-html[data-theme="glass"] :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-html[data-theme="glass"] :is(.text-input, .chats-search, .add-task, .key-input, .ctl-row select, .te-field input[type="text"]):focus-visible { outline: none; }
+html:is([data-theme="glass"], [data-theme="orbit"]) :focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.text-input, .chats-search, .add-task, .key-input, .ctl-row select, .te-field input[type="text"]):focus-visible { outline: none; }
 
 @media (prefers-reduced-motion: reduce) {
-    html[data-theme="glass"] *,
-    html[data-theme="glass"] *::before,
-    html[data-theme="glass"] *::after { animation: none !important; transition: none !important; }
+    html:is([data-theme="glass"], [data-theme="orbit"]) *,
+    html:is([data-theme="glass"], [data-theme="orbit"]) *::before,
+    html:is([data-theme="glass"], [data-theme="orbit"]) *::after { animation: none !important; transition: none !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ORBIT (the default since 2026-11-02): a sci-fi look on Glass's structure.
+   Every Glass rule above also serves Orbit (html:is(...)); this block brings
+   deep space with a perspective grid, HUD-style panels and type, and a
+   holographic globe in place of the orb (canvas #globe, orbitGlobe in the
+   script): dotted continents, a pulse on Dhaka, satellites on tilted orbits and
+   a ring of letters naming the state; light arcs out from Dhaka while Javid
+   thinks. Its colours were derived and checked like a colour theme's
+   (themes.derive): text 13.8:1 on the panels, labels at least 4.7:1. Nothing in
+   the background moves; the globe pauses with the tab, draws at 30 fps while
+   resting and stands still under reduced motion.
+   ═══════════════════════════════════════════════════════════════════════════ */
+html[data-theme="orbit"] {
+    --bg: #03070F;
+    --glow-1: rgba(29, 78, 216, .24);            /* nebulae: blue, top left */
+    --glow-2: rgba(124, 58, 237, .16);           /* violet, bottom right */
+    --glow-3: rgba(14, 165, 233, .09);           /* sky, top centre */
+    --accent: #38E1FF;
+    --accent-hover: #6BEAFF;
+    --accent-ink: #031018;                       /* on the accent: 12.8:1; on its blue end 5.3:1 */
+    --accent-soft: rgba(56, 225, 255, .14);
+    --accent-text: #38E1FF;
+    --user-bubble: rgba(56, 225, 255, .14);
+    --user-border: rgba(56, 225, 255, .5);
+    --text: #EAF4FF;
+    --text-2: #CFDCEC;
+    --label: #8EA4BF;
+    --glass-blur: 14px;
+    --glass-bg: linear-gradient(180deg, rgba(120, 200, 255, .06), rgba(120, 200, 255, .015)), rgba(5, 10, 20, .7);
+    --glass-border: rgba(56, 225, 255, .16);
+    --glass-shadow: inset 0 1px 0 rgba(160, 230, 255, .08), 0 12px 32px -14px rgba(0, 0, 0, .7);
+    --glass-radius: 12px;
+    --glass-fallback: rgba(8, 14, 26, .95);
+    --pill-bg: rgba(56, 225, 255, .05);
+    --pill-bg-hover: rgba(56, 225, 255, .12);
+    --pill-border: rgba(56, 225, 255, .22);
+    --pill-border-hover: rgba(56, 225, 255, .6);
+    --scrim: rgba(1, 3, 8, .82);
+    --bg-elev: #0A1322;
+    --glass: rgba(5, 10, 20, .7);
+    --glass-strong: rgba(5, 10, 20, .85);
+    --line: rgba(56, 225, 255, .1);
+    --line-strong: rgba(56, 225, 255, .2);
+    --violet: #38E1FF;
+    --violet-soft: #A9F1FF;
+    --violet-rgb: 56, 225, 255;
+    --blue: #4D7CFF;
+    --blue-rgb: 77, 124, 255;
+    --cyan: #38E1FF;
+    --cyan-soft: #A9F1FF;
+    --cyan-rgb: 56, 225, 255;
+    --mint: #4ADE80;
+    --mint-rgb: 74, 222, 128;
+    --grad: linear-gradient(135deg, #38E1FF, #4D7CFF);
+    --grad-soft: linear-gradient(135deg, rgba(56, 225, 255, .16), rgba(77, 124, 255, .08));
+    --ring-focus: 0 0 0 3px rgba(56, 225, 255, .3);
+    --font-display: 'Orbitron', 'Sora', 'Inter', system-ui, sans-serif;
+    --hud: 'Share Tech Mono', 'JetBrains Mono', ui-monospace, monospace;
+}
+/* Deep space: two tiles of stars over the nebulae; a perspective grid fades in from the bottom. All still. */
+html[data-theme="orbit"] body {
+    background:
+        url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='300'%20height='300'%3E%3Ccircle%20cx='170'%20cy='295'%20r='0.6'%20fill='%23a9f1ff'%20opacity='0.57'/%3E%3Ccircle%20cx='36'%20cy='13'%20r='0.8'%20fill='%23a9f1ff'%20opacity='0.35'/%3E%3Ccircle%20cx='281'%20cy='299'%20r='0.7'%20fill='%23a9f1ff'%20opacity='0.74'/%3E%3Ccircle%20cx='239'%20cy='270'%20r='0.7'%20fill='%23a9f1ff'%20opacity='0.60'/%3E%3Ccircle%20cx='122'%20cy='240'%20r='0.7'%20fill='%23a9f1ff'%20opacity='0.65'/%3E%3Ccircle%20cx='164'%20cy='299'%20r='0.4'%20fill='%23a9f1ff'%20opacity='0.29'/%3E%3Ccircle%20cx='263'%20cy='22'%20r='0.8'%20fill='%23fff'%20opacity='0.52'/%3E%3Ccircle%20cx='297'%20cy='6'%20r='0.6'%20fill='%23fff'%20opacity='0.53'/%3E%3Ccircle%20cx='21'%20cy='254'%20r='0.8'%20fill='%23fff'%20opacity='0.55'/%3E%3Ccircle%20cx='36'%20cy='67'%20r='0.7'%20fill='%23fff'%20opacity='0.65'/%3E%3Ccircle%20cx='30'%20cy='265'%20r='0.7'%20fill='%23fff'%20opacity='0.47'/%3E%3Ccircle%20cx='37'%20cy='193'%20r='0.7'%20fill='%23fff'%20opacity='0.33'/%3E%3Ccircle%20cx='217'%20cy='97'%20r='0.5'%20fill='%23fff'%20opacity='0.60'/%3E%3Ccircle%20cx='7'%20cy='148'%20r='0.9'%20fill='%23fff'%20opacity='0.61'/%3E%3Ccircle%20cx='103'%20cy='246'%20r='0.6'%20fill='%23fff'%20opacity='0.45'/%3E%3Ccircle%20cx='69'%20cy='126'%20r='0.5'%20fill='%23fff'%20opacity='0.25'/%3E%3Ccircle%20cx='90'%20cy='49'%20r='0.8'%20fill='%23fff'%20opacity='0.32'/%3E%3Ccircle%20cx='280'%20cy='138'%20r='0.7'%20fill='%23fff'%20opacity='0.50'/%3E%3Ccircle%20cx='230'%20cy='28'%20r='0.7'%20fill='%23fff'%20opacity='0.67'/%3E%3Ccircle%20cx='55'%20cy='100'%20r='0.8'%20fill='%23fff'%20opacity='0.34'/%3E%3Ccircle%20cx='216'%20cy='115'%20r='0.6'%20fill='%23fff'%20opacity='0.59'/%3E%3Ccircle%20cx='88'%20cy='219'%20r='0.7'%20fill='%23fff'%20opacity='0.49'/%3E%3Ccircle%20cx='197'%20cy='105'%20r='0.8'%20fill='%23fff'%20opacity='0.66'/%3E%3Ccircle%20cx='145'%20cy='138'%20r='0.4'%20fill='%23fff'%20opacity='0.61'/%3E%3Ccircle%20cx='152'%20cy='79'%20r='0.6'%20fill='%23fff'%20opacity='0.28'/%3E%3Ccircle%20cx='169'%20cy='247'%20r='0.8'%20fill='%23fff'%20opacity='0.61'/%3E%3Ccircle%20cx='59'%20cy='101'%20r='0.7'%20fill='%23fff'%20opacity='0.31'/%3E%3Ccircle%20cx='282'%20cy='280'%20r='0.7'%20fill='%23fff'%20opacity='0.26'/%3E%3Ccircle%20cx='263'%20cy='234'%20r='0.9'%20fill='%23fff'%20opacity='0.53'/%3E%3Ccircle%20cx='246'%20cy='243'%20r='0.7'%20fill='%23fff'%20opacity='0.57'/%3E%3Ccircle%20cx='295'%20cy='248'%20r='0.5'%20fill='%23fff'%20opacity='0.51'/%3E%3Ccircle%20cx='279'%20cy='245'%20r='0.7'%20fill='%23fff'%20opacity='0.50'/%3E%3Ccircle%20cx='204'%20cy='153'%20r='0.6'%20fill='%23fff'%20opacity='0.35'/%3E%3Ccircle%20cx='300'%20cy='176'%20r='0.6'%20fill='%23fff'%20opacity='0.51'/%3E%3Ccircle%20cx='83'%20cy='207'%20r='0.8'%20fill='%23fff'%20opacity='0.40'/%3E%3Ccircle%20cx='33'%20cy='248'%20r='0.7'%20fill='%23fff'%20opacity='0.67'/%3E%3Ccircle%20cx='216'%20cy='198'%20r='0.4'%20fill='%23fff'%20opacity='0.34'/%3E%3Ccircle%20cx='284'%20cy='224'%20r='0.6'%20fill='%23fff'%20opacity='0.43'/%3E%3Ccircle%20cx='102'%20cy='256'%20r='0.8'%20fill='%23fff'%20opacity='0.41'/%3E%3Ccircle%20cx='260'%20cy='10'%20r='0.8'%20fill='%23fff'%20opacity='0.53'/%3E%3Ccircle%20cx='85'%20cy='270'%20r='0.8'%20fill='%23fff'%20opacity='0.51'/%3E%3Ccircle%20cx='246'%20cy='159'%20r='0.8'%20fill='%23fff'%20opacity='0.41'/%3E%3Ccircle%20cx='290'%20cy='228'%20r='0.6'%20fill='%23fff'%20opacity='0.43'/%3E%3Ccircle%20cx='86'%20cy='213'%20r='0.7'%20fill='%23fff'%20opacity='0.45'/%3E%3C/svg%3E") 0 0 / 300px 300px,
+        url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20width='520'%20height='520'%3E%3Ccircle%20cx='380'%20cy='69'%20r='1.2'%20fill='%23a9f1ff'%20opacity='0.85'/%3E%3Ccircle%20cx='402'%20cy='215'%20r='0.9'%20fill='%23a9f1ff'%20opacity='0.80'/%3E%3Ccircle%20cx='149'%20cy='350'%20r='1.0'%20fill='%23a9f1ff'%20opacity='0.73'/%3E%3Ccircle%20cx='240'%20cy='156'%20r='1.1'%20fill='%23a9f1ff'%20opacity='0.85'/%3E%3Ccircle%20cx='415'%20cy='437'%20r='1.0'%20fill='%23fff'%20opacity='0.50'/%3E%3Ccircle%20cx='491'%20cy='413'%20r='0.9'%20fill='%23fff'%20opacity='0.50'/%3E%3Ccircle%20cx='18'%20cy='321'%20r='1.0'%20fill='%23fff'%20opacity='0.74'/%3E%3Ccircle%20cx='107'%20cy='267'%20r='1.1'%20fill='%23fff'%20opacity='0.84'/%3E%3Ccircle%20cx='299'%20cy='194'%20r='1.1'%20fill='%23fff'%20opacity='0.69'/%3E%3Ccircle%20cx='3'%20cy='50'%20r='1.3'%20fill='%23fff'%20opacity='0.52'/%3E%3Ccircle%20cx='264'%20cy='17'%20r='0.9'%20fill='%23fff'%20opacity='0.58'/%3E%3Ccircle%20cx='184'%20cy='471'%20r='1.3'%20fill='%23fff'%20opacity='0.52'/%3E%3Ccircle%20cx='32'%20cy='373'%20r='1.0'%20fill='%23fff'%20opacity='0.86'/%3E%3Ccircle%20cx='418'%20cy='181'%20r='1.3'%20fill='%23fff'%20opacity='0.68'/%3E%3Ccircle%20cx='147'%20cy='112'%20r='1.0'%20fill='%23fff'%20opacity='0.56'/%3E%3Ccircle%20cx='360'%20cy='191'%20r='1.4'%20fill='%23fff'%20opacity='0.57'/%3E%3C/svg%3E") 37px 61px / 520px 520px,
+        radial-gradient(60% 50% at 0% 0%, var(--glow-1), transparent 70%),
+        radial-gradient(55% 50% at 100% 100%, var(--glow-2), transparent 72%),
+        radial-gradient(40% 32% at 50% 0%, var(--glow-3), transparent 75%),
+        var(--bg);
+}
+html[data-theme="orbit"] body::before {
+    content: '';
+    position: fixed;
+    left: -50%;
+    right: -50%;
+    bottom: -12%;
+    height: 52%;
+    z-index: 0;
+    pointer-events: none;
+    background:
+        linear-gradient(rgba(56, 225, 255, .1) 1px, transparent 1px) 0 0 / 100% 46px,
+        linear-gradient(90deg, rgba(56, 225, 255, .1) 1px, transparent 1px) 0 0 / 46px 100%;
+    transform: perspective(420px) rotateX(62deg);
+    transform-origin: 50% 100%;
+    -webkit-mask-image: linear-gradient(to top, rgba(0, 0, 0, .85), transparent 78%);
+            mask-image: linear-gradient(to top, rgba(0, 0, 0, .85), transparent 78%);
+}
+
+/* — HUD frame: a bright corner bracket at two corners of the header, each card and the chats panel — */
+html[data-theme="orbit"] .chats { position: relative; }
+html[data-theme="orbit"] :is(header, .panel, .chats)::before,
+html[data-theme="orbit"] :is(header, .panel, .chats)::after {
+    content: '';
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    border: 0 solid rgba(56, 225, 255, .75);
+    pointer-events: none;
+}
+html[data-theme="orbit"] :is(header, .panel, .chats)::before {
+    top: 0;
+    left: 0;
+    border-top-width: 2px;
+    border-left-width: 2px;
+    border-top-left-radius: calc(var(--glass-radius) - 1px);
+}
+html[data-theme="orbit"] :is(header, .panel, .chats)::after {
+    right: 0;
+    bottom: 0;
+    border-right-width: 2px;
+    border-bottom-width: 2px;
+    border-bottom-right-radius: calc(var(--glass-radius) - 1px);
+}
+
+/* — Type: Orbitron for the name, a terminal face for labels and readouts; replies stay in Inter — */
+html[data-theme="orbit"] header h1 {
+    font-family: var(--font-display);
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: .42em;
+    text-shadow: 0 0 14px rgba(56, 225, 255, .55);
+}
+html[data-theme="orbit"] :is(.panel-title, .mem-section, .chats-group, .prov-kind, .ctl-block h3, .theme-group,
+        .status-pill, .orb-label, .msg-who, .talk-btn, .hf-btn, .stop-btn) {
+    font-family: var(--hud);
+    font-weight: 400;
+}
+html[data-theme="orbit"] :is(.panel-title, .mem-section, .chats-group, .prov-kind, .ctl-block h3, .theme-group) { letter-spacing: .16em; }
+html[data-theme="orbit"] .panel-title::before {
+    content: '';
+    width: 3px;
+    height: 10px;
+    border-radius: 1px;
+    background: var(--accent);
+    box-shadow: 0 0 8px rgba(56, 225, 255, .8);
+}
+html[data-theme="orbit"] :is(.talk-btn, .hf-btn, .stop-btn) { letter-spacing: .08em; text-transform: uppercase; }
+html[data-theme="orbit"] .orb-label { letter-spacing: .24em; }
+html[data-theme="orbit"] .msg-who { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; }
+
+/* — The brand mark and Javid's avatar: a little orbit — */
+html[data-theme="orbit"] .brand-mark {
+    position: relative;
+    border: 1.5px solid rgba(56, 225, 255, .7);
+    background: radial-gradient(circle, #EAF4FF 0 2.5px, rgba(56, 225, 255, .9) 3.5px, rgba(56, 225, 255, .15) 5px, transparent 7px);
+    box-shadow: 0 0 12px rgba(56, 225, 255, .45);
+}
+html[data-theme="orbit"] .brand-mark::after {
+    content: '';
+    position: absolute;
+    top: -3px;
+    left: 50%;
+    width: 5px;
+    height: 5px;
+    margin-left: -2.5px;
+    border-radius: 50%;
+    background: #EAF4FF;
+    box-shadow: 0 0 6px #38E1FF;
+    transform-origin: 2.5px 15.5px;
+    animation: orbit-spin 4s linear infinite;
+}
+@keyframes orbit-spin { to { transform: rotate(360deg); } }
+html[data-theme="orbit"] .message.javid .msg-who::before {
+    background: radial-gradient(circle, #EAF4FF 0 1.5px, #38E1FF 2.5px, rgba(56, 225, 255, .25) 3.5px, transparent 5px);
+    box-shadow: 0 0 0 1px rgba(56, 225, 255, .7), 0 0 8px rgba(56, 225, 255, .45);
+}
+
+/* — Messages: Javid's carry a signal line on the left — */
+html[data-theme="orbit"] .message.javid .msg-bubble { border-left: 2px solid rgba(56, 225, 255, .75); border-radius: 4px 16px 16px 16px; }
+html[data-theme="orbit"] .message.user .msg-bubble { border-radius: 16px 4px 16px 16px; }
+
+/* — Primary buttons: cyan into blue, dark text, a faint glow — */
+html[data-theme="orbit"] :is(.new-chat-btn, .send-btn, .chats-new, .mem-card button.approve, .te-save) {
+    background: linear-gradient(135deg, #38E1FF, #4D7CFF);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35), 0 0 18px -4px rgba(56, 225, 255, .55);
+}
+html[data-theme="orbit"] :is(.new-chat-btn, .send-btn, .chats-new, .mem-card button.approve, .te-save):hover:not(:disabled) {
+    background: linear-gradient(135deg, #6BEAFF, #6F95FF);
+}
+html[data-theme="orbit"] .chats-new span.plus { background: rgba(255, 255, 255, .22); }     /* lighter: 7:1 even at the blue end */
+
+/* — The globe in place of the orb; the orb itself stays (setOrb's classes) but isn't drawn — */
+html[data-theme="orbit"] .orb-section { position: relative; }
+html[data-theme="orbit"] .orb-wrapper { width: 236px; height: 220px; }
+html[data-theme="orbit"] .orb { opacity: 0; animation: none !important; }
+html[data-theme="orbit"] .globe {
+    display: block;
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    z-index: 2;
+    width: 236px;
+    height: 236px;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+html[data-theme="orbit"] .orb-ring { inset: auto; left: 50%; top: 50%; width: 128px; height: 128px; margin: -64px 0 0 -64px; }
+html[data-theme="orbit"] .orb-wrapper::after {      /* a scan line sweeping down the globe */
+    content: '';
+    position: absolute;
+    left: 10%;
+    right: 10%;
+    top: 0;
+    z-index: 3;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(56, 225, 255, .6), transparent);
+    box-shadow: 0 0 8px rgba(56, 225, 255, .5);
+    pointer-events: none;
+    animation: orbit-scan 6s ease-in-out infinite;
+}
+@keyframes orbit-scan {
+    0%       { transform: translateY(14px); opacity: 0; }
+    12%      { opacity: .75; }
+    50%      { transform: translateY(206px); opacity: .75; }
+    62%, 100% { transform: translateY(206px); opacity: 0; }
+}
+/* Readouts beside the globe: home and the local time, the reply language */
+html[data-theme="orbit"] .hud {
+    display: block;
+    position: absolute;
+    top: 82px;
+    font: 11px/1.7 var(--hud);
+    letter-spacing: .12em;
+    color: var(--label);
+    white-space: nowrap;
+    pointer-events: none;
+}
+html[data-theme="orbit"] .hud-left { right: calc(100% + 26px); text-align: right; }
+html[data-theme="orbit"] .hud-right { left: calc(100% + 26px); }
+html[data-theme="orbit"] .hud-k { color: var(--accent-text); }
+html[data-theme="orbit"] .hud::after {          /* a short line pointing at the globe */
+    content: '';
+    position: absolute;
+    top: 9px;
+    width: 18px;
+    height: 1px;
+    background: linear-gradient(90deg, rgba(56, 225, 255, .7), rgba(56, 225, 255, .1));
+}
+html[data-theme="orbit"] .hud-left::after { left: calc(100% + 6px); }
+html[data-theme="orbit"] .hud-right::after { right: calc(100% + 6px); transform: scaleX(-1); }
+@media (max-width: 1180px) { html[data-theme="orbit"] .hud { display: none; } }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    OVERDRIVE theme: black and red, angular panels, a reactor core for the orb.
@@ -2430,8 +2679,11 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
                 <div id="orb" class="orb idle"></div>
                 <div class="orb-ring"></div>
                 <div class="orb-ring"></div>
+                <canvas id="globe" class="globe" aria-hidden="true"></canvas>
             </div>
             <span id="orb-label" class="orb-label idle">Ready</span>
+            <div class="hud hud-left" aria-hidden="true"><span class="hud-k">HOME</span> DHAKA<br>23.81°N 90.41°E</div>
+            <div class="hud hud-right" aria-hidden="true"><span class="hud-k">LOCAL</span> <span id="hud-clock">--:--:--</span><br>LANG <span id="hud-lang">EN</span> · SAT 03</div>
         </div>
 
         <!-- Hold-to-talk -->
@@ -2573,10 +2825,15 @@ const ORB_STATES = {
     followup:  { label: 'Go ahead…',    cls: 'followup' },
 };
 
-// Overdrive's own words for the same states.
+// Overdrive's and Orbit's own words for the same states.
 const OD_LABELS = {
     idle: 'Armed', listening: 'Target locked · listening', thinking: 'Processing',
     speaking: 'Transmitting', standby: 'Standby · say “Javid”', followup: 'Go',
+};
+const LOOK_LABELS = {
+    overdrive: OD_LABELS,
+    orbit: { idle: 'Online', listening: 'Receiving…', thinking: 'Computing…', speaking: 'Transmitting…',
+             standby: 'Standby · say “Javid”', followup: 'Channel open' },
 };
 
 function setOrb(state) {
@@ -2585,8 +2842,530 @@ function setOrb(state) {
     const label = document.getElementById('orb-label');
     orb.className   = `orb ${s.cls}`;
     label.className = `orb-label ${s.cls}`;
-    label.textContent = (document.documentElement.dataset.theme === 'overdrive' && OD_LABELS[state]) || s.label;
+    label.textContent = (LOOK_LABELS[document.documentElement.dataset.theme] || {})[state] || s.label;
 }
+
+// ── Orbit's globe: the orb in the Orbit look, drawn on the canvas #globe ─────
+// A holographic Earth: the dots of a Fibonacci sphere that fall on land (rough continent outlines, with Hudson Bay and
+// the inland seas cut out), turning eastward; a pulse on Dhaka, Javid's home; satellites on tilted orbits with fading
+// trails; a ring of letters naming the state (read from #orb's class, which setOrb sets); and while Javid thinks, light
+// running out along arcs from Dhaka to cities around the world. What's behind the globe shows dimly through it. It
+// draws only while Orbit is the look and the tab is visible, at 30 fps while resting; with reduced motion, one still
+// frame each time the state changes.
+const orbitGlobe = (() => {
+    const LAND = [          // rough outlines, [lon, lat, lon, lat, ...]
+        // north america
+        [-166, 68, -156, 71, -140, 70, -125, 70, -110, 68, -95, 70, -82, 69, -75, 62, -65, 60, -60, 54, -56, 50, -64,
+         46, -70, 43, -74, 40, -76, 36, -81, 31, -80, 26, -82, 28, -85, 30, -89, 30, -94, 29, -97, 26, -97, 21, -95,
+         18, -90, 19, -87, 21, -88, 16, -84, 15, -83, 10, -78, 8, -80, 7, -84, 9, -87, 13, -92, 15, -96, 16, -105, 20,
+         -106, 23, -112, 29, -115, 31, -117, 32, -121, 35, -123, 38, -124, 42, -124, 47, -127, 50, -131, 54, -136, 58,
+         -141, 60, -147, 61, -152, 59, -158, 57, -162, 55, -158, 59, -164, 60, -165, 64, -166, 68],
+        // greenland
+        [-52, 60, -44, 60, -42, 63, -38, 66, -32, 68, -22, 70, -20, 75, -18, 80, -30, 83, -45, 83, -60, 82, -68, 78,
+         -72, 77, -66, 76, -58, 75, -54, 71, -52, 68, -54, 65, -52, 60],
+        // baffin
+        [-80, 73, -72, 71, -66, 68, -62, 66, -66, 62, -72, 64, -78, 64, -82, 66, -88, 70, -80, 73],
+        // victoria
+        [-118, 69, -104, 68, -101, 70, -106, 73, -115, 73, -118, 69],
+        // ellesmere
+        [-90, 76, -78, 76, -62, 80, -62, 82, -80, 83, -92, 81, -90, 76],
+        // south america
+        [-80, 9, -77, 8, -72, 12, -64, 11, -61, 10.5, -58, 7, -52, 5, -50, 1, -44, -2, -38, -4, -35, -6, -35, -9, -39,
+         -14, -39, -18, -41, -22, -45, -24, -48, -27, -50, -30, -53, -34, -58, -35, -57, -38, -62, -39, -65, -42, -64,
+         -45, -67, -47, -66, -50, -69, -52, -68, -55, -72, -54, -74, -50, -75, -46, -73, -42, -73, -37, -71, -32, -71,
+         -25, -70, -18, -75, -15, -77, -11, -80, -6, -81, -4, -80, -1, -78, 2, -77, 6, -80, 9],
+        // eurasia
+        [-9, 37, -9, 43, -2, 43.5, -1, 46, -4.5, 48, 2, 51, 5, 53, 8, 54, 8.5, 57, 10.5, 57.7, 7, 58, 5, 59, 5, 61, 6,
+         62.5, 8, 63.5, 11, 64.5, 13, 66, 15, 68, 17, 69.5, 20, 70, 25, 71, 28, 71, 31, 70, 33, 69.3, 36, 69, 40, 68,
+         41, 66.5, 38, 66, 35, 66.5, 33, 66, 34, 64.5, 37, 64, 41, 64.5, 44, 66, 44, 68, 50, 68, 55, 68.5, 60, 69, 66,
+         69, 68, 71, 73, 73, 80, 73, 87, 75, 98, 76.5, 104, 77.7, 113, 74, 120, 73, 129, 72, 140, 72, 150, 71, 160, 70,
+         170, 70, 180, 69, 180, 65, 177, 62, 170, 60, 164, 59.5, 163, 56, 162, 54, 159, 51.5, 156, 51, 156, 57, 155,
+         59, 151, 59.5, 143, 59, 138, 56, 141, 52, 140, 48.5, 138, 46, 135, 43.5, 132, 43, 130, 42, 129.5, 39.5, 129.5,
+         36, 127, 34.5, 126, 37, 125, 39, 121.5, 39, 122, 40.5, 120, 40, 118, 39, 119, 37, 122.5, 37.4, 120, 35, 121,
+         32, 122, 30, 120, 27, 117, 24, 114, 22.3, 110.5, 21, 110, 20, 108.5, 21.5, 106, 20, 106.5, 18, 108.5, 15,
+         109.3, 12, 107, 10.5, 105, 8.7, 104.8, 10, 103, 10.5, 101, 12.5, 100, 13.5, 99.2, 10, 100.5, 7, 103.5, 4,
+         104.2, 1.4, 103, 1.3, 101, 2.8, 100, 5, 98.5, 8, 98.5, 11, 97.5, 16, 95, 16, 94, 18, 94, 19.5, 92, 22, 90, 22,
+         88.5, 21.7, 87, 21.4, 86, 19.8, 84, 18.3, 82, 16.5, 80, 15.5, 80, 13, 79.8, 10.5, 78, 8.1, 76.5, 8.8, 75, 12,
+         74, 15, 73, 17, 72.6, 20, 72.8, 21.4, 70.5, 21, 69, 22.3, 68.2, 23.7, 66.5, 25.3, 64, 25.3, 61.5, 25.2, 57.5,
+         25.7, 56.4, 27.2, 54.5, 26.6, 52.5, 27.6, 51, 28.8, 50, 30.1, 48.5, 30, 48, 29.3, 48.5, 28, 49.6, 26.9, 50.8,
+         24.8, 51.6, 24.2, 53, 24.1, 55.5, 25.5, 56.3, 25.3, 56.8, 24, 58.6, 23.6, 59.8, 22.4, 58.5, 20.5, 57.7, 19,
+         56.6, 18, 55, 17, 52.2, 15.6, 49, 14.4, 45, 13, 43.5, 12.7, 42.8, 14.5, 41, 17.5, 39, 21, 38, 23.8, 36.5,
+         25.8, 35, 28, 34.9, 29.5, 34.2, 31.3, 35, 32.8, 35.9, 35.2, 36, 36.4, 34, 36.2, 32.5, 36.1, 30.5, 36.7, 28,
+         36.7, 27.2, 37.3, 26.4, 39.2, 26.2, 40.2, 25, 40.8, 23.5, 40.3, 22.6, 39, 23.2, 38.2, 22, 37, 21.2, 38.3,
+         19.5, 40.5, 19.4, 41.8, 18.5, 42.5, 16, 43.5, 13.6, 45.3, 12.3, 45.4, 12.4, 44.2, 14, 42.6, 16, 41.5, 18.4,
+         40.3, 17, 39.4, 16.6, 38.4, 15.7, 39.9, 14, 40.8, 12.4, 41.6, 10.5, 42.9, 9.2, 44.3, 7.5, 43.8, 6, 43.1, 3.2,
+         43.3, 3.2, 41.9, 1, 41.1, 0.1, 40, -0.3, 39.2, 0.2, 38.7, -0.7, 37.6, -2.1, 36.7, -4.4, 36.7, -5.6, 36, -6.4,
+         36.8, -7.4, 37.2, -9, 37],
+        // chukotka
+        [-180, 65, -172, 64.5, -170, 66, -175, 67.5, -180, 69],
+        // great britain
+        [-5.5, 50, 1.5, 51, 1.7, 52.8, 0, 53.5, -1.5, 55, -2, 57, -1.8, 57.6, -3.5, 58.6, -5, 58.6, -6, 57, -5.5, 56,
+         -4.8, 55, -3, 54, -3, 53.3, -4.5, 52.8, -5, 51.7, -3, 51.4, -5.5, 50],
+        // ireland
+        [-10, 51.5, -6, 52, -6, 54, -7.5, 55.3, -10, 54, -10, 51.5],
+        // iceland
+        [-24, 65.5, -22, 66.5, -15, 66.5, -13.5, 65, -18, 63.4, -22.5, 63.8, -24, 65.5],
+        // svalbard
+        [11, 78, 17, 76.5, 22, 77.5, 27, 80, 20, 80.5, 11, 79.8, 11, 78],
+        // novaya zemlya
+        [52, 71, 56, 73.5, 62, 75.5, 68, 76.8, 69, 76, 60, 74, 56, 71, 52, 71],
+        // africa
+        [-17, 21, -16, 24, -13, 28, -10, 30, -9.6, 32, -6.8, 34, -5.9, 35.8, -2, 35.1, 1, 36.4, 3, 36.8, 8, 36.9, 10,
+         37.3, 11, 36.8, 10.2, 35.2, 10.9, 33.6, 11.5, 33, 15.2, 32.3, 19, 30.3, 20, 31, 20, 32.4, 22, 32.9, 25, 31.8,
+         29, 30.9, 32, 31.2, 32.6, 30, 33.5, 28, 34.7, 26.5, 35.8, 24, 36.9, 22, 37.4, 18.5, 38.6, 17.5, 39.6, 15.5,
+         41.6, 13.5, 43.2, 12.4, 43.3, 11.6, 44.6, 10.4, 47.5, 11.2, 51, 11.8, 51.3, 10.4, 50.9, 9.5, 49.8, 6.8, 48,
+         4.5, 45.5, 2, 43, -0.5, 41, -2, 40.2, -3.5, 39.2, -4.8, 38.8, -6.5, 39.3, -8.2, 40.1, -10.5, 40.6, -14.6,
+         40.4, -15.9, 37, -18, 35.5, -19.8, 35, -22.3, 35.5, -24, 32.8, -25.9, 32.4, -28.5, 31.2, -29.6, 28.7, -32.5,
+         25.6, -34, 22.4, -34, 20, -34.8, 18.4, -34.2, 18.2, -32.8, 17.5, -30.5, 16.4, -28.6, 15.2, -26.6, 14.4, -22.6,
+         13.4, -20.8, 11.8, -17.3, 11.8, -15.5, 12.3, -13.5, 13.7, -11, 13, -8.5, 12.2, -6, 11.3, -3.5, 9, -1.1, 9.7,
+         1, 9.8, 3.1, 8.5, 4.6, 6, 4.3, 4.4, 6.3, 2.5, 6.3, 0, 5.7, -2, 4.8, -4.3, 5.2, -7.5, 4.4, -9.4, 5.4, -11.3,
+         6.9, -13.2, 8.6, -14.6, 10.4, -16.6, 12.4, -17.4, 14.5, -16.6, 16.6, -16.1, 18.6, -16.9, 20.5, -17, 21],
+        // madagascar
+        [44, -25, 47, -25, 49.5, -17, 50.5, -15.5, 49.3, -12, 48.3, -13.3, 47.2, -15, 44.3, -16.5, 43.3, -21.8, 44, -25],
+        // sri lanka
+        [79.7, 6, 81.8, 6.2, 81.5, 8.5, 80, 9.8, 79.7, 6],
+        // japan
+        [130, 31, 131.5, 33.5, 135, 33.5, 137, 34.5, 140, 35, 141, 38, 142, 40, 141.5, 41.5, 140, 40.5, 139.5, 38, 136,
+         36.5, 133, 35.5, 130.5, 34, 130, 31],
+        // hokkaido
+        [140, 41.5, 141.5, 42.5, 143.5, 42, 145.5, 43.5, 142, 45.5, 140, 43.5, 140, 41.5],
+        // sakhalin
+        [142, 46, 143.5, 46.5, 143, 49, 143.3, 53, 142.5, 54.3, 142, 52, 142, 46],
+        // taiwan
+        [120, 22, 121.5, 22, 122, 25, 121, 25.3, 120, 23.5, 120, 22],
+        // luzon
+        [120, 18.5, 122.3, 18.5, 122, 16, 124, 13, 121, 13.8, 120, 16, 120, 18.5],
+        // mindanao
+        [122, 7, 125.5, 9.8, 126.5, 7, 125.5, 5.8, 124, 6.5, 122, 7],
+        // sumatra
+        [95, 5.5, 98, 4, 104, -2, 106, -5.8, 104.5, -5.8, 101, -2, 98, 1, 95.3, 3, 95, 5.5],
+        // java
+        [105.5, -6.8, 108, -6.5, 111, -6.6, 114.5, -7.6, 114.5, -8.7, 110, -8.2, 106, -7.4, 105.5, -6.8],
+        // borneo
+        [109, 1.5, 110, 1.7, 111.5, 2.5, 113, 3.2, 115.5, 5, 117, 7, 119, 5, 118, 1, 117.5, -1, 116.5, -3.8, 114.5, -4,
+         111, -3, 110, -1.5, 109, 0, 109, 1.5],
+        // sulawesi
+        [119, -5.5, 121.5, -5, 123, -3, 121, 0, 124.5, 1.5, 120, 1, 119, -2, 119, -5.5],
+        // new guinea
+        [131, -1.5, 134, -1, 138, -1.6, 141, -2.6, 145, -4, 147.5, -6, 150.5, -10.5, 147, -10.2, 144, -7.8, 141, -9,
+         138, -8.3, 137, -5, 134, -4, 132, -3, 131, -1.5],
+        // australia
+        [113, -22, 114, -26, 115, -34, 118, -35, 121, -33.9, 124, -33, 129, -31.7, 131.5, -31.5, 134, -32.5, 136, -35,
+         138, -34.5, 138, -35.6, 140, -37.5, 142, -38.4, 144.5, -38.2, 146.5, -39, 150, -37.5, 151.2, -34, 153.5,
+         -28.5, 153, -25, 150.5, -22.5, 149, -20.5, 146, -18.5, 145.5, -15, 143.5, -14, 142.5, -10.7, 141.6, -12.8,
+         141.5, -15, 140, -17.5, 137, -16, 135.5, -15, 136.8, -12.2, 133, -11.3, 130, -11.5, 129, -15, 126.5, -14, 124,
+         -16.5, 122, -18, 121, -19.5, 117, -20.6, 114, -21.8, 113, -22],
+        // tasmania
+        [144.6, -40.7, 148.3, -40.9, 148, -43, 146.5, -43.6, 145, -42.2, 144.6, -40.7],
+        // nz north
+        [172.7, -34.4, 174.5, -36, 176, -37.6, 178.5, -37.7, 177, -39.5, 176, -41, 174.6, -41.3, 175, -39.5, 173.8,
+         -39.2, 174.4, -37, 172.7, -34.4],
+        // nz south
+        [172.7, -40.5, 174.3, -41.7, 173.3, -43, 171.3, -44.3, 170.5, -46, 168.4, -46.6, 166.5, -46, 168, -44, 170.5,
+         -43, 172, -41.5, 172.7, -40.5],
+        // cuba
+        [-85, 21.8, -82, 23.1, -77, 21.5, -74.2, 20.2, -77.5, 19.8, -80, 21.6, -85, 21.8],
+        // hispaniola
+        [-74.5, 18.5, -72, 19.9, -68.4, 18.6, -71, 17.8, -74.5, 18.5],
+        // antarctic peninsula
+        [-57, -63, -63, -64.5, -67, -67, -70, -69, -60, -70, -56, -65, -57, -63],
+    ];
+    const WATER = [          // rough outlines, [lon, lat, lon, lat, ...]
+        // hudson bay
+        [-95, 59, -92, 57, -88, 56, -82, 55, -79, 52, -79, 58, -77, 61, -82, 63, -88, 64, -94, 62, -95, 59],
+        // baltic
+        [10.5, 54.3, 14, 54.3, 18.5, 54.6, 21, 55.6, 21, 57.3, 23.5, 57.8, 24, 59.4, 28, 59.6, 30, 60, 25, 60.3, 21.5,
+         60.6, 21.5, 63, 25.5, 65, 23.5, 66, 21, 64.6, 19, 63.4, 17.5, 62.3, 17.5, 60.6, 19, 59.7, 17, 58.5, 16.5,
+         56.5, 14.5, 55.5, 12.8, 55.5, 10.5, 54.3],
+        // black sea
+        [27.6, 42, 28.2, 44, 29.7, 45.3, 30.9, 46.5, 33.5, 46, 33.4, 44.6, 35.5, 45.3, 36.6, 45.3, 38.2, 46.9, 39.5,
+         47.2, 39.8, 46.4, 37.5, 44.7, 39.5, 43.5, 41.6, 41.6, 40, 41, 37, 41.1, 35, 42, 33, 41.9, 31, 41.2, 29, 41.1,
+         27.6, 42],
+        // caspian
+        [46.8, 44.6, 47.5, 45.6, 49.2, 46.5, 51.3, 47, 53, 46.8, 53.2, 45.5, 51.5, 44.5, 51, 43.5, 52.5, 42.5, 53,
+         41.8, 54, 40.8, 53, 39.5, 53.9, 37.4, 51.5, 36.8, 50, 37.4, 49, 38.4, 49.4, 40.2, 48.5, 41.8, 47.5, 43, 46.8,
+         44.6],
+    ];
+    const ANTARCTIC_LAT = -69;            // south of this it's all land (the globe leans north, so it's mostly hidden)
+    const HOME = [90.41, 23.81];          // Dhaka, as in weather.py
+    const CITIES = [[-0.13, 51.51], [-74.01, 40.71], [139.69, 35.69], [151.21, -33.87], [55.27, 25.2], [2.35, 48.86],
+                    [-46.63, -23.55], [37.62, 55.76], [103.82, 1.35], [-122.42, 37.77], [116.4, 39.9], [28.98, 41.01]];
+    // Per state: spin (rad/s), the ring's and the satellites' speed, glow (0-1), pulse (Hz) and the ring's words
+    const STATES = {
+        idle:      { spin: 0.10, ring: 0.20, sat: 1.0, glow: 0.55, pulse: 0.4, words: 'JAVID ◆ ONLINE ◆ ' },
+        listening: { spin: 0.16, ring: 0.42, sat: 1.5, glow: 1.0,  pulse: 1.6, words: 'LISTENING ◆ ' },
+        thinking:  { spin: 0.28, ring: 0.75, sat: 2.6, glow: 0.85, pulse: 1.0, words: 'THINKING ◆ ' },
+        speaking:  { spin: 0.16, ring: 0.48, sat: 1.3, glow: 0.9,  pulse: 3.2, words: 'SPEAKING ◆ ' },
+        standby:   { spin: 0.06, ring: 0.12, sat: 0.6, glow: 0.35, pulse: 0.3, words: 'SAY JAVID ◆ ' },
+        followup:  { spin: 0.12, ring: 0.30, sat: 1.1, glow: 0.7,  pulse: 0.8, words: 'GO AHEAD ◆ ' },
+    };
+    const ORBITS = [    // radius in globe radii, inclination and node (rad), speed (rad/s), starting phase
+        { r: 1.42, incl: 0.95, node: 0.3, speed: 0.55, phase: 0.0 },
+        { r: 1.62, incl: -0.42, node: 2.1, speed: 0.38, phase: 2.0 },
+        { r: 1.82, incl: 1.32, node: 4.0, speed: 0.26, phase: 4.1 },
+    ];
+    const SIZE = 236, C = SIZE / 2, R = 58;       // CSS px: the canvas, its centre, the globe's radius
+    const TILT = 0.41, cosT = Math.cos(TILT), sinT = Math.sin(TILT);      // Earth's tilt, the north pole toward us
+    const RING_R = 1.2, RING_INCL = 0.2, RING_SLOTS = 44;
+    const CYAN = '56, 225, 255', GOLD = '255, 209, 102';
+
+    let canvas = null, ctx = null, dpr = 1, dots = null, grid = null, orbitLines = null, glow, body, shine;
+    let running = false, still = false, raf = 0, last = 0, acc = 0, frameNo = 0, watcher = null, clockTimer = 0;
+    let spin = -HOME[0] * Math.PI / 180, cosA = 1, sinA = 0;     // Dhaka faces us first
+    let ringPhase = 0, satTime = 0, pulseTime = 0, lastSecond = -1, nextArc = 0;
+    let state = 'idle', words = STATES.idle.words, wordsFade = 1;
+    const cur = { ...STATES.idle };
+    const arcs = [];
+
+    const rad = d => d * Math.PI / 180;
+    const vec = (lon, lat) => [Math.cos(rad(lat)) * Math.sin(rad(lon)), Math.sin(rad(lat)), Math.cos(rad(lat)) * Math.cos(rad(lon))];
+
+    function inside(lon, lat, ring) {            // ray casting over [lon, lat, lon, lat, ...]
+        let hit = false;
+        for (let i = 0, j = ring.length - 2; i < ring.length; j = i, i += 2) {
+            const xi = ring[i], yi = ring[i + 1], xj = ring[j], yj = ring[j + 1];
+            if ((yi > lat) !== (yj > lat) && lon < (xj - xi) * (lat - yi) / (yj - yi) + xi) hit = !hit;
+        }
+        return hit;
+    }
+    const isLand = (lon, lat) => lat < ANTARCTIC_LAT
+        || (LAND.some(r => inside(lon, lat, r)) && !WATER.some(r => inside(lon, lat, r)));
+
+    // On the globe (it spins), or in the space around it (spinning = false: the orbits, the ring of letters).
+    // Returns [screen x, screen y, depth]; depth > 0 faces the viewer.
+    function project(x, y, z, spinning = true) {
+        let x1 = x, z1 = z;
+        if (spinning) { x1 = x * cosA + z * sinA; z1 = z * cosA - x * sinA; }
+        return [C + R * x1, C - R * (y * cosT - z1 * sinT), y * sinT + z1 * cosT];
+    }
+    const behind = (p) => p[2] < 0 && (p[0] - C) ** 2 + (p[1] - C) ** 2 < R * R;      // hidden by the globe
+
+    function orbitPoint(o, phi) {
+        const px = o.r * Math.cos(phi), pz = o.r * Math.sin(phi);
+        const y = -pz * Math.sin(o.incl), z0 = pz * Math.cos(o.incl);
+        return [px * Math.cos(o.node) + z0 * Math.sin(o.node), y, z0 * Math.cos(o.node) - px * Math.sin(o.node)];
+    }
+
+    function build() {
+        const pts = [], n = 5200, golden = Math.PI * (3 - Math.sqrt(5));
+        for (let i = 0; i < n; i++) {
+            const y = 1 - (i + 0.5) * 2 / n, r = Math.sqrt(1 - y * y), th = i * golden;
+            const x = Math.cos(th) * r, z = Math.sin(th) * r;
+            if (isLand(Math.atan2(x, z) * 180 / Math.PI, Math.asin(y) * 180 / Math.PI)) pts.push(x, y, z);
+        }
+        dots = new Float32Array(pts);
+        grid = [];
+        for (let lon = -180; lon < 180; lon += 30) grid.push(Array.from({ length: 45 }, (_, k) => vec(lon, -88 + k * 4)));
+        for (const lat of [-60, -30, 0, 30, 60]) grid.push(Array.from({ length: 91 }, (_, k) => vec(-180 + k * 4, lat)));
+        orbitLines = ORBITS.map(o => Array.from({ length: 97 }, (_, k) => project(...orbitPoint(o, k / 96 * Math.PI * 2), false)));
+    }
+
+    function fit() {
+        dpr = Math.min(2, window.devicePixelRatio || 1);
+        canvas.width = canvas.height = Math.round(SIZE * dpr);
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        glow = ctx.createRadialGradient(C, C, R * 0.9, C, C, R * 1.4);
+        glow.addColorStop(0, `rgba(${CYAN}, 0.38)`);
+        glow.addColorStop(0.35, `rgba(${CYAN}, 0.12)`);
+        glow.addColorStop(1, `rgba(${CYAN}, 0)`);
+        body = ctx.createRadialGradient(C - R * 0.35, C - R * 0.4, R * 0.1, C, C, R);
+        body.addColorStop(0, 'rgba(34, 92, 148, 0.5)');
+        body.addColorStop(0.7, 'rgba(6, 24, 46, 0.62)');
+        body.addColorStop(1, 'rgba(2, 8, 18, 0.78)');
+        shine = ctx.createRadialGradient(C - R * 0.42, C - R * 0.48, 0, C - R * 0.42, C - R * 0.48, R * 0.55);
+        shine.addColorStop(0, 'rgba(255, 255, 255, 0.16)');
+        shine.addColorStop(1, 'rgba(255, 255, 255, 0)');
+    }
+
+    function stateNow() {
+        const cl = document.getElementById('orb').classList;
+        for (const s in STATES) if (cl.contains(s)) return s;
+        return 'idle';
+    }
+
+    function drawGrid(vis) {
+        const near = new Path2D(), far = new Path2D();
+        for (const line of grid) {
+            let prev = null;
+            for (const v of line) {
+                const p = project(v[0], v[1], v[2]);
+                if (prev) {
+                    const path = prev[2] + p[2] > 0 ? near : far;
+                    path.moveTo(prev[0], prev[1]);
+                    path.lineTo(p[0], p[1]);
+                }
+                prev = p;
+            }
+        }
+        ctx.lineWidth = 0.6;
+        ctx.strokeStyle = `rgba(${CYAN}, ${0.05 * vis})`;
+        ctx.stroke(far);
+        ctx.strokeStyle = `rgba(${CYAN}, ${0.17 * vis})`;
+        ctx.stroke(near);
+    }
+
+    function drawDots(vis) {        // the hot loop: the projection inlined, no arrays per dot
+        const front = [[], [], [], []], back = [];
+        for (let i = 0; i < dots.length; i += 3) {
+            const x = dots[i], y = dots[i + 1], z = dots[i + 2];
+            const x1 = x * cosA + z * sinA, z1 = z * cosA - x * sinA;
+            const d = y * sinT + z1 * cosT, sx = C + R * x1, sy = C - R * (y * cosT - z1 * sinT);
+            if (d > 0) front[Math.min(3, (d * 4) | 0)].push(sx, sy);
+            else back.push(sx, sy);
+        }
+        ctx.fillStyle = `rgba(${CYAN}, ${0.09 * vis})`;
+        for (let i = 0; i < back.length; i += 2) ctx.fillRect(back[i] - 0.5, back[i + 1] - 0.5, 1, 1);
+        front.forEach((pts, level) => {
+            ctx.fillStyle = `rgba(190, 245, 255, ${(0.32 + level * 0.2) * vis})`;
+            for (let i = 0; i < pts.length; i += 2) ctx.fillRect(pts[i] - 0.75, pts[i + 1] - 0.75, 1.5, 1.5);
+        });
+    }
+
+    function drawHome(now, vis) {
+        const p = project(...vec(HOME[0], HOME[1]));
+        if (p[2] < 0.08) return;
+        const a = Math.min(1, p[2] * 1.6) * vis, wave = (now / 1600) % 1;
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = `rgba(${GOLD}, ${(1 - wave) * 0.8 * a})`;
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 2.5 + wave * 9, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = `rgba(${GOLD}, ${a})`;
+        ctx.beginPath();
+        ctx.arc(p[0], p[1], 2.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.font = '8px "Share Tech Mono", ui-monospace, monospace';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = `rgba(${GOLD}, ${0.9 * a})`;
+        ctx.fillText('DHAKA', p[0] + 6, p[1] - 7);
+    }
+
+    function slerp(a, b, t) {
+        const w = Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2]))), s = Math.sin(w);
+        if (s < 1e-4) return a;
+        const p = Math.sin((1 - t) * w) / s, q = Math.sin(t * w) / s;
+        return [a[0] * p + b[0] * q, a[1] * p + b[1] * q, a[2] * p + b[2] * q];
+    }
+
+    function drawArcs(now, vis) {       // thinking: light runs out from Dhaka to the world
+        if (!still && state === 'thinking' && now > nextArc && arcs.length < 4) {
+            const to = CITIES[Math.floor(Math.random() * CITIES.length)];
+            const a = vec(HOME[0], HOME[1]), b = vec(to[0], to[1]);
+            const span = Math.acos(Math.max(-1, Math.min(1, a[0] * b[0] + a[1] * b[1] + a[2] * b[2])));
+            arcs.push({ a, b, lift: 0.1 + 0.2 * span / Math.PI, start: now, dur: 1300 + Math.random() * 700 });
+            nextArc = now + 450 + Math.random() * 350;
+        }
+        ctx.lineWidth = 1;
+        for (let i = arcs.length - 1; i >= 0; i--) {
+            const arc = arcs[i], t = (now - arc.start) / arc.dur;
+            if (t > 1.5 || still) { arcs.splice(i, 1); continue; }
+            const head = Math.min(1, t), fade = t > 1 ? 1 - (t - 1) / 0.5 : 1;
+            let pen = false, tip = null;
+            ctx.beginPath();
+            for (let k = 0; k <= 32; k++) {
+                const s = (k / 32) * head, v = slerp(arc.a, arc.b, s), h = 1 + arc.lift * Math.sin(Math.PI * s);
+                const p = project(v[0] * h, v[1] * h, v[2] * h);
+                if (behind(p)) { pen = false; tip = null; continue; }
+                if (pen) ctx.lineTo(p[0], p[1]);
+                else ctx.moveTo(p[0], p[1]);
+                pen = true;
+                tip = p;
+            }
+            ctx.strokeStyle = `rgba(${GOLD}, ${0.55 * fade * vis})`;
+            ctx.stroke();
+            if (tip && t <= 1) {
+                ctx.fillStyle = `rgba(${GOLD}, ${0.25 * vis})`;
+                ctx.beginPath();
+                ctx.arc(tip[0], tip[1], 4, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = `rgba(255, 244, 214, ${vis})`;
+                ctx.fillRect(tip[0] - 1.2, tip[1] - 1.2, 2.4, 2.4);
+            }
+        }
+    }
+
+    function drawOrbits(near, vis) {
+        ctx.setLineDash([2, 4]);
+        ctx.lineWidth = 0.8;
+        ctx.strokeStyle = `rgba(${CYAN}, ${(near ? 0.22 : 0.08) * vis})`;
+        for (const line of orbitLines) {
+            let pen = false;
+            ctx.beginPath();
+            for (const p of line) {
+                if ((p[2] >= 0) !== near) { pen = false; continue; }
+                if (pen) ctx.lineTo(p[0], p[1]);
+                else ctx.moveTo(p[0], p[1]);
+                pen = true;
+            }
+            ctx.stroke();
+        }
+        ctx.setLineDash([]);
+    }
+
+    function satellites() {         // where each satellite is, and a short trail behind it
+        return ORBITS.map(o => {
+            const phi = o.phase + satTime * o.speed, trail = [];
+            for (let j = 9; j >= 1; j--) trail.push(project(...orbitPoint(o, phi - j * 0.045), false));
+            return { at: project(...orbitPoint(o, phi), false), trail };
+        });
+    }
+
+    function drawSatellites(sats, near, vis) {
+        for (const { at, trail } of sats) {
+            if ((at[2] >= 0) !== near) continue;
+            const a = (near ? 1 : 0.45) * vis;
+            trail.forEach((p, j) => {
+                ctx.fillStyle = `rgba(${CYAN}, ${((j + 1) / 10) * 0.45 * a})`;
+                ctx.fillRect(p[0] - 0.6, p[1] - 0.6, 1.2, 1.2);
+            });
+            if (near) {
+                ctx.fillStyle = `rgba(${CYAN}, ${0.18 * a})`;
+                ctx.beginPath();
+                ctx.arc(at[0], at[1], 5, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.strokeStyle = `rgba(${CYAN}, ${0.85 * a})`;          // its solar panels
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(at[0] - 4, at[1]);
+            ctx.lineTo(at[0] + 4, at[1]);
+            ctx.stroke();
+            ctx.fillStyle = `rgba(235, 252, 255, ${a})`;
+            ctx.fillRect(at[0] - 1.3, at[1] - 1.3, 2.6, 2.6);
+        }
+    }
+
+    function ringLetters() {
+        const text = words.repeat(Math.max(1, Math.round(RING_SLOTS / words.length)));
+        const step = Math.PI * 2 / text.length, out = [];
+        for (let i = 0; i < text.length; i++) {
+            const th = ringPhase + i * step, px = RING_R * Math.sin(th), pz = RING_R * Math.cos(th);
+            const p = project(px, -pz * Math.sin(RING_INCL), pz * Math.cos(RING_INCL), false);
+            out.push([text[i], p[0], p[1], p[2]]);
+        }
+        return out;
+    }
+
+    function drawLetters(letters, near, vis) {
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const [ch, sx, sy, d] of letters) {
+            if ((d >= 0) !== near || ch === ' ') continue;
+            ctx.font = `600 ${(7.5 + 2.5 * Math.max(0, d)).toFixed(1)}px Orbitron, "Share Tech Mono", ui-monospace, sans-serif`;
+            ctx.fillStyle = `rgba(200, 248, 255, ${(near ? 0.1 + 0.85 * d * d : 0.22) * wordsFade * vis})`;   // faint at the sides
+            ctx.fillText(ch, sx, sy);
+        }
+    }
+
+    function draw(now, dt) {
+        const seen = stateNow();
+        if (seen !== state) {
+            state = seen;
+            words = STATES[state].words;
+            wordsFade = still ? 1 : 0;
+        }
+        const goal = STATES[state], k = still ? 1 : Math.min(1, dt * 2.5);
+        for (const key of ['spin', 'ring', 'sat', 'glow', 'pulse']) cur[key] += (goal[key] - cur[key]) * k;
+        spin += cur.spin * dt;
+        ringPhase -= cur.ring * dt;
+        satTime += cur.sat * dt;
+        pulseTime += cur.pulse * dt;
+        wordsFade = Math.min(1, wordsFade + dt * 2.5);
+        cosA = Math.cos(spin);
+        sinA = Math.sin(spin);
+        const beat = 1 + 0.18 * Math.sin(pulseTime * Math.PI * 2);
+        const vis = 0.55 + 0.45 * Math.min(1, cur.glow / 0.6);         // standby dims everything
+
+        ctx.clearRect(0, 0, SIZE, SIZE);
+        ctx.globalAlpha = Math.min(1, cur.glow * beat);                   // the atmosphere
+        ctx.fillStyle = glow;
+        ctx.fillRect(0, 0, SIZE, SIZE);
+        ctx.globalAlpha = 1;
+        const sats = satellites(), letters = ringLetters();
+        drawOrbits(false, vis);                     // behind the globe, which dims them
+        drawSatellites(sats, false, vis);
+        drawLetters(letters, false, vis);
+        ctx.fillStyle = body;                       // the globe
+        ctx.beginPath();
+        ctx.arc(C, C, R, 0, Math.PI * 2);
+        ctx.fill();
+        drawGrid(vis);
+        drawDots(vis);
+        drawHome(now, vis);
+        ctx.strokeStyle = `rgba(${CYAN}, ${0.5 * Math.min(1, cur.glow * beat) * vis})`;
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(C, C, R, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = shine;
+        ctx.fill();
+        drawArcs(now, vis);                         // in front of it
+        drawOrbits(true, vis);
+        drawSatellites(sats, true, vis);
+        drawLetters(letters, true, vis);
+    }
+
+    function hud() {                // the readouts beside the globe: the local time and the reply language
+        const clock = document.getElementById('hud-clock');
+        if (clock) clock.textContent = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+        const lang = document.getElementById('hud-lang');
+        try { if (lang) lang.textContent = String(replyLang).toUpperCase(); } catch {}
+    }
+
+    function frame(now) {
+        raf = requestAnimationFrame(frame);
+        const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+        last = now;
+        acc += dt;
+        if ((state === 'idle' || state === 'standby') && (++frameNo & 1)) return;     // 30 fps while resting
+        draw(now, Math.min(acc, 0.1));
+        acc = 0;
+        const second = Math.floor(Date.now() / 1000);
+        if (second !== lastSecond) { lastSecond = second; hud(); }
+    }
+
+    function refit() {
+        if (Math.min(2, window.devicePixelRatio || 1) === dpr) return;
+        fit();
+        if (still) draw(performance.now(), 0);
+    }
+
+    function start() {
+        if (running) return;
+        canvas = document.getElementById('globe');
+        ctx = canvas && canvas.getContext('2d');
+        if (!ctx) return;
+        if (!dots) build();
+        fit();
+        running = true;
+        last = acc = 0;
+        still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;     // asked at each start
+        window.addEventListener('resize', refit);
+        hud();
+        if (still) {
+            draw(performance.now(), 0);
+            watcher = new MutationObserver(() => draw(performance.now(), 0));
+            watcher.observe(document.getElementById('orb'), { attributes: true, attributeFilter: ['class'] });
+            clockTimer = setInterval(hud, 1000);
+        } else {
+            raf = requestAnimationFrame(frame);
+        }
+    }
+
+    function stop() {
+        if (!running) return;
+        running = false;
+        cancelAnimationFrame(raf);
+        if (watcher) watcher.disconnect();
+        watcher = null;
+        clearInterval(clockTimer);
+        window.removeEventListener('resize', refit);
+        arcs.length = 0;
+    }
+
+    return { start, stop };
+})();
 
 // ── Latency tracing (observation only) ────────────────────────────────────
 // Each request's stages that only the page sees — end of speech, first text, first audio, audio
@@ -4515,13 +5294,14 @@ document.querySelectorAll('.lang-toggle button').forEach(b => b.addEventListener
     } catch { showToast('Could not change the language — is the server running?'); }
 }));
 
-// ── Themes. The looks are this page's CSS: Glass and Overdrive. Colour themes are
+// ── Themes. The looks are this page's CSS: Orbit (the default), Glass and Overdrive. Colour themes are
 // the files in themes/ (GET /themes: each a palette on the Glass look, its colours worked out and contrast-checked by
 // themes.py), whose variables go on <html>. The header's theme button opens the list; "+ New theme" and ✎ open the
 // editor, which shows its colours on the whole page as you pick and saves through POST/PUT /themes. The choice is saved
 // per browser ('javid-theme'; a colour theme's variables in 'javid-theme-vars', which the head script paints before
 // /themes answers) ──
 const LOOKS = [
+    { id: 'orbit', name: 'Orbit', bg: '#03070F', accent: '#38E1FF' },
     { id: 'glass', name: 'Glass', bg: '#06120E', accent: '#4ADE9F' },
     { id: 'overdrive', name: 'Overdrive', bg: '#050404', accent: '#FF2A2A' },
 ];
@@ -4539,7 +5319,7 @@ const currentThemeId = () => document.documentElement.dataset.palette || documen
 function savedThemeId() {
     try {
         const id = localStorage.getItem('javid-theme');
-        return !id || id === 'classic' || id === 'aurora' ? 'glass' : id;    // older versions' names for Glass
+        return !id ? 'orbit' : id === 'classic' || id === 'aurora' ? 'glass' : id;    // older versions' names for Glass
     } catch { return 'glass'; }
 }
 
@@ -4604,6 +5384,12 @@ function applyTheme(id, { save = true } = {}) {
         document.head.appendChild(Object.assign(document.createElement('link'), { id: 'od-font', rel: 'stylesheet',
             href: 'https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;600;700&display=swap' }));
     }
+    if (look === 'orbit' && !document.getElementById('orbit-font')) {
+        document.head.appendChild(Object.assign(document.createElement('link'), { id: 'orbit-font', rel: 'stylesheet',
+            href: 'https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Share+Tech+Mono&display=swap' }));
+    }
+    if (look === 'orbit') orbitGlobe.start();
+    else orbitGlobe.stop();
     showThemeButton(theme);
     lookChanged();
     if (!save) return;
@@ -4779,6 +5565,7 @@ async function previewTheme() {
         return;
     }
     const root = document.documentElement;
+    orbitGlobe.stop();                          // a colour theme is Glass in its own colours
     root.dataset.theme = 'glass';
     root.dataset.palette = editing?.id || 'preview';
     setThemeVars(data.tokens);

@@ -1,7 +1,8 @@
 # Colour themes
 
 Each `.json` file here is a colour theme: Javid's Glass look in your own colours. They're listed under the header's
-theme button, after the built-in looks (Glass and Overdrive), and the list re-reads this folder each time it opens.
+theme button, after the built-in looks (Orbit, Glass and Overdrive), and the list re-reads this folder each time it
+opens.
 
 Make one in the app (theme button → **+ New theme**: the page changes as you pick, and you can edit or delete it later
 with ✎), or write a file yourself:
@@ -18,7 +19,7 @@ with ✎), or write a file yourself:
 ```
 
 - **name**: 1 to 24 characters, shown in the list. The file name is the theme's id: lower-case letters, digits and
-  dashes (`ocean.json`), and not `glass`, `aurora`, `overdrive`, `classic` or `preview`.
+  dashes (`ocean.json`), and not `orbit`, `glass`, `aurora`, `overdrive`, `classic` or `preview`.
 - **background**: a dark colour, about `#303030` or darker (light themes aren't supported yet).
 - **accent**: the buttons, the orb, your chat bubble and the highlights.
 - **glows** (optional): the three soft lights behind everything (top left, bottom right, top). Leave them out and they

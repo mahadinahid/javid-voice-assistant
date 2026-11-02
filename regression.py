@@ -1944,7 +1944,8 @@ def theme_refusals():
         except themes.ThemeError as e:
             if "buttons stand out" not in str(e):
                 problems.append(f"the refusal doesn't say why: {e}")
-        for theme_id in ("../ocean", "Ocean", "glass", "aurora", "overdrive", "classic", "preview", "a/b", "", "x" * 33):
+        for theme_id in ("../ocean", "Ocean", "orbit", "glass", "aurora", "overdrive", "classic", "preview", "a/b", "",
+                         "x" * 33):
             for name, call in (("delete", themes.delete), ("update", lambda i: themes.update(i, ok))):
                 try:
                     call(theme_id)

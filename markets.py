@@ -198,8 +198,8 @@ def market_price(symbols: list[str] | str) -> str:
 
 # ---------- market briefs, answered in code ----------
 BRIEF_ASK = re.compile(
-    r"^(?!.*\b(?:news|headlines?|stories)\b).*?(?:\b(?:crypto|coin|stock|share)s? market\b|"
-    r"\bmarket (?:update|overview|report|analysis|summary|brief|wrap)\b|"
+    r"^(?!.*\b(?:news|headlines?|stories)\b).*?(?:\b(?:crypto|coin|stock|share)s? markets?\b|"
+    r"\bmarkets? (?:update|overview|report|analysis|summary|brief|wrap)s?\b|"
     r"\b(?:analy[sz]e|analysis of|outlook for|outlook on|how is|how's|hows)\s+(?:the\s+)?(?:crypto|bitcoin|btc|"
     r"ethereum|eth|solana|bnb|xrp|market|stock market)\b|\bmy (?:coins|crypto|portfolio|watchlist)\b|"
     r"ক্রিপ্টো মার্কেট|শেয়ার ?বাজার|মার্কেট আপডেট)", re.I | re.S)

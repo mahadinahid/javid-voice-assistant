@@ -111,7 +111,7 @@ tasks, memory and chats go only to providers with `personal_ok: true`.
 ## Testing
 
 ```bash
-python regression.py                         # 132 scripted checks: no network, no API tokens
+python regression.py                         # 137 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -139,6 +139,7 @@ Telegram and Drive, so it never touches your data or spends a credit. Run it bef
 | `drive_tools.py` | Saving long answers to Google Drive |
 | `selfcheck.py`, `about.py` | The self-check, and answers to questions about Javid |
 | `themes.py`, `themes/` | Colour themes ([how to make one](themes/README.md)) |
+| `edge_pool.py` | Pre-opened edge-tts connections, so a reply's first sentence doesn't wait for one to open |
 | `tracing.py` | Latency traces of every request |
 | `regression.py`, `fixtures/` | The test suite and its recorded responses |
 | `bench_web.py` | A benchmark of web answers (real requests) |

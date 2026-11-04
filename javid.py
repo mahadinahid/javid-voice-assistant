@@ -34,6 +34,7 @@ import agents
 import calc
 import calendar_tools
 import drive_tools
+import edge_pool
 import markets
 import memory_store
 import news
@@ -2877,11 +2878,15 @@ _TTS_CACHE_SIZE = 64
 # waits and retries so the voice is the locked one whenever edge-tts can give it; only after every try fails does the
 # backup voice speak (ElevenLabs, below), and without that, nothing: the reply is text with a "voice unavailable" note.
 EDGE_ATTEMPTS = 3
-# A try waits this long for its first audio (longer on each retry), then at most EDGE_STALL_SEC between chunks: a
-# slow sentence that is still arriving is kept. A fixed 6 s for the whole sentence threw those away during a slow
-# spell (2026-10-24: every try of a news answer timed out while the endpoint answered a single request in 2-3.5 s).
-EDGE_FIRST_SEC = (6.0, 8.0, 10.0)
+# A try waits this long for its first audio, then at most EDGE_STALL_SEC between chunks: a slow sentence that is
+# still arriving is kept. A fixed 6 s for the whole sentence threw those away during a slow spell (2026-10-24: every
+# try of a news answer timed out while the endpoint answered a single request in 2-3.5 s). The first try had 6 s
+# until 2026-11-04, when a slow spell gave first audio after 4.6-8.1 s (median 6.6 s, 20 requests) and the requests
+# that failed did so on their own, without audio, after ~3 s: 6 s threw away most first tries just before their
+# audio came, so the first sentence came after ~13 s (try 1's 6 s + try 2) instead of ~7 s.
+EDGE_FIRST_SEC = (10.0, 10.0, 12.0)
 EDGE_STALL_SEC = 4.0
+SpeechCancelled = edge_pool.Cancelled     # the page hung up (Stop, barge-in, a new question): stop, don't retry
 # At most this many syntheses at once. A news answer is 6-10 sentences and the page asks for all of them together:
 # ten at once took up to 4.7 s each (2-3 at once: ~1 s), so they ran into the time limit together. Not hedging: one
 # request per sentence, as before; the rest wait their turn (the waiting doesn't count against a try's time).
@@ -2903,27 +2908,50 @@ def voice_for(text: str, lang: str | None = None) -> str:
     return VOICES[lang if lang in VOICES else get_language()]
 
 
-async def _edge_once(text: str, voice: str, first_sec: float) -> bytes:
-    """One try: up to first_sec for the first chunk, then EDGE_STALL_SEC from each chunk to the next."""
-    audio = b""
-    async with asyncio.timeout(first_sec) as limit:
-        async for chunk in edge_tts.Communicate(text, voice).stream():
-            limit.reschedule(asyncio.get_running_loop().time() + EDGE_STALL_SEC)    # still arriving: keep going
-            if chunk["type"] == "audio":
-                audio += chunk["data"]
-    if not audio:
-        raise RuntimeError("edge-tts returned no audio")
-    return audio
+async def _edge_once(text: str, voice: str, first_sec: float, cancelled=None) -> bytes:
+    """One try through edge_tts.Communicate: up to first_sec for the first chunk, then EDGE_STALL_SEC from each chunk
+    to the next. Stops (SpeechCancelled) within edge_pool.TICK_SEC once `cancelled()`."""
+    async def run() -> bytes:
+        audio = b""
+        async with asyncio.timeout(first_sec) as limit:
+            async for chunk in edge_tts.Communicate(text, voice).stream():
+                limit.reschedule(asyncio.get_running_loop().time() + EDGE_STALL_SEC)    # still arriving: keep going
+                if chunk["type"] == "audio":
+                    audio += chunk["data"]
+        if not audio:
+            raise RuntimeError("edge-tts returned no audio")
+        return audio
+    if cancelled is None:
+        return await run()
+    task = asyncio.ensure_future(run())
+    while not task.done():
+        await asyncio.wait({task}, timeout=edge_pool.TICK_SEC)
+        if cancelled() and not task.done():
+            task.cancel()
+            with contextlib.suppress(BaseException):
+                await task
+            raise SpeechCancelled
+    return task.result()
 
 
-def _edge_or_none(text: str, voice: str) -> bytes | None:
-    """edge-tts audio, or None if every try failed. Each try is noted for the self-check."""
+def _edge_or_none(text: str, voice: str, cancelled=None) -> bytes | None:
+    """edge-tts audio, or None if every try failed. Each try is noted for the self-check. A try goes out on a
+    pre-opened socket when one is ready (edge_pool: the same request, without the 0.5 s connect), else through
+    Communicate. Raises SpeechCancelled once `cancelled()` (the page hung up): its slot then goes to a sentence someone
+    is waiting for. A cancelled request still queues for a slot, in order, and gives it up at once."""
     for n in range(1, EDGE_ATTEMPTS + 1):
+        first = EDGE_FIRST_SEC[min(n, len(EDGE_FIRST_SEC)) - 1]
         try:
             with _edge_slots:
-                audio = asyncio.run(_edge_once(text, voice, EDGE_FIRST_SEC[min(n, len(EDGE_FIRST_SEC)) - 1]))
+                if cancelled and cancelled():
+                    raise SpeechCancelled
+                audio = edge_pool.speak(text, voice, first, EDGE_STALL_SEC, cancelled)
+                if audio is None:
+                    audio = asyncio.run(_edge_once(text, voice, first, cancelled))
             selfcheck.note_tts(True)
             return audio
+        except SpeechCancelled:
+            raise
         except Exception as e:
             print(f"[tts] edge-tts {type(e).__name__} (try {n}/{EDGE_ATTEMPTS})")
             selfcheck.note_tts(False, type(e).__name__)
@@ -3045,21 +3073,24 @@ def _remember_clip(key: tuple, text: str, audio: bytes) -> None:
         _tts_cache[key] = (audio, "audio/mpeg")
 
 
-def synthesize(text: str, lang: str | None = None, backup: bool = True) -> tuple[bytes, str]:
+def synthesize(text: str, lang: str | None = None, backup: bool = True, cancelled=None) -> tuple[bytes, str]:
     """The language's locked voice (EDGE_VOICE / EDGE_VOICE_BN) as MP3 bytes. If edge-tts fails every try, the backup
     voice (ElevenLabs, when its voice for the language is approved and it may take the sentence), and for
     EDGE_DOWN_SEC after that the backup speaks first. Raises when neither can: the page shows "voice unavailable".
-    backup=False: edge-tts only (the warm-up: the backup costs characters)."""
+    backup=False: edge-tts only (the warm-up: the backup costs characters). cancelled: a callable that turns true
+    when nobody is waiting any more (/speak's page hung up); then SpeechCancelled, with no retry and no backup."""
     voice = voice_for(text, lang)
     if (voice, text) in _tts_cache:
         return _tts_cache[voice, text]
     alt = _eleven_voice(text, lang) if backup else None
     if alt and time.time() < _edge_down["until"] and (audio := _eleven(text, alt)):
         return audio, "audio/mpeg"
-    audio = _edge_or_none(text, voice)
+    audio = _edge_or_none(text, voice, cancelled)
     if audio is not None:
         _remember_clip((voice, text), text, audio)
         return audio, "audio/mpeg"
+    if cancelled and cancelled():
+        raise SpeechCancelled
     if alt:
         _edge_down["until"] = time.time() + EDGE_DOWN_SEC
         if (audio := _eleven(text, alt)):
@@ -3072,15 +3103,23 @@ _WARM_FIRST = ("ack", "searching", "working")     # the ones said while Mahadi w
 
 def warm_phrases() -> list[tuple[str, str]]:
     """Regenerate the cached audio of every fixed phrase in each language, sentence by sentence as the page
-    asks /speak for them, so a cached clip is always the locked voice's. Returns (sentence, voice) pairs."""
+    asks /speak for them, so a cached clip is always the locked voice's. Returns (sentence, voice) pairs. A phrase
+    edge-tts can't make now is left for /speak to make when it's needed; until 2026-11-04 the first one stopped the
+    whole warm-up, so in a bad spell every phrase after it stayed uncached."""
     _tts_cache.clear()
-    done = []
+    done, missed = [], 0
     for key in sorted(PHRASES, key=lambda k: k not in _WARM_FIRST):
         for lang, text in PHRASES[key].items():
             for sentence in web_tools.sentences(text):
                 if len(sentence) <= _TTS_CACHE_MAX_CHARS:
-                    synthesize(sentence, lang, backup=False)      # never the backup's characters for a warm-up
+                    try:
+                        synthesize(sentence, lang, backup=False)      # never the backup's characters for a warm-up
+                    except RuntimeError:
+                        missed += 1
+                        continue
                     done.append((sentence, voice_for(sentence, lang)))
+    if missed:
+        print(f"[tts] warm-up: {missed} phrase sentence(s) not cached (edge-tts failed); they're made when needed")
     return done
 
 

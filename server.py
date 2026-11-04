@@ -12,11 +12,13 @@ import segno
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 import agents
 import calendar_tools
 import drive_tools
+import edge_pool
 import memory_store
 import providers
 import selfcheck
@@ -33,6 +35,7 @@ from javid import (
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
     active_session, has_session, hold_turn,
     set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
+    SpeechCancelled,
 )
 
 
@@ -272,6 +275,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
     """
     _use_session(session)
     trace = tracing.start("voice", mode)
+    if mode == "push":
+        edge_pool.want()        # a reply is coming: have edge-tts's socket open before its first sentence
     audio_bytes = audio.file.read()
 
     content_type = audio.content_type or "audio/webm"
@@ -315,6 +320,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
                 yield _event(type="done", tasks=None, memory=None, lang=get_language())
             return _ndjson(_traced(trace, ack()))
 
+    edge_pool.want()            # hands-free: only once the clip is for Javid (noise and other voices open nothing)
     if mode == "push" and strip_wake_word(request) == "":
         # Just "Javid": acknowledge, as in hands-free.
         selfcheck.note_clip(mode, "ack", transcript)
@@ -346,6 +352,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 @app.post("/type")
 def type_message(body: ChatBody):
     _use_session(body.session)
+    edge_pool.want()
     return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text, body.session)))
 
 
@@ -445,16 +452,33 @@ def calendar_connect():
 
 
 @app.post("/speak")
-def speak_text(body: SpeakBody):
+async def speak_text(body: SpeakBody, request: Request):
     """The locked voice for one sentence, chosen here from the language setting: a tab's own copy of the
     language can be stale (another tab or the CLI switched it), and English sent with "bn" was read by
     Pradeep. 503 = edge-tts failed every try and the backup voice (ElevenLabs) couldn't take the sentence: the page
-    shows the text with a "voice unavailable" notice (never the browser's voice)."""
+    shows the text with a "voice unavailable" notice (never the browser's voice).
+    When the page hangs up (Stop, barge-in, a new question: it aborts its /speak requests), the synthesis stops.
+    Until 2026-11-04 every sentence of an interrupted reply was still made, three at a time, and the next reply's
+    first sentence waited behind them for an edge-tts slot."""
+    gone = threading.Event()
+
+    async def watch() -> None:
+        while not gone.is_set():
+            if await request.is_disconnected():
+                gone.set()
+                return
+            await asyncio.sleep(0.2)
+
+    watcher = asyncio.create_task(watch())
     try:
-        audio, media_type = synthesize(body.text)
+        audio, media_type = await run_in_threadpool(synthesize, body.text, None, True, gone.is_set)
+    except SpeechCancelled:
+        return Response(status_code=499)        # nobody is listening for it
     except Exception as e:
         print(f"[tts] unavailable: {str(e)[:120]}")
         raise HTTPException(503, "TTS unavailable")
+    finally:
+        watcher.cancel()
     return Response(audio, media_type=media_type)
 
 

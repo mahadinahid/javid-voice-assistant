@@ -61,6 +61,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import approvals  # noqa: E402
 import calendar_tools as ct  # noqa: E402
 import drive_tools  # noqa: E402
+import edge_pool  # noqa: E402
 import gnews  # noqa: E402
 import javid  # noqa: E402
 import markets  # noqa: E402
@@ -314,6 +315,7 @@ timers.TIMERS_FILE = os.path.join(SCRATCH, "timers.json")          # never rings
 watches.WATCHES_FILE = os.path.join(SCRATCH, "watches.json")       # never fires the real watches
 tracing.TRACES_FILE = os.path.join(SCRATCH, "traces.jsonl")        # offline Telegram cases wrote into the real latency log
 javid.TTS_DISK_CACHE = os.path.join(SCRATCH, "tts_cache")           # the backup voice's saved phrases
+edge_pool.ENABLED = False      # the fake edge-tts is Communicate; the edge_pool cases turn it on with fake sockets
 drive_tools.CREDENTIALS_FILE = os.path.join(SCRATCH, "credentials.json")  # Google Drive: never the real sign-in files
 drive_tools.TOKEN_FILE = os.path.join(SCRATCH, "token_drive.json")
 drive_tools.STATE_FILE = os.path.join(SCRATCH, "drive.json")
@@ -1449,6 +1451,40 @@ def tg_press(user, data, message_id):
     return {"update_id": n, "callback_query": {"id": f"cb{n}", "from": {"id": user}, "data": data,
                                                    "message": {"message_id": message_id, "chat": {"id": OWNER},
                                                                "text": "Approve this?"}}}
+
+
+def tg_poll_timeouts():
+    """The poll loop against a scripted Bot API: two long polls that never answer (ReadTimeout), then an update; then
+    a refused connection. Records every wait the loop made."""
+    script = ["ReadTimeout: The read operation timed out", "ReadTimeout: The read operation timed out",
+              [{"update_id": 7}], "ConnectError: [Errno 61] Connection refused"]
+    waits, handled = [], []
+
+    class Stop:
+        def is_set(self):
+            return not script
+
+        def wait(self, seconds):
+            waits.append(seconds)
+
+    def api(method, **params):
+        step = script.pop(0)
+        if isinstance(step, str):
+            raise RuntimeError(step)
+        return step
+    real = (telegram_bot._api, telegram_bot._stop, telegram_bot.handle_update, telegram_bot._update_state,
+            telegram_bot._bot["username"])
+    telegram_bot._api, telegram_bot._stop = api, Stop()
+    telegram_bot.handle_update, telegram_bot._update_state = handled.append, lambda **kw: None
+    telegram_bot._bot["username"] = "javid_test_bot"
+    out = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(out):
+            telegram_bot._poll()
+    finally:
+        (telegram_bot._api, telegram_bot._stop, telegram_bot.handle_update, telegram_bot._update_state,
+         telegram_bot._bot["username"]) = real
+    return {"waits": waits, "handled": handled, "log": out.getvalue()}
 
 
 @contextlib.contextmanager
@@ -2655,13 +2691,35 @@ def voice_backup_cache():
         speak_post("Your tea is ready.")
         if len(fake.tts) != 2 or len(os.listdir(javid.TTS_DISK_CACHE)) != 1:
             problems.append(f"a short sentence: {len(fake.tts) - 1} requests, saved to disk too")
-        n = len(fake.tts)
-        try:
-            javid.warm_phrases()
-        except RuntimeError:
-            pass                                        # edge-tts is down: the warm-up stops, as before
+        n, before = len(fake.tts), len(TTS_CALLS)
+        javid.warm_phrases()                            # edge-tts is down: every phrase is tried, none cached
+        short = sum(1 for p in javid.PHRASES.values() for lang, t in p.items() for s in web_tools.sentences(t)
+                    if len(s) <= javid._TTS_CACHE_MAX_CHARS)
         if len(fake.tts) != n:
             problems.append("the warm-up used the backup voice")
+        if len(TTS_CALLS) - before != short * javid.EDGE_ATTEMPTS:
+            problems.append(f"the warm-up stopped early: {len(TTS_CALLS) - before} edge-tts tries for {short} phrases")
+    # 2026-11-04: one phrase edge-tts couldn't make stopped the whole warm-up; the others are still cached now
+    ack = javid.phrase("ack", "en")
+
+    class OneFails(FakeCommunicate):
+        async def stream(self):
+            if self.text == ack:
+                raise RuntimeError("NoAudioReceived")
+            yield {"type": "audio", "data": b"ID3 fake mp3"}
+
+    def init(self, text, voice, **options):
+        FakeCommunicate.__init__(self, text, voice, **options)
+        self.text = text
+    OneFails.__init__ = init
+    real = javid.edge_tts.Communicate
+    javid.edge_tts.Communicate = OneFails
+    try:
+        done = javid.warm_phrases()
+    finally:
+        javid.edge_tts.Communicate = real
+    if ack in {s for s, _ in done} or len(done) != short - 1:
+        problems.append(f"with one phrase failing, {len(done)} of {short - 1} others were cached")
     return {"problems": problems}
 
 
@@ -3241,6 +3299,10 @@ CASES = [
          [called("market_price"), called("news_headlines"), not_called("delegate"), model_requests(0), spoken_within(40),
           screen_has(r"82,?152", "BTC from Binance"), screen_has("not financial advice"), links_shown, said_searching],
          script=[]),
+    # 2026-10-27: "Give me the market updates" (plural) missed BRIEF_ASK, and the model picked BTC and Apple shares.
+    Case("market: 'the market updates' (plural) is the brief, in code", ["Give me the market updates"],
+         [called("market_price"), screen_has(r"82,?152", "BTC from Binance"), screen_has("not financial advice"),
+          model_requests(0)], script=[]),
     Case("market: no buy/sell advice", ["Analyze bitcoin for me. Should I buy now?"],
          [screen_has(r"82,?152", "BTC from Binance"), reply_has("don't give buy or sell advice"), reply_lacks(ADVICE),
           screen_lacks(ADVICE), model_requests(0)], script=[]),
@@ -3389,6 +3451,12 @@ CASES = [
          [lambda r: None if [t for t in tg_texts(OWNER)(r) if t.startswith("⏰")] == ["⏰ Mahadi, it's time to call mom."]
           else f"pushed {[t for t in tg_texts(OWNER)(r) if t.startswith('⏰')]}", model_requests(0)],
          drive=tg_timers, script=[]),
+    # 2026-11-02 to 11-04: every long poll that never answered (45 s) was followed by a wait of 5 s doubling to 80 s.
+    Case("telegram: a long poll that never answers is polled again at once; a refused connection still backs off", [],
+         [lambda r: None if r.extra["waits"] == [5] else f"waits {r.extra['waits']} (want only the refused one's 5 s)",
+          lambda r: None if [u["update_id"] for u in r.extra["handled"]] == [7] else f"handled {r.extra['handled']}",
+          lambda r: None if r.extra["log"].count("no answer from Telegram") == 1 else f"log: {r.extra['log']!r}",
+          model_requests(0)], drive=tg_poll_timeouts, script=[]),
     Case("telegram: commands answer without the model", [],
          [lambda r: None if any("3 pending" in t for t in tg_texts(OWNER)(r)) else "/tasks",
           lambda r: None if javid.PHRASES["switched"]["bn"] in tg_texts(OWNER)(r) else "/lang bn",
@@ -3592,6 +3660,223 @@ def tts_under_load():
     return {"ok": results, "max": state["max"], "calls": state["calls"]}
 
 
+# ---------- edge-tts: pre-opened sockets (edge_pool.py) and hung-up /speak requests (2026-11-04) ----------
+def _ws_text(path: str) -> types.SimpleNamespace:
+    import aiohttp
+    return types.SimpleNamespace(type=aiohttp.WSMsgType.TEXT, data=f"X-RequestId:fake\r\nContent-Type:application/json; "
+                                 f"charset=utf-8\r\nPath:{path}\r\n\r\n{{}}")
+
+
+def _ws_audio(data: bytes, kind: bytes | None = b"audio/mpeg") -> types.SimpleNamespace:
+    """A binary message as the service sends it: 2 bytes of header length, the headers, the MP3 bytes."""
+    import aiohttp
+    head = b"X-RequestId:fake\r\n" + (b"Content-Type:" + kind + b"\r\n" if kind else b"") + b"Path:audio\r\n"
+    return types.SimpleNamespace(type=aiohttp.WSMsgType.BINARY, data=len(head).to_bytes(2, "big") + head + data)
+
+
+class FakeEdgeSocket:
+    """A pre-opened edge-tts WebSocket. `mode`: "ok" (turn.start, response, two audio chunks, the end marker,
+    turn.end), "dead" (closed before answering), "silent" (never answers), "no_audio" (answers, then turn.end)."""
+
+    def __init__(self, mode: str, log: list):
+        self.mode, self.log, self.closed, self.queue = mode, log, False, []
+
+    async def send_str(self, data: str) -> None:
+        if self.closed:
+            raise ConnectionResetError("Cannot write to closing transport")
+        self.log.append(data)
+        if "Path:ssml" in data and self.mode == "ok":
+            self.queue = [_ws_text("turn.start"), _ws_text("response"), _ws_audio(b"ID3 warm "), _ws_audio(b"mp3"),
+                          _ws_audio(b"", kind=None), _ws_text("turn.end")]
+        elif "Path:ssml" in data and self.mode == "no_audio":
+            self.queue = [_ws_text("turn.start"), _ws_text("response"), _ws_text("turn.end")]
+
+    async def receive(self, timeout=None):
+        import asyncio
+        import aiohttp
+        if self.mode == "dead":
+            self.closed = True
+            return types.SimpleNamespace(type=aiohttp.WSMsgType.CLOSED, data=None)
+        if not self.queue:
+            await asyncio.sleep(timeout or 0)
+            raise TimeoutError
+        return self.queue.pop(0)
+
+    async def close(self) -> None:
+        self.closed = True
+
+
+class FakeEdgePool:
+    """edge_pool with fake sockets: each opened in the next mode of `modes` (then "ok"), everything sent kept in log."""
+
+    def __init__(self, modes=()):
+        self.modes, self.log, self.opened = list(modes), [], 0
+
+    async def connect(self):
+        self.opened += 1
+        ws = FakeEdgeSocket(self.modes.pop(0) if self.modes else "ok", self.log)
+        await ws.send_str("X-Timestamp:now\r\nPath:speech.config\r\n\r\n" + edge_pool._CONFIG.split("\r\n\r\n", 1)[1])
+
+        class Session:
+            async def close(self):
+                pass
+        return edge_pool._Socket(Session(), ws)
+
+
+@contextlib.contextmanager
+def fake_edge_pool(fake: FakeEdgePool):
+    """The pool on, with fake sockets; afterwards nothing wanted and the pool empty again."""
+    real = (edge_pool.ENABLED, edge_pool._connect, edge_pool.ACK_SEC, javid.edge_tts.Communicate)
+    edge_pool.ENABLED, edge_pool._connect, edge_pool.ACK_SEC = True, fake.connect, 0.3
+    javid.edge_tts.Communicate = FakeCommunicate
+    javid._tts_cache.clear()
+    try:
+        yield fake
+    finally:
+        edge_pool._state["want_until"] = 0.0
+        _wait_for(lambda: not edge_pool._pool and not edge_pool._state["opening"])
+        edge_pool.ENABLED, edge_pool._connect, edge_pool.ACK_SEC, javid.edge_tts.Communicate = real
+
+
+def _wait_for(ok, seconds: float = 3.0) -> bool:
+    end = time.time() + seconds
+    while time.time() < end:
+        if ok():
+            return True
+        time.sleep(0.02)
+    return ok()
+
+
+def edge_pool_sockets():
+    """A wanted pool opens POOL_SIZE sockets; a sentence then goes out on one (the exact request Communicate would
+    send: the locked voice, no prosody change) and that socket is closed and replaced. A socket closed before answering
+    or silent past ACK_SEC isn't a failed try: the same try goes through Communicate. One that answers without audio
+    is a failed try. Sockets past MAX_AGE_SEC, or once nothing is wanted, are closed."""
+    problems = []
+    with fake_edge_pool(FakeEdgePool()) as fake:
+        edge_pool.want(5)
+        if not _wait_for(lambda: len(edge_pool._pool) == edge_pool.POOL_SIZE):
+            problems.append(f"wanted: {len(edge_pool._pool)} sockets ready, not {edge_pool.POOL_SIZE}")
+        config = [m for m in fake.log if "speech.config" in m]
+        if len(config) != edge_pool.POOL_SIZE or '"outputFormat":"audio-24khz-48kbitrate-mono-mp3"' not in config[0]:
+            problems.append(f"speech.config sent on opening: {config[:1]}")
+        before = len(TTS_CALLS)
+        audio, _ = javid.synthesize("The pre-opened socket carries this whole sentence to the service.", "en")
+        ssml = [m for m in fake.log if "Path:ssml" in m]
+        if audio != b"ID3 warm mp3" or len(TTS_CALLS) != before:
+            problems.append(f"a ready socket wasn't used: {audio!r}, {len(TTS_CALLS) - before} Communicate calls")
+        if not ssml or "<voice name='Microsoft Server Speech Text to Speech Voice (en-US, AndrewNeural)'>" not in ssml[0] \
+                or "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>" not in ssml[0]:
+            problems.append(f"the request isn't Communicate's, in the locked voice: {ssml[:1]}")
+        if not _wait_for(lambda: fake.opened == edge_pool.POOL_SIZE + 1 and len(edge_pool._pool) == edge_pool.POOL_SIZE):
+            problems.append(f"the used socket wasn't replaced ({fake.opened} opened, {len(edge_pool._pool)} ready)")
+        javid.synthesize("আগামীকাল সকালে বৃষ্টি হতে পারে, ছাতা নিয়ে যেও।", "bn")
+        if "(bn-BD, PradeepNeural)" not in [m for m in fake.log if "Path:ssml" in m][-1]:
+            problems.append("a Bangla sentence didn't go out in Pradeep's voice")
+        edge_pool._state["want_until"] = 0.0
+        if not _wait_for(lambda: not edge_pool._pool):
+            problems.append("sockets were kept open with nothing wanted")
+    for modes, want_calls, label in ((["dead", "dead"], 1, "closed before answering"),
+                                     (["silent", "silent"], 1, "silent"),
+                                     (["no_audio", "no_audio", "no_audio"], 1, "without audio")):
+        with fake_edge_pool(FakeEdgePool(modes)) as fake:
+            edge_pool.want(5)
+            _wait_for(lambda: len(edge_pool._pool) == edge_pool.POOL_SIZE)
+            before, fails = len(TTS_CALLS), sum(1 for e in selfcheck._tts if not e[1])
+            audio, _ = javid.synthesize(f"A socket that answers {label} must not cost the sentence its voice.", "en")
+            calls = len(TTS_CALLS) - before
+            noted = sum(1 for e in selfcheck._tts if not e[1]) - fails
+            if audio != b"ID3 fake mp3" and audio != b"ID3 warm mp3":
+                problems.append(f"{label}: no audio ({audio!r})")
+            if label == "without audio":
+                if noted < 1:
+                    problems.append(f"{label}: the service failing the request wasn't a failed try")
+            elif calls != want_calls or noted:
+                problems.append(f"{label}: {calls} Communicate calls (want {want_calls}), {noted} failed tries noted")
+    with fake_edge_pool(FakeEdgePool()) as fake:
+        real_age, edge_pool.MAX_AGE_SEC = edge_pool.MAX_AGE_SEC, 0.3
+        try:
+            edge_pool.want(5)
+            _wait_for(lambda: fake.opened >= edge_pool.POOL_SIZE)
+            if not _wait_for(lambda: fake.opened >= edge_pool.POOL_SIZE + 2):
+                problems.append(f"old sockets weren't replaced ({fake.opened} opened)")
+        finally:
+            edge_pool.MAX_AGE_SEC = real_age
+    return {"problems": problems}
+
+
+def speak_hang_up():
+    """A sentence nobody waits for any more stops: during a slow try (no retry, no backup, no failure noted), and
+    while queued behind three busy slots (it never reaches edge-tts). /speak answers 499 to a page that hung up.
+    The first try waits long enough for a slow spell's audio (6.6 s median on 2026-11-04)."""
+    import asyncio
+    import threading
+    problems, calls = [], []
+
+    class SlowCommunicate:
+        def __init__(self, text, voice, **options):
+            calls.append(text)
+
+        async def stream(self):
+            await asyncio.sleep(1.5)
+            yield {"type": "audio", "data": b"ID3 slow mp3"}
+
+    real = javid.edge_tts.Communicate
+    javid.edge_tts.Communicate = SlowCommunicate
+    javid._tts_cache.clear()
+    try:
+        gone = threading.Event()
+        threading.Timer(0.2, gone.set).start()
+        fails, t0 = sum(1 for e in selfcheck._tts if not e[1]), time.time()
+        try:
+            javid.synthesize("Nobody is waiting for this sentence any more, so it stops.", "en", cancelled=gone.is_set)
+            problems.append("a hung-up sentence was still made")
+        except javid.SpeechCancelled:
+            pass
+        if time.time() - t0 > 0.8 or calls != ["Nobody is waiting for this sentence any more, so it stops."]:
+            problems.append(f"stopped after {time.time() - t0:.1f} s, {len(calls)} edge-tts calls")
+        if sum(1 for e in selfcheck._tts if not e[1]) != fails or javid._edge_down["until"] > time.time():
+            problems.append("a hung-up sentence counted as an edge-tts failure")
+        if javid._edge_slots._value != javid.EDGE_PARALLEL:
+            problems.append(f"slots left taken: {javid.EDGE_PARALLEL - javid._edge_slots._value}")
+        # three slow sentences hold every slot; a fourth, already hung up, waits its turn and never reaches edge-tts
+        del calls[:]
+        busy = [threading.Thread(target=javid.synthesize, args=(f"Busy sentence {i} holds a slot for a while.", "en"))
+                for i in range(javid.EDGE_PARALLEL)]
+        for t in busy:
+            t.start()
+        _wait_for(lambda: len(calls) == javid.EDGE_PARALLEL)
+        try:
+            javid.synthesize("Queued behind the busy ones, and hung up before its turn.", "en", cancelled=lambda: True)
+            problems.append("a hung-up queued sentence was made")
+        except javid.SpeechCancelled:
+            pass
+        for t in busy:
+            t.join()
+        if any(c.startswith("Queued") for c in calls):
+            problems.append("a hung-up queued sentence reached edge-tts")
+        # the route: a page that hangs up gets 499, and the synthesis stops
+        import server
+
+        class GoneRequest:
+            def __init__(self):
+                self.t0 = time.time()
+
+            async def is_disconnected(self):
+                return time.time() - self.t0 > 0.2
+        del calls[:]
+        t0 = time.time()
+        res = asyncio.run(server.speak_text(server.SpeakBody(text="The page hung up while this was being made."),
+                                            GoneRequest()))
+        if res.status_code != 499 or time.time() - t0 > 1.0:
+            problems.append(f"/speak to a page that hung up: {res.status_code} after {time.time() - t0:.1f} s")
+    finally:
+        javid.edge_tts.Communicate = real
+    if javid.EDGE_FIRST_SEC[0] < 8:
+        problems.append(f"the first try waits {javid.EDGE_FIRST_SEC[0]} s: a slow spell's audio takes ~6.6 s")
+    return {"problems": problems}
+
+
 def alerts_are(n, pattern=None):
     def check(r):
         alerts = r.extra.get("after", {}).get("alerts", [])
@@ -3615,6 +3900,11 @@ CASES += [
     Case("news: 'show me the news' is answered in code, from Google News", ["Okay, show me the news"],
          [called("news_headlines"), reply_has(r"reuters|bbc|daily star"), reply_has("full list is on your screen"),
           numbered_lines_at_least(5), links_shown, via_google, said_searching, model_requests(0)], script=[]),
+    # 2026-10-26: "have" wasn't a filler word, so this went to the model (a news-digest skill turn, ~5 s).
+    Case("news: 'do you have any news for me?' is answered in code",
+         ["Do you have any news for me? Give me some news around the world."],
+         [called("news_headlines"), reply_has(r"top world stories"), numbered_lines_at_least(2), links_shown,
+          model_requests(0)], script=[]),
     # 2026-10-22: "Can you show me the news briefing of today?" got "No pending tasks, Mahadi. Today's calendar is empty."
     Case("news: 'the news briefing of today' is the news, not the task list",
          ["Good evening my friend. Can you show me the news briefing of today?"],
@@ -3726,6 +4016,10 @@ CASES += [
           lambda r: None if next(n for t, n in r.extra["calls"].items() if t.startswith("Stalls")) == 2
           else f"the stalled sentence: {r.extra['calls']}", model_requests(0)],
          drive=tts_under_load, script=[]),
+    Case("voice: pre-opened edge-tts sockets carry Communicate's exact request; dead ones fall back, old ones go", [],
+         [drive_ok, model_requests(0)], drive=edge_pool_sockets, script=[]),
+    Case("voice: a sentence the page hung up on stops, frees its slot and isn't a failure; /speak answers 499", [],
+         [drive_ok, model_requests(0)], drive=speak_hang_up, script=[]),
     # 2026-10-19: "Yeah, give me a plan for tomorrow." got a plan the model made up; it's the planner's.
     Case("agent: 'give me a plan for tomorrow' goes to the planner", ["Yeah, give me a plan for tomorrow."],
          [agent_ran("planner"), screen_has("project review"), model_requests(1)], tasks=T3, events=PLAN_EVENTS,
@@ -3929,7 +4223,7 @@ CASES += [
     Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
          [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 196, len(CASES)
+assert len(CASES) == 201, len(CASES)
 
 
 def print_token_summary() -> None:

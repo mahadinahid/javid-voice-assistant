@@ -76,7 +76,7 @@ know check see look how hows how's just mean asking asked ask talking talk speak
 particularly significant things thing big list rundown quickly again too only same different other others another
 sports-wise wise like lot lots little yeah yes well whole entire bunch kind sort type types stuff something anything
 everything every each region regions part parts country countries continent today's around over across do don't
-time number many much story's events happenings affairs current-affairs world's it why not
+time number many much story's events happenings affairs current-affairs world's it why not have has got
 খবর সংবাদ শিরোনাম দাও দেখাও শোনাও বলো বল কী কি আছে সব কিছু একটু প্লিজ এর র থেকে সম্পর্কে নিয়ে সর্বশেষ নতুন
 গুরুত্বপূর্ণ প্রধান জাভেদ মাহাদি আমাকে আমায় দিন দেখান শোনান বলুন টপ তাজা এখন আপডেট গুলো গুলি আর এবং ও
 """.split())

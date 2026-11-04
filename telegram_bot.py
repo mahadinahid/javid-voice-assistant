@@ -749,19 +749,27 @@ def push_due() -> None:
 
 # ---------- the loops ----------
 def _poll() -> None:
-    backoff = 5
+    backoff, silent = 5, False
     while not _stop.is_set():
         try:
             if not _bot["username"]:
                 _hello()
             updates = _api("getUpdates", offset=_load().get("offset", 0), timeout=POLL_SEC,
                            allowed_updates=["message", "callback_query"])
-            backoff = 5
+            backoff, silent = 5, False
         except RuntimeError as e:
             if str(e).startswith("401"):
                 print("[telegram] the bot token was rejected; Telegram is off until it's fixed in .env")
                 _running["on"] = False
                 return
+            if str(e).startswith("ReadTimeout"):
+                # The long poll's answer never came (POLL_SEC + 15 s): a dead connection, and the next poll opens a
+                # new one. It already waited, so poll again at once; backing off after each (5 s doubling to 2 min,
+                # 2026-11-02 to 11-04) left a message from the phone waiting that long after the network was back.
+                if not silent:
+                    print("[telegram] no answer from Telegram in time; polling again (said once until it answers)")
+                silent = True
+                continue
             print(f"[telegram] {str(e)[:120]}; retrying in {backoff}s")
             _stop.wait(backoff)
             backoff = min(backoff * 2, 120)

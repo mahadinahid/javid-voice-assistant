@@ -127,6 +127,33 @@ button:disabled { opacity: 0.55; cursor: progress; }
 </main>
 
 <script>
+// Javid's key (weblock.py), the same lines as index.html's head script: this page shares the browser's storage with
+// Javid's page, so the key it saved from the server's #key=… link goes with every request here too.
+try {
+    const found = location.hash.match(/^#key=([A-Za-z0-9_-]{32,128})$/);
+    if (found) {
+        localStorage.setItem('javid-key', found[1]);
+        history.replaceState(null, '', location.pathname + location.search);
+    }
+} catch {}
+(() => {
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (!(url.startsWith('/') || url.startsWith(location.origin + '/'))) return realFetch(input, init);
+        let key = '';
+        try { key = localStorage.getItem('javid-key') || ''; } catch {}
+        const headers = new Headers((init && init.headers) || (input instanceof Request ? input.headers : undefined));
+        if (key) headers.set('X-Javid-Token', key);
+        return realFetch(input, { ...init, headers }).then(res => {
+            if (res.status === 401) document.dispatchEvent(new Event('javid-key-missing'));
+            return res;
+        });
+    };
+})();
+const NO_KEY = 'This browser doesn’t have Javid’s key. Open Javid from the link the server printed (it ends in ' +
+               '#key=…), or run `python server.py --open`; then come back to this page.';
+
 const $ = id => document.getElementById(id);
 let timer = null;
 let locked = false;
@@ -147,7 +174,11 @@ function showLock(st) {
 
 async function refresh() {
     let st;
-    try { st = await (await fetch('/telegram/status')).json(); }
+    try {
+        const res = await fetch('/telegram/status');
+        if (res.status === 401) { $('state').textContent = NO_KEY; return; }
+        st = await res.json();
+    }
     catch { $('state').textContent = 'Javid isn’t answering. Is the server running?'; return; }
     showLock(st);
     if (!st.configured) {

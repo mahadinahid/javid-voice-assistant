@@ -8,6 +8,32 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <script id="theme-boot">
+// Javid's key (weblock.py): the server prints the page's address with it once (#key=…); it stays in this browser's
+// storage and goes with every request to Javid as the X-Javid-Token header, through this fetch wrapper (every call in
+// the page is a plain fetch of a same-origin path). A 401 means this browser has no key, or an old one: the page says
+// where to get it. The same lines are in telegram.html.
+try {
+    const found = location.hash.match(/^#key=([A-Za-z0-9_-]{32,128})$/);
+    if (found) {
+        localStorage.setItem('javid-key', found[1]);
+        history.replaceState(null, '', location.pathname + location.search);    // off the address bar and history
+    }
+} catch {}
+(() => {
+    const realFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : (input && input.url) || '';
+        if (!(url.startsWith('/') || url.startsWith(location.origin + '/'))) return realFetch(input, init);
+        let key = '';
+        try { key = localStorage.getItem('javid-key') || ''; } catch {}
+        const headers = new Headers((init && init.headers) || (input instanceof Request ? input.headers : undefined));
+        if (key) headers.set('X-Javid-Token', key);
+        return realFetch(input, { ...init, headers }).then(res => {
+            if (res.status === 401) document.dispatchEvent(new Event('javid-key-missing'));
+            return res;
+        });
+    };
+})();
 // The saved theme applies before the first paint: Orbit (the default), Glass, Overdrive, or a colour theme from themes/,
 // which is the Glass look in its own colours (the ones it had last time, 'javid-theme-vars', go on <html> now; the
 // main script refreshes them from /themes). 'aurora' and 'classic', saved by older versions, mean Glass.
@@ -653,6 +679,8 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 .mem-card button:hover { filter: brightness(1.15); }
 .mem-card.done { opacity: 0.7; }
 .mem-card.done .mc-actions { display: none; }
+.mem-card.act-card { border-color: rgba(255, 170, 60, 0.5); background: linear-gradient(135deg, rgba(255, 170, 60, 0.12), rgba(var(--violet-rgb), 0.05)); }
+.mem-card.act-card .mc-label { color: #f3b85a; }
 
 /* Skills and agents: compact chips (the description is the tooltip), glowing while one works */
 #skills-list,
@@ -1667,6 +1695,8 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     animation: ring-shake 0.45s ease-in-out 4;
 }
 .ring[hidden] { display: none; }
+.key-missing { animation: none; z-index: 97; }
+.key-missing code { font: 12px var(--mono, ui-monospace, monospace); color: #ffe2a8; }
 .ring-icon { font-size: 20px; }
 .ring-text { flex: 1; min-width: 0; line-height: 1.4; }
 .ring-text small { display: block; font-size: 11.5px; color: #d9b874; }
@@ -2928,6 +2958,11 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     <span id="ring-text" class="ring-text"></span>
     <button id="ring-dismiss">Dismiss</button>
 </div>
+<div id="key-missing" class="ring key-missing" role="alert" hidden>
+    <span class="ring-icon">🔑</span>
+    <span class="ring-text">This browser doesn't have Javid's key, so the server refuses its requests.
+        <small>Open the link the server printed at start (it ends in #key=…), or run <code>python server.py --open</code>. The key is JAVID_WEB_TOKEN in .env.</small></span>
+</div>
 
 <div id="theme-editor" class="theme-editor" role="dialog" aria-labelledby="te-title" hidden>
     <div class="te-head">
@@ -4085,7 +4120,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
         showTyping();
     }
 
-    let bubble = null, reply = '', sources = null, screen = null, skill = null, agent = null, proposals = [];
+    let bubble = null, reply = '', sources = null, screen = null, skill = null, agent = null, proposals = [], actions = [];
     const ensureBubble = () => {
         if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); speechMsg = bubble.closest('.message'); }
         return bubble;
@@ -4134,6 +4169,10 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     screen = ev.text;
                 } else if (ev.type === 'memory_proposal') {
                     proposals.push(ev);
+                } else if (ev.type === 'approval') {
+                    actions.push(ev);           // a delete or a move waits: the card goes under this reply
+                } else if (ev.type === 'approval_done') {
+                    settleAction(ev.id, ev.outcome === 'done' ? `✓ ${ev.text}` : ev.outcome === 'rejected' ? '✕ Nothing was done' : '⌛ Expired: nothing was done');
                 } else if (ev.type === 'memory') {
                     document.querySelectorAll(`.mem-card[data-pid="${ev.id}"]`).forEach(c => {
                         c.classList.add('done');
@@ -4171,6 +4210,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
         else if (bubble) {
             if (screen) addScreen(bubble.closest('.message'), screen, skill, agent);
             for (const p of proposals) bubble.closest('.message').appendChild(memoryCard(p));
+            for (const a of actions) bubble.closest('.message').appendChild(approvalCard(a));
             if (sources?.length) addSources(bubble.closest('.message'), sources);
             scrollChat();
         }
@@ -4763,6 +4803,53 @@ function memoryCard(p) {
     return card;
 }
 
+// An Approve / Reject card for a delete or a move (approvals.py): nothing happens until it's tapped, or a yes is
+// typed as the very next message. A hands-free "yes" never approves it. The card expires with the server's action.
+const ACTION_LABEL = { delete_task: 'Delete this task?', delete_event: 'Delete this event?', move_event: 'Move this event?' };
+function settleAction(id, label) {
+    document.querySelectorAll(`.act-card[data-aid="${CSS.escape(id)}"]`).forEach(c => {
+        c.classList.add('done');
+        c.querySelector('.mc-label').textContent = label;
+    });
+}
+function approvalCard(a) {
+    const card = document.createElement('div');
+    card.className = 'mem-card act-card';
+    card.dataset.aid = a.id;
+    card.innerHTML = `<div class="mc-label">⚠ ${ACTION_LABEL[a.tool] || 'Approve this?'} Nothing happens until you tap Approve.</div>
+        <div class="mc-text">${esc(a.text)}</div>
+        <div class="mc-actions"><button class="approve">Approve</button><button class="reject">Reject</button></div>`;
+    const expiry = setTimeout(() => { if (!card.classList.contains('done')) settleAction(a.id, '⌛ Expired: nothing was done'); },
+                              Math.max(1, a.expires_in || 120) * 1000);
+    const decide = async (what) => {
+        card.querySelectorAll('button').forEach(b => b.disabled = true);
+        const out = await memApi('POST', `/approvals/${a.id}/${what}`);
+        if (!out) { card.querySelectorAll('button').forEach(b => b.disabled = false); return; }
+        clearTimeout(expiry);
+        settleAction(a.id, out.outcome === 'done' ? `✓ ${out.text}` : out.outcome === 'rejected' ? '✕ Nothing was done' : '⌛ Expired: nothing was done');
+        if (out.outcome === 'done') {
+            const el = addMsg('javid', out.text);     // the outcome is in the chat (the server logged it) and spoken
+            speechMsg = el?.closest('.message');
+            speakChunk(out.text);
+            refreshCalendar();
+        }
+        if (out.tasks) refreshSidebar(out.tasks, null);
+    };
+    card.querySelector('.approve').addEventListener('click', () => decide('approve'));
+    card.querySelector('.reject').addEventListener('click', () => decide('reject'));
+    return card;
+}
+// Cards still waiting after a reload (GET /approvals): shown at the end of the chat.
+async function showPendingApprovals() {
+    try {
+        const { pending } = await (await fetch('/approvals')).json();
+        if (!pending?.length) return;
+        const chat = document.getElementById('chat');
+        for (const a of pending) chat.appendChild(approvalCard(a));
+        chat.scrollTop = chat.scrollHeight;
+    } catch { /* server not ready */ }
+}
+
 // Like api(), but shows the server's reason (e.g. "Not saved: it looks like a password…").
 async function memApi(method, url, body) {
     try {
@@ -4903,6 +4990,15 @@ function showToast(msg) {
     t.classList.add('show');
     setTimeout(() => t.classList.remove('show'), 4000);
 }
+
+// A 401 from Javid (the head script's fetch wrapper saw it): this browser has no key, or an old one. The banner stays
+// until a request succeeds again (the key arrived through a new #key=… link in another tab, and storage is shared).
+document.addEventListener('javid-key-missing', () => { document.getElementById('key-missing').hidden = false; });
+setInterval(async () => {
+    const banner = document.getElementById('key-missing');
+    if (banner.hidden) return;
+    try { if ((await fetch('/language')).ok) banner.hidden = true; } catch {}
+}, 5000);
 
 // ── Events ────────────────────────────────────────────────────────────────
 const talkBtn = document.getElementById('talk-btn');
@@ -6019,6 +6115,7 @@ refreshWatches();
         refreshDrive();
         await refreshChats();
         await loadHistory();
+        await showPendingApprovals();
         const { text } = await (await fetch('/greeting')).json();
         const el = addMsg('javid', text);
         greet(text, el?.closest('.message'));

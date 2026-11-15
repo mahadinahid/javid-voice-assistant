@@ -233,7 +233,7 @@ def speak_post(text: str):
         from fastapi.testclient import TestClient
         import server
         _speech_client = TestClient(server.app)
-    res = _speech_client.post("/speak", json={"text": text})
+    res = _speech_client.post("/speak", json={"text": text}, headers=PAGE)
     return res.status_code, res.content
 
 
@@ -268,7 +268,8 @@ def speak_like_page(chunks: list[str], page_lang: str | None) -> list[tuple[str,
         for chunk in chunks:
             javid._tts_cache.clear()     # every sentence reaches edge-tts, so every one's voice is recorded
             before = len(TTS_CALLS)
-            res = _speech_client.post("/speak", json={"text": chunk, **({"lang": page_lang} if page_lang else {})})
+            res = _speech_client.post("/speak", json={"text": chunk, **({"lang": page_lang} if page_lang else {})},
+                                      headers=PAGE)
             if res.status_code != 200 or len(TTS_CALLS) != before + 1:
                 raise AssertionError(f"/speak gave {res.status_code} for {chunk!r} ({len(TTS_CALLS) - before} edge-tts calls)")
             out.append((chunk, TTS_CALLS[-1][1]))
@@ -1058,6 +1059,7 @@ class Result:
     screen: str = ""                             # a skill's screen-only part (last turn that had one)
     skills_run: list = field(default_factory=list)  # "skill" events
     facts_by_turn: list = field(default_factory=list)  # memory lines after each turn
+    tasks_by_turn: list = field(default_factory=list)  # lines of tasks.txt after each turn
     langs: list = field(default_factory=list)    # the reply language after each turn
     agents_run: list = field(default_factory=list)  # "agent" events (an agent took the job)
     timers: list = field(default_factory=list)   # timers/reminders running after the run
@@ -1177,6 +1179,16 @@ def tasks_are(*texts):
     return check
 
 
+@check_kind("safety")
+def tasks_after_turn(i, *texts):
+    """tasks.txt right after turn i (0-based) equals this list: a delete waits for the yes."""
+    def check(r):
+        have = r.tasks_by_turn[i] if i < len(r.tasks_by_turn) else []
+        got = [re.sub(r"^(✓ )?\[[^\]]*\] ", r"\1", t) for t in have]
+        return None if got == list(texts) else f"after turn {i + 1} tasks should be {list(texts)}, got {got}"
+    return check
+
+
 @check_kind("effect")
 def fact_has(pattern):
     return lambda r: None if any(re.search(pattern, f, re.I) for f in r.facts) else f"no stored fact matches /{pattern}/ (have {r.facts})"
@@ -1217,6 +1229,15 @@ def not_deleted_until_turn(n):
     def check(r):
         early = [w for i in range(n) for w in r.writes_in_turn(i) if w[0] == "delete"]
         return f"deleted before confirmation: {early}" if early else None
+    return check
+
+
+@check_kind("safety")
+def no_cal_writes_until_turn(n):
+    """No calendar write may happen before turn index n (0-based): a move or a delete waits for the yes."""
+    def check(r):
+        early = [w for i in range(n) for w in r.writes_in_turn(i)]
+        return f"calendar changed before approval: {early}" if early else None
     return check
 
 
@@ -1659,10 +1680,9 @@ def tg_lock_and_rate():
         telegram_bot.push_due()
         while_locked = fake.texts(OWNER)[n:]
         client = TestClient(server.app)
-        local = {"host": "localhost:8000", "origin": "http://localhost:8000"}
-        refused = client.post("/telegram/lock", json={"locked": False}).status_code       # no Origin: not the page
+        refused = client.post("/telegram/lock", json={"locked": False}, headers=KEYED).status_code  # no Origin: not the page
         still = telegram_bot.locked()
-        unlocked = client.post("/telegram/lock", json={"locked": False}, headers=local)
+        unlocked = client.post("/telegram/lock", json={"locked": False}, headers=PAGE)
         telegram_bot.handle_update(tg_message(OWNER, "/tasks"))
         return {"fake": fake, "flood": flood, "pending": pending, "while_locked": while_locked, "refused": refused,
                 "still": still, "unlocked": (unlocked.status_code, unlocked.json().get("locked")),
@@ -1717,16 +1737,16 @@ def tg_setup_from_phone():
     try:
         with telegram_world(paired=False) as fake:
             client = TestClient(server.app)
-            local = {"host": "localhost:8000", "origin": "http://localhost:8000"}
-            refused = client.post("/telegram/token", json={"token": "123456789:" + "A" * 35}).status_code   # no Origin
-            bad = client.post("/telegram/token", json={"token": "123456789:bad" + "A" * 32}, headers=local)
+            refused = client.post("/telegram/token", json={"token": "123456789:" + "A" * 35},
+                                  headers=KEYED).status_code                                      # no Origin
+            bad = client.post("/telegram/token", json={"token": "123456789:bad" + "A" * 32}, headers=PAGE)
             env_after_bad = open(javid.ENV_FILE).read()
-            good = client.post("/telegram/token", json={"token": "123456789:" + "B" * 35}, headers=local)
+            good = client.post("/telegram/token", json={"token": "123456789:" + "B" * 35}, headers=PAGE)
             code = telegram_bot._new_pair_code()            # what start() makes for an unpaired bot
-            page = client.get("/telegram/status", headers={"host": "localhost:8000"}).json()
-            elsewhere = client.get("/telegram/status").status_code      # Host isn't this machine
+            page = client.get("/telegram/status", headers=KEYED).json()
+            elsewhere = client.get("/telegram/status", headers={"x-javid-token": WEB_KEY}).status_code  # Host isn't this machine
             telegram_bot.handle_update(tg_message(OWNER, f"/start {code}"))      # the QR link's Start button
-            page_after = client.get("/telegram/status", headers={"host": "localhost:8000"}).json()
+            page_after = client.get("/telegram/status", headers=KEYED).json()
             return {"fake": fake, "refused": refused, "bad": (bad.status_code, bad.json().get("detail", "")),
                     "env_after_bad": env_after_bad, "good": good.status_code, "env": open(javid.ENV_FILE).read(),
                     "mode": oct(os.stat(javid.ENV_FILE).st_mode & 0o777), "started": len(started), "code": code,
@@ -1860,7 +1880,12 @@ FAKE_KEYS = {"EXA_API_KEY": "exa-test-0123456789abcdef", "ELEVENLABS_API_KEY": "
 # presence counts. A placeholder, so a fresh clone with nothing but GROQ_API_KEY passes too (2026-11-01: without a
 # Tavily key in the environment, 18 search, news and provider cases failed), and a stray real request could never
 # spend a credit. A case's own env can still unset it.
-WORLD_ENV = {"TAVILY_API_KEY": "tvly-test-0123456789abcdef"}
+WEB_KEY = "javid-test-web-key-0123456789abcdefghijklmnop"       # the suite's JAVID_WEB_TOKEN (weblock.py)
+WORLD_ENV = {"TAVILY_API_KEY": "tvly-test-0123456789abcdef", "JAVID_WEB_TOKEN": WEB_KEY}
+# Requests to the server as the page makes them: this machine's Host, the page's own Origin and Javid's key (every
+# route but the two pages needs the key; the ones behind _local_page_only need the Origin too).
+PAGE = {"host": "localhost:8000", "origin": "http://localhost:8000", "x-javid-token": WEB_KEY}
+KEYED = {"host": "localhost:8000", "x-javid-token": WEB_KEY}       # the key without the page's Origin (a GET, or curl)
 
 
 def fixture(name: str, folder: str = "providers") -> dict:
@@ -2010,14 +2035,14 @@ def theme_routes():
     problems = []
     with theme_scratch() as folder:
         client = TestClient(server.app)
-        local = {"host": "localhost:8000", "origin": "http://localhost:8000"}
+        local = PAGE
         seed = {"name": "Deep Sea", "background": "#06101C", "accent": "#5AB2FF",
                 "glows": ["#1D4ED8", "#06B6D4", "#8B5CF6"], "blur": 16, "tint": 0.6}
         for label, response in (
-                ("made without the page's Origin", client.post("/themes", json=seed)),
+                ("made without the page's Origin", client.post("/themes", json=seed, headers=KEYED)),
                 ("made from another site", client.post("/themes", json=seed,
-                                                       headers={"host": "localhost:8000", "origin": "http://evil.example"})),
-                ("previewed without the page's Origin", client.post("/themes/preview", json=seed))):
+                                                       headers={**KEYED, "origin": "http://evil.example"})),
+                ("previewed without the page's Origin", client.post("/themes/preview", json=seed, headers=KEYED))):
             if response.status_code != 403:
                 problems.append(f"a theme was {label}: {response.status_code}")
         preview = client.post("/themes/preview", json=seed, headers=local)
@@ -2036,9 +2061,9 @@ def theme_routes():
                 problems.append("the file isn't the theme as given")
         if oct(os.stat(path).st_mode & 0o777) != "0o644":
             problems.append(f"the file's mode is {oct(os.stat(path).st_mode & 0o777)}")
-        if [t["id"] for t in client.get("/themes").json()["themes"]] != ["deep-sea", "deep-sea-2"]:
+        if [t["id"] for t in client.get("/themes", headers=KEYED).json()["themes"]] != ["deep-sea", "deep-sea-2"]:
             problems.append("GET /themes doesn't list both")
-        if client.put("/themes/deep-sea", json={**seed, "name": "X"}).status_code != 403:
+        if client.put("/themes/deep-sea", json={**seed, "name": "X"}, headers=KEYED).status_code != 403:
             problems.append("a theme was changed without the page's Origin")
         renamed = client.put("/themes/deep-sea", json={**seed, "name": "Abyss"}, headers=local)
         with open(path) as f:
@@ -2046,7 +2071,7 @@ def theme_routes():
                 problems.append(f"rename: {renamed.status_code}")
         if client.put("/themes/nope", json=seed, headers=local).status_code != 404:
             problems.append("changing a theme that isn't there didn't say so")
-        if client.delete("/themes/deep-sea").status_code != 403 or not os.path.exists(path):
+        if client.delete("/themes/deep-sea", headers=KEYED).status_code != 403 or not os.path.exists(path):
             problems.append("a theme was deleted without the page's Origin")
         if client.delete("/themes/deep-sea", headers=local).status_code != 200 or os.path.exists(path):
             problems.append("delete didn't remove the file")
@@ -2329,7 +2354,7 @@ def prov_panel():
     no_probes()
     with env(EXA_API_KEY=FAKE_KEYS["EXA_API_KEY"]):
         providers.record("tavily", 12, op="search")
-        data = TestClient(server.app).get("/providers").json()
+        data = TestClient(server.app).get("/providers", headers=KEYED).json()
     rows, problems = {p["name"]: p for p in data.get("providers", [])}, []
     if len(rows) != 12:
         problems.append(f"{len(rows)} providers")
@@ -2364,6 +2389,98 @@ def net_blocked():
     if len(NETWORK_ATTEMPTS) - n0 != 2:
         problems.append(f"attempts noted: {NETWORK_ATTEMPTS[n0:]}")
     del NETWORK_ATTEMPTS[n0:]       # this case's own attempts don't fail it
+    return {"problems": problems}
+
+
+# ---------- the web server's lock (weblock.py, 2026-11-14) ----------
+def web_lock_routes():
+    """Every request passes weblock.refuse before its route: this machine's Host, the page's own Origin when the
+    browser sends one, and Javid's key on everything but the two pages. A refused request changes nothing and starts
+    no turn."""
+    from fastapi.testclient import TestClient   # no `with`: the server's startup (warm-up, pings) doesn't run
+    import server
+    import weblock
+    problems = []
+    client = TestClient(server.app)
+    tasks0, turns0 = list(javid._read_lines()), len(javid.messages)
+    clip = {"audio": ("clip.wav", b"RIFF" + bytes(40), "audio/wav")}
+    here = {"host": "localhost:8000"}
+    here_post = {**here, "origin": "http://localhost:8000"}        # a browser sends Origin on every POST
+    evil = "https://evil.example"
+    for label, res, want in (
+            # No key: nothing but the pages, whatever the route or method.
+            ("GET /tasks without the key", client.get("/tasks", headers=here), 401),
+            ("GET /history without the key", client.get("/history", headers=here), 401),
+            ("GET /memory without the key", client.get("/memory", headers=here), 401),
+            ("GET /calendar without the key", client.get("/calendar", headers=here), 401),
+            ("GET /telegram/status without the key", client.get("/telegram/status", headers=here), 401),
+            ("POST /type without the key", client.post("/type", json={"text": "Delete all my tasks."}, headers=here_post), 401),
+            ("POST /talk without the key", client.post("/talk", files=clip, data={"mode": "push"}, headers=here_post), 401),
+            ("POST /tasks without the key", client.post("/tasks", json={"text": "Buy eggs"}, headers=here_post), 401),
+            ("a wrong key", client.get("/tasks", headers={**here, "x-javid-token": "x" * len(WEB_KEY)}), 401),
+            # Another website's request: its Origin gives it away, key or no key, GET or the "simple" POST to /talk.
+            ("a cross-site GET with the key", client.get("/tasks", headers={**KEYED, "origin": evil}), 403),
+            ("a cross-site POST /talk with the key", client.post("/talk", files=clip, data={"mode": "push"},
+                                                                 headers={**KEYED, "origin": evil}), 403),
+            ("a cross-site POST /type with the key", client.post("/type", json={"text": "Delete all my tasks."},
+                                                                 headers={**KEYED, "origin": evil}), 403),
+            ("a null Origin", client.get("/tasks", headers={**KEYED, "origin": "null"}), 403),
+            # A DNS-rebinding page reaches 127.0.0.1 under its own host name.
+            ("another Host with the key", client.get("/tasks", headers={"host": "javid.evil.example", "x-javid-token": WEB_KEY}), 403),
+            ("another Host, the page itself", client.get("/", headers={"host": "javid.evil.example"}), 403),
+            # The pages themselves need no key: a browser can't send a header to open a page.
+            ("GET /", client.get("/", headers=here), 200),
+            ("GET /telegram", client.get("/telegram", headers=here), 200),
+            ("GET / as 127.0.0.1", client.get("/", headers={"host": "127.0.0.1:8000"}), 200),
+            # With the key, from this machine: the routes work as before (a GET sends no Origin; a POST sends the page's).
+            ("GET /tasks with the key", client.get("/tasks", headers=KEYED), 200),
+            ("GET /language with the key", client.get("/language", headers=KEYED), 200),
+            ("GET /skills with the key", client.get("/skills", headers=KEYED), 200),
+            ("GET /watches with the key", client.get("/watches", headers=KEYED), 200),
+            ("GET /tasks as 127.0.0.1", client.get("/tasks", headers={"host": "127.0.0.1:8000", "x-javid-token": WEB_KEY}), 200),
+            ("POST /tasks from the page", client.post("/tasks", json={"text": "Buy eggs"}, headers=PAGE), 200),
+    ):
+        if res.status_code != want:
+            problems.append(f"{label}: {res.status_code}, not {want}")
+        elif want in (401, 403) and not (res.json().get("detail") or "").strip():
+            problems.append(f"{label}: refused without a reason")
+        if WEB_KEY in res.text and not label.startswith("GET /"):      # the pages carry no key; nor does any answer
+            problems.append(f"{label}: the key is in the response")
+    # The refused /type and /talk started no turn; only the page's POST changed the tasks.
+    if len(javid.messages) != turns0:
+        problems.append("a refused request started a turn")
+    tasks = javid._read_lines()
+    if len(tasks) != len(tasks0) + 1 or "Buy eggs" not in tasks[-1]:
+        problems.append(f"tasks after: {tasks}")
+    for name in ("index.html", "telegram.html"):
+        text = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), name)).read()
+        for needed in ("#key=", "javid-key", "X-Javid-Token", "javid-key-missing"):
+            if needed not in text:
+                problems.append(f"{name} lacks {needed!r}")
+    # The key: made on the first start and written to .env owner-only; a malformed one is replaced; the link carries
+    # it in the fragment, which a browser never sends to the server.
+    saved = javid.ENV_FILE
+    javid.ENV_FILE = os.path.join(SCRATCH, ".env-lock")
+    try:
+        with env(JAVID_WEB_TOKEN=None):
+            made, again = weblock.token(), weblock.token()
+            written = open(javid.ENV_FILE).read()
+            mode = oct(os.stat(javid.ENV_FILE).st_mode & 0o777)
+            link = weblock.link()
+        with env(JAVID_WEB_TOKEN="short"):
+            replaced = weblock.token()
+        if not weblock._FORMAT.match(made) or made != again:
+            problems.append(f"the key made: {made!r}, then {again!r}")
+        if f"JAVID_WEB_TOKEN={made}" not in written or mode != "0o600":
+            problems.append(f".env after: {written!r} mode {mode}")
+        if link != f"http://localhost:8000/#key={made}":
+            problems.append(f"the link: {link}")
+        if replaced == "short" or not weblock._FORMAT.match(replaced):
+            problems.append(f"a malformed key stayed: {replaced!r}")
+    finally:
+        javid.ENV_FILE = saved
+        with contextlib.suppress(OSError):
+            os.remove(os.path.join(SCRATCH, ".env-lock"))
     return {"problems": problems}
 
 
@@ -2842,6 +2959,186 @@ def drive_folder_reuse():
     return {"problems": problems}
 
 
+def _turn(text, script=(), **kw):
+    """One scripted web turn: (reply, events) of javid.think_stream with the model's outputs set for it."""
+    _script.extend(script)
+    events = list(javid.think_stream(text, **kw))
+    return "".join(v for k, v in events if k == "delta").strip(), events
+
+
+def approve_task_card():
+    """"Delete task 2" on the page: the task stays until the card is approved; the routes need the key and the page's
+    Origin; Approve deletes exactly the task shown, once, after the list shifted; the outcome is in the chat."""
+    from fastapi.testclient import TestClient
+    import server
+    problems = []
+    approvals.clear()
+    client = TestClient(server.app)
+    tasks0 = list(javid._read_lines())
+    reply, events = _turn("Delete task 2.", [call("delete_task", number=2), "Tap Approve to delete it, or say yes."])
+    cards = [v for k, v in events if k == "approval"]
+    told = next((m["content"] for m in javid.messages if m.get("role") == "tool"), "")
+    if javid._read_lines() != tasks0:
+        problems.append(f"the task went before Approve: {javid._read_lines()}")
+    if len(cards) != 1 or cards[0]["text"] != "Delete task: Buy milk" or cards[0]["tool"] != "delete_task":
+        problems.append(f"cards: {[(c.get('text'), c.get('tool')) for c in cards]}")
+    if "Approve card" not in told or "plain yes" not in told:
+        problems.append(f"the model was told {told!r}")
+    aid = cards[0]["id"] if cards else "none"
+    listed = client.get("/approvals", headers=KEYED).json().get("pending", [])
+    if [p["id"] for p in listed] != [aid] or listed[0].get("expires_in", 0) <= 100:
+        problems.append(f"GET /approvals listed {listed}")
+    if client.get("/approvals", headers={"host": "localhost:8000"}).status_code != 401:
+        problems.append("GET /approvals answered without the key")
+    for name, headers in (("no Origin", KEYED), ("another site's Origin", {**KEYED, "origin": "https://evil.example"}),
+                          ("another Host", {**PAGE, "host": "javid.evil.example:8000"})):
+        r = client.post(f"/approvals/{aid}/approve", headers=headers)
+        if r.status_code != 403:
+            problems.append(f"approve with {name}: {r.status_code}")
+    if javid._read_lines() != tasks0:
+        problems.append("a refused approve changed the tasks")
+    javid.delete_task(number=1)                      # the sidebar, meanwhile: the list shifts
+    r = client.post(f"/approvals/{aid}/approve", headers=PAGE)
+    out = r.json() if r.status_code == 200 else {}
+    tasks = [re.sub(r"^\[[^\]]*\] ", "", t) for t in javid._read_lines()]
+    if r.status_code != 200 or out.get("outcome") != "done" or not out.get("text", "").startswith("Deleted task #1: Buy milk"):
+        problems.append(f"approve: {r.status_code} {out}")
+    if tasks != ["Send report"]:
+        problems.append(f"after Approve the tasks are {tasks}")
+    if not (out.get("tasks") and [re.sub(r"^\[[^\]]*\] ", "", t["text"]) for t in out["tasks"]] == ["Send report"]):
+        problems.append(f"the approve answer's tasks: {out.get('tasks')}")
+    last = javid._read_log()[-1]
+    if last.get("role") != "assistant" or last.get("text") != out.get("text") or not last.get("approval"):
+        problems.append(f"the outcome wasn't logged in the chat: {last}")
+    if javid.messages[-1].get("content") != out.get("text") or not javid.messages[-1].get("approval"):
+        problems.append(f"the outcome isn't in the open chat's context: {javid.messages[-1]}")
+    again = client.post(f"/approvals/{aid}/approve", headers=PAGE).json()
+    if again.get("outcome") != "expired" or [re.sub(r"^\[[^\]]*\] ", "", t) for t in javid._read_lines()] != ["Send report"]:
+        problems.append(f"a second Approve: {again}, tasks {javid._read_lines()}")
+    if approvals.pending():
+        problems.append(f"still pending: {approvals.pending()}")
+    return {"problems": problems}
+
+
+def approve_typed_yes():
+    """"Delete my dentist appointment": a hands-free yes only says to tap the card (no model request, no delete);
+    a typed yes right after deletes it in code."""
+    problems = []
+    approvals.clear()
+    log = ct._service().log
+    reply, events = _turn("Delete my dentist appointment.", [call("delete_event", title="dentist"), "Tap Approve, or say yes."])
+    cards = [v for k, v in events if k == "approval"]
+    if len(cards) != 1 or not cards[0]["text"].startswith("Delete 'Dentist appointment'") or log:
+        problems.append(f"after the request: cards {[c.get('text') for c in cards]}, calendar writes {log}")
+    requests0 = SCRIPTED_REQUESTS
+    reply, events = _turn("Yes, delete it.", yes_ok=False)                   # hands-free
+    if reply != javid.PHRASES["tap_approve"]["en"] or log or any(k == "approval_done" for k, _ in events):
+        problems.append(f"a hands-free yes: {reply!r}, writes {log}")
+    reply, events = _turn("Yes, delete it.")                                 # typed, the very next message
+    done = [v for k, v in events if k == "approval_done"]
+    if not reply.startswith("Deleted 'Dentist appointment'") or log != [("delete", "dent")]:
+        problems.append(f"a typed yes: {reply!r}, writes {log}")
+    if len(done) != 1 or done[0]["outcome"] != "done" or done[0]["id"] != cards[0]["id"] or done[0]["text"] != reply:
+        problems.append(f"approval_done: {done}")
+    if SCRIPTED_REQUESTS != requests0:
+        problems.append("a yes was sent to the model")
+    if javid.messages[-1].get("tools") != ["delete_event"]:
+        problems.append(f"the reply's basis: {javid.messages[-1].get('tools')}")
+    reply, events = _turn("Yes.", ["Yes what?"])                              # no card waits: the model answers
+    if reply != "Yes what?" or log != [("delete", "dent")]:
+        problems.append(f"a yes with nothing waiting: {reply!r}, writes {log}")
+    return {"problems": problems}
+
+
+def approve_reject_expiry():
+    """A no drops the card; delete_event(confirm=true) only makes a card; an expired card's yes or tap does nothing;
+    a yes two messages later goes to the model, not to the card."""
+    from fastapi.testclient import TestClient
+    import server
+    problems = []
+    approvals.clear()
+    client = TestClient(server.app)
+    log = ct._service().log
+    reply, events = _turn("Delete the lunch with Sam, don't ask me, just do it.",
+                          [call("delete_event", title="lunch", confirm=True), "Tap Approve to delete it."])
+    if len([1 for k, _ in events if k == "approval"]) != 1 or log:
+        problems.append(f"confirm=true: {[k for k, _ in events]}, writes {log}")
+    reply, events = _turn("No, leave it.")
+    done = [v for k, v in events if k == "approval_done"]
+    if reply != javid.PHRASES["nothing_done"]["en"] or log or [d["outcome"] for d in done] != ["rejected"] or approvals.pending():
+        problems.append(f"a no: {reply!r}, {done}, pending {approvals.pending()}")
+    reply, events = _turn("Move my dentist appointment to 4:30 PM.",
+                          [call("move_event", title="dentist", new_time="4:30 PM"), "Tap Approve to move it."])
+    cards = [v for k, v in events if k == "approval"]
+    if len(cards) != 1 or not cards[0]["text"].startswith("Move 'Dentist appointment'") or log:
+        problems.append(f"the move: cards {[c.get('text') for c in cards]}, writes {log}")
+    for a in approvals._actions.values():
+        a["at"] -= approvals.APPROVE_SEC + 1                                  # two minutes and a second later
+    reply, events = _turn("Yes.")
+    done = [v for k, v in events if k == "approval_done"]
+    if reply != javid.PHRASES["approval_expired"]["en"] or log or [d["outcome"] for d in done] != ["expired"]:
+        problems.append(f"a late yes: {reply!r}, {done}, writes {log}")
+    if client.get("/approvals", headers=KEYED).json().get("pending"):
+        problems.append("an expired card is still listed")
+    reply, events = _turn("Move my dentist appointment to 4:30 PM.",
+                          [call("move_event", title="dentist", new_time="4:30 PM"), "Tap Approve to move it."])
+    aid = next((v["id"] for k, v in events if k == "approval"), "none")
+    for a in approvals._actions.values():
+        a["at"] -= approvals.APPROVE_SEC + 1
+    out = client.post(f"/approvals/{aid}/approve", headers=PAGE).json()
+    if out.get("outcome") != "expired" or log:
+        problems.append(f"a late tap: {out}, writes {log}")
+    reply, events = _turn("Delete task 1.", [call("delete_task", number=1), "Tap Approve to delete it."])
+    tasks0 = list(javid._read_lines())
+    reply, events = _turn("Tell me a joke.", ["Why did the chicken cross the road?"])
+    reply, events = _turn("Yes.", ["Yes to what, Mahadi?"])
+    if reply != "Yes to what, Mahadi?" or javid._read_lines() != tasks0 or len(approvals.pending()) != 1:
+        problems.append(f"a yes two messages later: {reply!r}, tasks {javid._read_lines()}, pending {approvals.pending()}")
+    out = client.post(f"/approvals/{approvals.pending()[0]['id']}/reject", headers=PAGE).json()
+    if out.get("outcome") != "rejected" or javid._read_lines() != tasks0 or approvals.pending():
+        problems.append(f"Reject: {out}, tasks {javid._read_lines()}")
+    return {"problems": problems}
+
+
+def approve_not_gated():
+    """add_task, complete_task and add_event run at once; a memory proposal's typed yes still saves it; the CLI asks
+    y/N for a delete and runs or drops it."""
+    problems = []
+    approvals.clear()
+    log = ct._service().log
+    reply, events = _turn("Add a task to buy eggs.", [call("add_task", task="Buy eggs"), "Added."])
+    reply2, events2 = _turn("Mark call mom as done.", [call("complete_task", text="call mom"), "Done."])
+    reply3, events3 = _turn("Schedule a meeting with Karim on Monday at 3 PM.",
+                            [call("add_event", title="Meeting with Karim", day="monday", time="3pm"), "Added."])
+    tasks = [re.sub(r"^(✓ )?\[[^\]]*\] ", r"\1", t) for t in javid._read_lines()]
+    if any(k == "approval" for k, _ in events + events2 + events3):
+        problems.append("a card for a tool that isn't destructive")
+    if tasks != ["✓ Call mom", "Buy milk", "Send report", "Buy eggs"] or [w[0] for w in log] != ["insert"]:
+        problems.append(f"not run at once: tasks {tasks}, calendar writes {log}")
+    reply, events = _turn("Remember that my sister's name is Nadia.",
+                          [call("propose_memory", text="Mahadi's sister is called Nadia", file="user"), "Save it?"])
+    reply, events = _turn("Yes.")
+    if not any(k == "memory" and v["outcome"] == "approved" for k, v in events) or not any("nadia" in f.lower() for f in _all_facts()):
+        problems.append(f"memory's typed yes: {reply!r}, facts {_all_facts()}")
+    # the CLI: y/N on the terminal after the reply
+    _script.extend([call("delete_task", text="buy milk"), "Approve it on the terminal."])
+    reply = javid.think("Delete the buy milk task.")
+    asked, said = [], []
+    outs = javid.cli_approvals(ask=lambda q: asked.append(q) or "y", say=said.append)
+    tasks = [re.sub(r"^(✓ )?\[[^\]]*\] ", r"\1", t) for t in javid._read_lines()]
+    if asked != ["Approve: Delete task: Buy milk? [y/N] "] or len(outs) != 1 or not outs[0].startswith("Deleted task #2: Buy milk"):
+        problems.append(f"CLI y: asked {asked}, said {outs}")
+    if "Buy milk" in tasks or javid.messages[-1].get("content") != (outs or [""])[0] or not javid.messages[-1].get("approval"):
+        problems.append(f"CLI y: tasks {tasks}, last message {javid.messages[-1]}")
+    _script.extend([call("delete_task", text="send report"), "Approve it on the terminal."])
+    reply = javid.think("Delete the send report task.")
+    outs = javid.cli_approvals(ask=lambda q: "", say=lambda *a: None)
+    tasks = [re.sub(r"^(✓ )?\[[^\]]*\] ", r"\1", t) for t in javid._read_lines()]
+    if outs != [javid.PHRASES["nothing_done"]["en"]] or "Send report" not in tasks or approvals.pending():
+        problems.append(f"CLI Enter: said {outs}, tasks {tasks}, pending {approvals.pending()}")
+    return {"problems": problems}
+
+
 def drive_on_telegram():
     """On Telegram "save that" makes an Approve card, saved only when it's tapped."""
     problems = []
@@ -3066,8 +3363,9 @@ CASES = [
          [called("list_tasks"), reply_has(r"\b(3|three)\b", "3 pending"), reply_has(r"\b(2|two)\b", "2 done")], tasks=T5),
     Case("task: complete", ["Mark buy milk as done."],
          [called("complete_task"), tasks_are("Call mom", "✓ Buy milk", "Send report")], tasks=T3),
-    Case("task: delete", ["Delete the call mom task."],
-         [called("delete_task"), tasks_are("Buy milk", "Send report")], tasks=T3),
+    Case("task: delete", ["Delete the call mom task.", "Yes."],      # the delete waits for the Approve card or this yes
+         [called("delete_task"), tasks_after_turn(0, "Call mom", "Buy milk", "Send report"), tasks_are("Buy milk", "Send report")],
+         tasks=T3),
     Case("task: flags duplicate", ["Add a task to buy milk."],
          [called("add_task"), reply_has(r"already|duplicate|twice|same|again|similar|another")], tasks=T_DUP),
     Case("task: 'that one' follow-up", ["Add a task to call the bank.", "Actually, mark that one as done."],
@@ -3119,8 +3417,8 @@ CASES = [
          [called("add_event"), inserted_event("karim", 15), cal_writes("insert", "x")]),
     Case("calendar: free time", ["When am I free tomorrow for an hour?"],
          [called("find_free_time"), no_cal_writes]),
-    Case("calendar: move event", ["Move my dentist appointment to 4:30 PM."],
-         [called("move_event"), moved_to("dent", 16, 30), cal_writes("delete")]),
+    Case("calendar: move event", ["Move my dentist appointment to 4:30 PM.", "Yes."],   # the move waits for the yes
+         [called("move_event"), no_cal_writes_until_turn(1), moved_to("dent", 16, 30), cal_writes("delete")]),
     Case("calendar: delete needs a yes", ["Delete my dentist appointment.", "Yes, delete it."],
          [called("delete_event"), not_deleted_until_turn(1), cal_writes("delete", "dent")]),
     Case("calendar: delete can't be forced in one turn",
@@ -4137,6 +4435,18 @@ CASES += [
          [drive_ok, model_requests(0)], drive=theme_refusals, script=[]),
     Case("themes: only the page makes, changes and deletes themes, each a JSON file in themes/; preview writes nothing",
          [], [drive_ok, model_requests(0)], drive=theme_routes, script=[]),
+    # ---------- the web server's lock (2026-11-14): weblock.py, the middleware in server.py ----------
+    Case("lock: every route but the two pages needs Javid's key and this machine's Host; another site's Origin is refused",
+         [], [drive_ok, model_requests(0)], drive=web_lock_routes, script=[]),
+    # ---------- Approve cards on the page and y/N in the CLI (2026-11-14, SECURITY.md item 2): approvals.py ----------
+    Case("approve: a delete waits for the card; the routes need the key and the page; Approve deletes exactly the task shown, once",
+         [], [drive_ok], drive=approve_task_card, script=[], tasks=T3),
+    Case("approve: a typed yes on the next message deletes in code; a hands-free yes only says to tap the card",
+         [], [drive_ok], drive=approve_typed_yes, script=[]),
+    Case("approve: a no drops the card, confirm=true only makes one, an expired yes or tap does nothing, a yes two messages later isn't an approval",
+         [], [drive_ok], drive=approve_reject_expiry, script=[], tasks=T3),
+    Case("approve: add, complete and add_event run at once, memory's typed yes still saves, the CLI asks y/N",
+         [], [drive_ok], drive=approve_not_gated, script=[], tasks=T3),
     Case("gate: a chat-only model gets no tools and no task; with only it left, a task turn is refused in code",
          [], [drive_ok], drive=tool_gate, client_script=[]),
     Case("gate: a call to a tool the round didn't offer never runs, and malformed arguments are refused, not a crash",
@@ -4223,7 +4533,7 @@ CASES += [
     Case("search: Tavily's recorded response becomes sources credited to Tavily; its recorded page reads", [],
          [drive_ok], drive=search_recorded, tavily_recorded=True, script=[]),
 ]
-assert len(CASES) == 201, len(CASES)
+assert len(CASES) == 206, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -4253,6 +4563,7 @@ def run_case(case: Case) -> Result:
     memory_store.write("user", case.facts)
     memory_store.write("memory", [])
     memory_store._pending.clear()
+    approvals.clear()                 # no Approve card from an earlier case waits for this one's first message
     if os.path.exists(memory_store.INDEX_FILE):
         os.remove(memory_store.INDEX_FILE)
     javid.set_language(case.lang)
@@ -4297,7 +4608,7 @@ def run_case(case: Case) -> Result:
     del javid.messages[1:]
 
     tools, replies, by_turn, sources, said, langs, screens, skills_run, agents_run = [], [], [], [], [], [], [""], [], []
-    facts_by_turn, voices, seconds, tokens, tool_events = [], [], [], 0, []
+    facts_by_turn, tasks_by_turn, voices, seconds, tokens, tool_events = [], [], [], [], 0, []
     _script = copy.deepcopy(case.script)
     fake_llm = FakeLLM(case.client_script, case.fake_validates) if case.client_script is not None else None
     case_chain = chain_of(*case.chain) if case.chain else contextlib.nullcontext()
@@ -4359,6 +4670,7 @@ def run_case(case: Case) -> Result:
             by_turn.append(len(svc.log))
             langs.append(javid.get_language())
             facts_by_turn.append(_all_facts())
+            tasks_by_turn.append(list(javid._read_lines()))
         if case.after:
             with contextlib.redirect_stdout(io.StringIO()):
                 extra["after"] = case.after()
@@ -4379,7 +4691,7 @@ def run_case(case: Case) -> Result:
         tasks = [l for l in f.read().splitlines() if l.strip()]
     return Result(case.turns, replies, tools, tasks, _all_facts(), list(svc.log), by_turn,
                   sources=sources, said=said, web=fake_web, langs=langs, screen=screens[0], skills_run=skills_run,
-                  facts_by_turn=facts_by_turn, agents_run=agents_run, timers=timers.active_json(), voices=voices,
+                  facts_by_turn=facts_by_turn, tasks_by_turn=tasks_by_turn, agents_run=agents_run, timers=timers.active_json(), voices=voices,
                   seconds=seconds, tokens=tokens, model_requests=LLM_REQUESTS + SCRIPTED_REQUESTS - requests_before,
                   tool_events=tool_events, extra=extra)
 

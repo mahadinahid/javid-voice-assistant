@@ -1,21 +1,26 @@
 """
 Javid web server — wraps javid.py in a FastAPI backend.
-Run: python server.py  →  open http://localhost:8000
+Run: python server.py  →  open the link it prints (the page's address with Javid's key: weblock.py), or
+     python server.py --open  →  opens it in the browser for you
 """
 
+import argparse
 import asyncio
 import json
+import sys
 import threading
+import webbrowser
 from contextlib import asynccontextmanager
 
 import segno
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 import agents
+import approvals
 import calendar_tools
 import drive_tools
 import edge_pool
@@ -28,12 +33,13 @@ import themes
 import timers
 import tracing
 import watches
+import weblock
 from javid import (
     _SMALL_TALK, _read_lines, add_task, delete_task, edit_task,
     clear_provider_key, get_language, is_noise, llm_status, phrase, providers_status,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
-    active_session, has_session, hold_turn,
+    active_session, has_session, hold_turn, run_outcome,
     set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
     SpeechCancelled,
 )
@@ -55,11 +61,23 @@ def _check_models():
         print(f"[llm] startup check failed: {str(e)[:80]}")
 
 
+OPEN_ON_START = False       # --open: open the page, with its key, in the browser once the server is up
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print(providers.startup_line())     # which providers are on, names only
     _restore_context()      # reopen the chat that was open (and split an old single log into chats, once)
-    print("\nJavid is up. Open http://localhost:8000\n")
+    link = weblock.link()   # makes the key on the first start (JAVID_WEB_TOKEN in .env)
+    if OPEN_ON_START:
+        print(f"\nJavid is up at {weblock.BASE_URL}; opening it in your browser.\n")
+        threading.Timer(0.8, webbrowser.open, [link]).start()
+    elif sys.stdout.isatty():
+        print(f"\nJavid is up. Open {link}\n(the link carries Javid's key for this browser; it's "
+              f"{weblock.ENV_NAME} in .env)\n")
+    else:       # stdout is a log file or a pipe: the key stays out of it
+        print(f"\nJavid is up at {weblock.BASE_URL}. A browser needs its key once: run `python server.py --open`, "
+              f"or open the page at {weblock.BASE_URL}/#key=<{weblock.ENV_NAME} from .env>\n")
     # The first TTS call after startup is slow (cold connection); warm it and regenerate the
     # cache of fixed phrases ("Yes?" first) so the first "Hey Javid" is quick.
     threading.Thread(target=_warm_tts, daemon=True).start()
@@ -73,6 +91,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def web_lock(request: Request, call_next):
+    """Every request is checked before its route (weblock.py): this machine's Host, the page's own Origin when one
+    is sent, and Javid's key on everything but the two pages. A refused request gets the status and one sentence."""
+    refused = weblock.refuse(request.method, request.url.path, request.headers)
+    if refused:
+        return JSONResponse({"detail": refused[1]}, status_code=refused[0])
+    return await call_next(request)
 
 
 # ---------- helpers ----------
@@ -129,8 +157,9 @@ def _event(**data) -> str:
     return json.dumps(data) + "\n"
 
 
-async def _reply_stream(user_text: str, session: str | None = None):
-    """Javid's reply as newline-delimited JSON events, in the page's chat, one turn at a time. The turn runs in
+async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool = True):
+    """Javid's reply as newline-delimited JSON events, in the page's chat, one turn at a time. yes_ok: a plain yes
+    may approve the previous message's Approve card (typed, or push-to-talk; never hands-free). The turn runs in
     its own thread, which holds the turn lock and hands events over a queue: when the page hangs up (Stop), the
     turn is closed at its next step (its finally still records what was said) and the lock is let go. Holding the
     lock in a generator the server resumed meant a hang-up kept it until the 120 s wait ran out."""
@@ -149,7 +178,7 @@ async def _reply_stream(user_text: str, session: str | None = None):
             with hold_turn():
                 if session and session != active_session():
                     open_session(session)
-                turn = think_stream(user_text)
+                turn = think_stream(user_text, yes_ok=yes_ok)
                 try:
                     for event in turn:
                         hand_over(event)
@@ -191,6 +220,11 @@ def _reply_event(kind: str, value) -> str | None:
         return _event(type="memory_proposal", id=value["id"], text=value["text"], file=value["file"])
     if kind == "memory":
         return _event(type="memory", outcome=value["outcome"], id=value["id"], text=value["text"])
+    if kind == "approval":          # a delete or a move waits for the card (or a typed yes on the next message)
+        return _event(type="approval", id=value["id"], text=value["text"], tool=value["tool"],
+                      expires_in=approvals.APPROVE_SEC)
+    if kind == "approval_done":     # a typed yes/no decided it
+        return _event(type="approval_done", id=value["id"], outcome=value["outcome"], text=value["text"])
     return None
 
 
@@ -214,7 +248,7 @@ async def _traced(trace: tracing.Trace, lines):
 
 def _this_machine(request: Request) -> None:
     """The server listens on 127.0.0.1; the Host check also stops a web page reaching it through DNS rebinding."""
-    if request.headers.get("host", "") not in ("localhost:8000", "127.0.0.1:8000"):
+    if request.headers.get("host", "") not in weblock.HOSTS:
         raise HTTPException(403, "Only from this machine.")
 
 
@@ -343,7 +377,7 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             yield _event(type="delta", text=phrase("not_caught"))
             yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
             return
-        async for line in _reply_stream(request, session):
+        async for line in _reply_stream(request, session, yes_ok=(mode == "push")):   # hands-free: tap only
             yield line
 
     return _ndjson(_traced(trace, events()))
@@ -609,7 +643,7 @@ def _local_page_only(request: Request):
     """Changing keys or the model order must come from this page, not from another website
     that happens to POST to localhost (browsers always send Origin on such requests)."""
     host = request.headers.get("host", "")
-    if host not in ("localhost:8000", "127.0.0.1:8000") or request.headers.get("origin") != f"http://{host}":
+    if host not in weblock.HOSTS or request.headers.get("origin") != f"http://{host}":
         raise HTTPException(403, "Only the Javid page may change this.")
 
 
@@ -744,6 +778,34 @@ def reject_memory(pid: str, request: Request):
     return _memory_json()
 
 
+# ---------- Approve cards (approvals.py): a delete or a move waits for a tap, or a typed yes ----------
+@app.get("/approvals")
+def approvals_pending():
+    """The cards still waiting (the page shows them again after a reload)."""
+    return {"pending": approvals.pending()}
+
+
+@app.post("/approvals/{aid}/approve")
+def approve_action(aid: str, request: Request):
+    """Run the card's action, once, within its time; its outcome goes into the chat as Javid's line."""
+    _local_page_only(request)   # the key, this machine's Host and the page's Origin: never another site's POST
+    action, note = approvals.take(aid)
+    if not action:
+        return {"outcome": "expired", "text": note, "tasks": _tasks_json()}
+    with hold_turn():
+        said = run_outcome(action)
+    return {"outcome": "done", "text": said, "tasks": _tasks_json()}
+
+
+@app.post("/approvals/{aid}/reject")
+def reject_action(aid: str, request: Request):
+    _local_page_only(request)
+    dropped = approvals.drop(aid)
+    return {"outcome": "rejected" if dropped else "expired",
+            "text": phrase("nothing_done") if dropped else "Expired or already handled. Nothing was done.",
+            "tasks": _tasks_json()}
+
+
 
 # ---------- colour themes (themes.py: one JSON file each in themes/) ----------
 @app.get("/themes")
@@ -788,4 +850,8 @@ def themes_delete(theme_id: str, request: Request):
     return {"ok": True}
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")
+    args = argparse.ArgumentParser(description="Javid's web server, on 127.0.0.1:8000.")
+    args.add_argument("--open", action="store_true",
+                      help="open the page in the browser, with Javid's key, once the server is up")
+    OPEN_ON_START = args.parse_args().open
+    uvicorn.run(app, host="127.0.0.1", port=weblock.PORT, log_level="warning")

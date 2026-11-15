@@ -5,7 +5,8 @@ loop (`javid.py`) and a Telegram bot (`telegram_bot.py`). It holds API keys, a G
 memory and every chat. This file lists what it defends against, how, and what is still open.
 
 Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; providers and personal data
-2026-10-25; colour themes, Groq cleared for personal data, and the status of items 3 and 4 updated 2026-11-02).
+2026-10-25; colour themes, Groq cleared for personal data, and the status of items 3 and 4 updated 2026-11-02; the
+local web server locked 2026-11-14, closing item 1).
 
 ## Threats
 
@@ -55,7 +56,7 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   (Open-Meteo) on a timer, and their only action is an alert that rings like a timer. A watch is made only from a
   message Mahadi sent himself (the page, the CLI, or the allowed Telegram account; a forwarded Telegram message is
   never a turn), in code, not by the model; a news subject with a link is refused. Cancelling on the page goes
-  through `_local_page_only`; `GET /watches` has no check, like the other read routes (open item 1). Setting or
+  through `_local_page_only`; `GET /watches`, like every route, needs Javid's key since 2026-11-14 (below). Setting or
   cancelling a watch from Telegram doesn't need Approve, like a timer (open item 9).
 - **Self-check** (`selfcheck.py`): the last 300 clips' outcomes and first 120 characters, edge-tts and Whisper
   failures are kept in memory only (never written to disk) and shown only when Mahadi asks what's wrong; the
@@ -119,22 +120,58 @@ Last reviewed: 2026-10-21 (news, watches and the self-check added 2026-10-24; pr
   does, and the name is shown as text. File names (the theme's id) are lower-case letters, digits and dashes, so no
   request reaches outside `themes/`; a file over 16 KB isn't read.
 - Making, changing and deleting a theme (`POST /themes`, `POST /themes/preview`, `PUT` and `DELETE /themes/{id}`) go
-  through `_local_page_only`. `GET /themes` has no check, like the other read routes (open item 1); it holds only
+  through `_local_page_only`. `GET /themes` needs Javid's key like every route (2026-11-14, below); it holds only
   theme names and colours.
 - The page keeps the chosen theme's colours in `localStorage`, and the head script applies only `--name` variables
   whose values hold none of `;{}<>\`.
 - Tests: `regression.py -k themes:` (light, malformed or injected colours and path tricks refused; only the page
   writes; the presets and 400 random themes keep text at 4.5:1).
 
+## The local web server (done 2026-11-14; threat 6)
+
+Before this, most routes had no Host or Origin check and there was no key: any website could POST a multipart audio
+clip to `/talk` (a "simple" request, sent without a CORS preflight) and Javid would act on it, a DNS-rebinding page could
+read `/history`, `/memory`, `/calendar` and `/tasks`, and any program on the Mac could use every route. Now every
+request passes one check before its route (`weblock.py`, the `web_lock` middleware in `server.py`):
+
+| Threat | Protection (in code) | Test (`regression.py -k lock:`) |
+|---|---|---|
+| Another website in the browser | An Origin header, when the browser sends one (every cross-site request, GET or POST, carries the other site's), must be the page's own origin, else 403. | a cross-site GET, a cross-site multipart POST to `/talk` and a cross-site `/type` with the key are refused; `Origin: null` too |
+| DNS rebinding | Host must be this server's own (`localhost` or `127.0.0.1` on its port), else 403, the pages included. | another Host with the key is refused |
+| Another program or account on this Mac | Every route but the two pages themselves (`GET /`, `GET /telegram`, static files) needs Javid's key in `X-Javid-Token`: `JAVID_WEB_TOKEN` in `.env` (mode 600), 32 random bytes made on the first start, compared in constant time; without it 401, whatever the route or method, and nothing runs (no turn, no transcription, no change). | `/tasks`, `/history`, `/memory`, `/calendar`, `/telegram/status`, `/type`, `/talk` and `POST /tasks` without the key, and a wrong key, are refused; no turn started; `GET /` and `GET /telegram` still open |
+| The key leaking | It travels to the browser once, in the link's fragment (`#key=…`), which a browser never sends to a server or logs; the server prints that link only when stdout is a terminal (`python server.py --open` opens it instead, so a redirected log never holds it); the page moves it into its own storage and off the address bar; `_redact` hides it like every `.env` value; no response carries it. | the key is in no response; the link carries it in the fragment; `.env` is written owner-only |
+
+The second lock stays: routes that change keys, memory, themes and the Telegram lock still require the Host *and*
+the page's Origin (`_local_page_only`). The lock is on the page's side too: a 401 shows a 🔑 banner naming the fix,
+so a browser without the key is told rather than failing quietly. Still true: the key lives in `.env`, so a program
+running as Mahadi can read it (open item 9's last point); the lock is against other sites, other hosts and other
+accounts, not against his own account's processes.
+
+## Approve cards on the page and in the CLI (done 2026-11-14; threat 1, item 2)
+
+Before this, only Telegram had the Approve gate: on the page `delete_task` ran as soon as the model called it,
+`move_event` too, and `delete_event`'s "confirm" was a flag the model set, not Mahadi's word; a mishearing or an
+injected instruction could delete at once. Now the three destructive tools (`approvals.DESTRUCTIVE`: `delete_task`,
+`delete_event`, `move_event`) never run when the model calls them on the page or in the CLI: `javid._web_gate`, inside
+`TOOL_MAP` like Telegram's gate (so an agent's or a skill's call is held too), turns the call into an action bound to
+its exact target (the task's line, the event's id, the move resolved to a date and time) and the model is told it
+waits. `add_task`, `complete_task`, `add_event` (checked: it can't add attendees or send invites) and the memory
+proposal keep their own paths; Telegram still gates every write.
+
+| Threat | Protection (in code) | Test (`regression.py -k approve:`) |
+|---|---|---|
+| A delete or a move the model shouldn't have made | It becomes an Approve card under the reply (`approval` event); the action runs once, within `APPROVE_SEC` (120 s), from the card's Approve (`POST /approvals/{id}/approve`: key, this machine's Host and the page's Origin, `_local_page_only`) or from a plain yes as the very next message, decided in code with no model request (`approvals.answer`); Reject or a no drops it; a late yes or tap does nothing; a yes two messages later goes to the model, never to the card. `delete_event(confirm=true)` only makes a card. | the task stays until Approve; the routes refuse without the key, the Origin or the Host; exactly the task shown goes, once, after the list shifted; a no, confirm=true, expiry, a later yes |
+| Hands-free hears the TV say "yes" | A hands-free yes (`/talk` mode `wake`/`followup`, `yes_ok=False`) never approves: Javid says to tap the card or type yes, and the card stays answerable by the next typed message. | a hands-free yes changes nothing and sends nothing to the model; the typed yes after it deletes |
+| The CLI | After the reply, each action is asked on the terminal (`Approve: Delete task: Buy milk? [y/N]`, `javid.cli_approvals`); anything but y drops it. | y deletes and logs the outcome; Enter drops it |
+| What happened | The outcome goes into the open chat as Javid's line (`record_outcome`: spoken on the page, in the history, and in the model's context, where it replaces "waiting"). | the chat log's last line is the outcome |
+
+Still open: `add_task`, `complete_task` and `add_event` run at once on the page (a wrong add is visible and easy to
+undo; a delete isn't), and a card lives in the server's memory, so a restart drops it (nothing runs).
+
 ## Open (found in the 2026-10-21 audit, not fixed yet)
 
-1. **Local web server**: most routes have no Host/Origin check and there is no API token. Any website can POST a
-   multipart audio clip to `/talk` (a "simple" request, with no CORS preflight) and Javid will act on it. A DNS-rebinding
-   page can read `/history`, `/memory`, `/calendar` and `/tasks`. Planned: a random token in `.env` required on
-   every route, plus Host/Origin checks in one middleware.
-2. **Write confirmation on the web page and CLI**: only Telegram has the Approve gate. On the page, `delete_task`
-   runs at once, and `delete_event`'s "confirm" is set by the model, not by Mahadi's words. In hands-free mode a
-   delete should need a tap.
+1. **Local web server**: done 2026-11-14, see the section above.
+2. **Write confirmation on the web page and CLI**: done 2026-11-14, see the section above.
 3. **Prompt injection on the web path**: web results go to the model as raw text. Since 2026-10-25 a call to a tool
    the round didn't offer never runs, but the first one in a turn has the round asked again with every tool offered
    (that is how a follow-up such as "yes" reaches the tool it needs), so it doesn't stop an injected instruction from

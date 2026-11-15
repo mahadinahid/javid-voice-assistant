@@ -1,11 +1,17 @@
 """
-Write actions that wait for a button. On a channel whose writes need one (Telegram, telegram_bot.py), javid's
-WRITE_TOOLS don't run when the model calls them: think_stream(gate=...) hands each call to propose(), which works
-out exactly what it would do - the task line, the calendar event (found by title words as always; then only its
-id is kept), the day and time resolved to a date and a clock time, the memory text - describes it in words and
-keeps it for APPROVE_SEC. Only take() + run() with that action's id does it, once: a typed "yes", a second press
-or a late one does nothing. The model is told the action is waiting, never that it's done.
+Write actions that wait for approval. On Telegram (telegram_bot.py) every one of javid's WRITE_TOOLS waits for a
+button: think_stream(gate=...) hands each call to propose(), which works out exactly what it would do - the task
+line, the calendar event (found by title words as always; then only its id is kept), the day and time resolved to a
+date and a clock time, the memory text - describes it in words and keeps it for APPROVE_SEC. Only take() + run() with
+that action's id does it, once: a second press or a late one does nothing. The model is told the action is waiting,
+never that it's done.
+
+On the web page and in the CLI (2026-11-14, SECURITY.md item 2) only the DESTRUCTIVE tools wait: javid's own gate
+(_web_gate) proposes them with typed_yes=True, the page shows an Approve card (POST /approvals/{id}/approve), and a
+plain yes typed or said push-to-talk on the very next message approves too (answer(), decided in code like a memory
+proposal); a hands-free yes never does (the page can hear the TV). The CLI asks y/N after the reply.
 """
+import re
 import secrets
 import time
 
@@ -15,19 +21,75 @@ import javid
 import memory_store
 
 APPROVE_SEC = 120
-_actions: dict[str, dict] = {}      # id -> {"id", "tool", "at", "text", plus what run() needs}
+DESTRUCTIVE = ("delete_task", "delete_event", "move_event")    # what waits on the web page and in the CLI
+_actions: dict[str, dict] = {}      # id -> {"id", "tool", "at", "turn", "typed_yes", "text", plus what run() needs}
+_turn = 0                           # bumped once per user message (javid.think_stream): a typed yes answers the last turn's card
 
 
-def propose(tool: str, args: dict, refuse_memory: str | None = None) -> tuple[str, dict | None]:
+def new_turn() -> None:
+    global _turn
+    _turn += 1
+
+
+def propose(tool: str, args: dict, refuse_memory: str | None = None, typed_yes: bool = False) -> tuple[str, dict | None]:
     """(what the model is told, the pending action, or None when there is nothing to approve).
-    refuse_memory: why a memory proposal is refused on this turn (the channel decides; None = allowed)."""
+    refuse_memory: why a memory proposal is refused on this turn (the channel decides; None = allowed).
+    typed_yes: a plain yes on the next message may approve it (the web page, the CLI), not only a button (Telegram)."""
     plan = _plan(tool, dict(args), refuse_memory)
     if isinstance(plan, str):
         return plan, None
-    action = {"id": secrets.token_urlsafe(9), "tool": tool, "at": time.time(), **plan}
+    action = {"id": secrets.token_urlsafe(9), "tool": tool, "at": time.time(), "turn": _turn, "typed_yes": typed_yes, **plan}
     _actions[action["id"]] = action
+    if typed_yes:
+        return (f"NOT done yet: it waits for Mahadi's approval of \"{action['text']}\" within 2 minutes: the Approve card "
+                "on screen, or a plain yes as his next message. Tell him that in a few words; don't say it's done."), action
     return (f"NOT done yet: it waits for Mahadi to tap Approve on \"{action['text']}\" within 2 minutes (a typed yes "
             "doesn't count). Tell him to tap Approve; don't say it's done."), action
+
+
+def pending() -> list[dict]:
+    """The web page's cards still waiting (id, text, tool, seconds left), oldest first."""
+    now = time.time()
+    return [{"id": a["id"], "text": a["text"], "tool": a["tool"], "expires_in": max(0, int(APPROVE_SEC - (now - a["at"])))}
+            for a in sorted(_actions.values(), key=lambda a: a["at"]) if a["typed_yes"] and now - a["at"] <= APPROVE_SEC]
+
+
+def made_this_turn() -> list[dict]:
+    """The actions this turn proposed (the CLI asks y/N for each after the reply)."""
+    return [a for a in _actions.values() if a["turn"] == _turn and a["typed_yes"]]
+
+
+_YES = re.compile(r"^\W*(yes|yeah|yep|yup|sure|ok(ay)?|please do|do it|go ahead|confirm(ed)?|approved?|"
+                  r"(delete|move|remove) it|হ্যাঁ|হ্যা|জি|ঠিক আছে|মুছে দাও|করে দাও)(?=[\s,.!?।]|$)[\w\s,.!'ঀ-৿]{0,30}$", re.I)
+_NO = re.compile(r"^\W*(no|nope|nah|don'?t|do not|cancel|never ?mind|forget it|stop|না|থাক|বাদ দাও)(?=[\s,.!?।]|$)", re.I)
+
+
+def waiting() -> dict | None:
+    """The web card a plain yes/no on this message would answer: the newest one made on the previous message."""
+    last = [a for a in _actions.values() if a["typed_yes"] and a["turn"] == _turn - 1]
+    return last[-1] if last else None
+
+
+def answer(user_text: str, yes_ok: bool = True) -> tuple[str, dict, str] | None:
+    """A plain yes/no right after a web card decides it in code (no model request): ("done", action, the outcome),
+    ("rejected", ...), ("expired", ...), or with yes_ok False (hands-free) ("tap", ...): the card is asked about again
+    and stays answerable by the next message. None when the message isn't a yes/no, or no card waits."""
+    action = waiting()
+    if not action:
+        return None
+    text = user_text.strip()
+    if _NO.match(text):
+        drop(action["id"])
+        return "rejected", action, "Nothing was done."
+    if not _YES.match(text):
+        return None
+    if not yes_ok:
+        action["turn"] = _turn
+        return "tap", action, ""
+    taken, note = take(action["id"])
+    if not taken:
+        return "expired", action, note
+    return "done", action, run(taken)
 
 
 def _plan(tool: str, args: dict, refuse_memory: str | None):

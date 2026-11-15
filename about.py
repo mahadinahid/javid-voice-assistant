@@ -198,13 +198,13 @@ _DESIGN_SCREEN = """How Javid works:
 - Answered in code, no model: news headlines, exchange rates, market briefs, watches, the self-check, where an answer came from, and questions about Javid.
 - Watches: a price level or move, news about something, or rain, checked in code; when one happens it rings like a timer and goes to Telegram.
 - Skills: {skills}. Agents: {agents}, each with its own tools and steps.
-- Checks in code: dates, counts and sums worked out in Python; web figures need an official site or two sources; holiday dates must match the official list; deleting an event needs a yes; memory needs your approval; garbled replies are retried.
+- Checks in code: dates, counts and sums worked out in Python; web figures need an official site or two sources; holiday dates must match the official list; deleting a task or an event, or moving an event, waits for your Approve or your yes; memory needs your approval; garbled replies are retried.
 - Voice: {voice_en} in English, {voice_bn} in Bangla mode, through edge-tts. No other voice.
 - Your data: tasks, memory and chats are files on Mahadi's Mac; each message goes to the model's provider to be answered."""
 
 _CAPABILITIES_SCREEN = """What Javid can do:
-- Tasks: add, list, complete, delete
-- Google Calendar: events, free time, add, move, delete (asks first)
+- Tasks: add, list, complete, delete (asks first)
+- Google Calendar: events, free time, add, move and delete (both ask first)
 - Timers and reminders
 - Weather, live crypto and stock prices, exchange rates
 - Sums and unit conversions

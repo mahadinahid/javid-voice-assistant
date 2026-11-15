@@ -12,9 +12,9 @@ and is now a web app with 25 tools, two agents, a Telegram bot and its own test 
 - **Talk naturally.** Hold Space to talk, or go hands-free: say "Javid" and keep the conversation going without the
   name for 30 seconds after each answer; hands-free, you can also cut in while it's speaking. Say "let's speak
   Bangla" and it answers in Bangla until you switch back.
-- **Your day.** Tasks; Google Calendar (what's on, free time, adding and moving events, deleting only after you
-  confirm); timers and reminders that ring in Javid's voice; a morning brief; a planner that lays out your day around
-  your events.
+- **Your day.** Tasks; Google Calendar (what's on, free time, adding events; moving or deleting one, like deleting a
+  task, only after you tap Approve or say yes); timers and reminders that ring in Javid's voice; a morning brief; a
+  planner that lays out your day around your events.
 - **The world.** Headlines from Google News, weather (Open-Meteo, with MET Norway as a backup), live crypto and stock
   prices (Binance, Yahoo Finance), exchange rates (the European Central Bank, ExchangeRate-API), public holidays, a
   calculator that knows Bangladesh's land units, web search across several engines, and a research agent that
@@ -76,8 +76,12 @@ cd javid-voice-assistant
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env          # then add your key: GROQ_API_KEY=gsk_...
-python server.py              # open http://localhost:8000
+python server.py --open       # opens http://localhost:8000 with Javid's key for your browser (see below)
 ```
+
+The server accepts requests only from a browser that holds its key (`JAVID_WEB_TOKEN`, made in `.env` on the first
+start). `--open` hands it to your browser once; without `--open`, the server prints the page's link with the key when
+it runs in a terminal. A browser without it shows a 🔑 banner saying so.
 
 The original terminal version still works: `python javid.py`, then Enter to start and stop recording. If the
 microphone is blocked, allow your terminal in System Settings → Privacy & Security → Microphone.
@@ -100,9 +104,10 @@ project folder, then connect each one from the sidebar.
 ## Privacy and security
 
 Javid runs on your Mac, and its data stays there in plain files: `tasks.txt`, `memory/`, `chat_log.jsonl` and the
-rest, all kept out of git. The server listens on `127.0.0.1` only. Keys, the model order, memory and the Telegram
-lock can be changed only from Javid's own page; some other routes (typing a message, adding a task) don't check
-yet, and that is the first open item in [`SECURITY.md`](SECURITY.md). What does leave the machine: each voice clip goes to Groq for transcription, each spoken
+rest, all kept out of git. The server listens on `127.0.0.1` only, and every request to it must carry Javid's key
+(which only your browser has), come under this machine's own address, and, when a browser sends an Origin, come
+from Javid's own page: another website, a DNS-rebinding page or another program on the Mac gets a refusal and nothing
+else. What does leave the machine: each voice clip goes to Groq for transcription, each spoken
 reply to Microsoft's edge-tts, and your requests to the language model and search providers that are on. Calendar,
 tasks, memory and chats go only to providers with `personal_ok: true`.
 
@@ -111,7 +116,7 @@ tasks, memory and chats go only to providers with `personal_ok: true`.
 ## Testing
 
 ```bash
-python regression.py                         # 137 scripted checks: no network, no API tokens
+python regression.py                         # 142 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -125,7 +130,7 @@ Telegram and Drive, so it never touches your data or spends a credit. Run it bef
 
 | Path | What it is |
 |------|------------|
-| `server.py` | The web server: routes for talking, typing, speech and the sidebar |
+| `server.py`, `weblock.py` | The web server: routes for talking, typing, speech and the sidebar; the lock every request passes first |
 | `index.html` | The whole web app in one file: markup, styles and script |
 | `javid.py` | The core: agent loop, model chain, speech in and out, the tools' wiring, and the terminal version |
 | `providers.py`, `config/providers.yaml` | The provider registry, usage ledger, budget guard and privacy rule |
@@ -135,7 +140,8 @@ Telegram and Drive, so it never touches your data or spends a credit. Run it bef
 | `memory_store.py` | Memory with approval, and the past-chat search |
 | `skills/`, `agents/` (`skills.py`, `agents.py`) | The morning-brief and news-digest skills; the research and planner agents |
 | `watches.py` | Alerts on prices, news and rain |
-| `telegram_bot.py`, `approvals.py`, `telegram.html` | The Telegram bot, its Approve buttons, and its setup page |
+| `telegram_bot.py`, `telegram.html` | The Telegram bot and its setup page |
+| `approvals.py` | Approve cards: a delete or a move waits for a tap or your yes (every write, on Telegram) |
 | `drive_tools.py` | Saving long answers to Google Drive |
 | `selfcheck.py`, `about.py` | The self-check, and answers to questions about Javid |
 | `themes.py`, `themes/` | Colour themes ([how to make one](themes/README.md)) |

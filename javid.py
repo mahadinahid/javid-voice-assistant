@@ -123,6 +123,12 @@ def set_language(lang: str) -> None:
 PHRASES = {
     "mem_saved":  {"en": "Saved. I'll remember that.", "bn": "সেভ করেছি। মনে রাখব।"},
     "mem_dropped": {"en": "Okay, I won't save that.", "bn": "ঠিক আছে, ওটা সেভ করব না।"},
+    # Approve cards (approvals.py): a destructive action waits for the card, or a typed or push-to-talk yes
+    "tap_approve": {"en": "That one needs a tap on the Approve card on your screen, or a typed yes. Nothing was done yet.",
+                    "bn": "এটার জন্য স্ক্রিনের Approve কার্ডে ট্যাপ করো, বা লিখে হ্যাঁ বলো। এখনো কিছু করা হয়নি।"},
+    "nothing_done": {"en": "Okay, nothing was done.", "bn": "ঠিক আছে, কিছু করা হয়নি।"},
+    "approval_expired": {"en": "That request expired, so nothing was done. Ask again if you still want it.",
+                         "bn": "ওই অনুরোধের সময় পেরিয়ে গেছে, তাই কিছু করা হয়নি। চাইলে আবার বলো।"},
     "switched":   {"en": "Sure, Mahadi. I'll speak English from now on.",
                    "bn": "ঠিক আছে মাহাদি, এখন থেকে আমি বাংলায় কথা বলব।"},
     "ack":        {"en": "Yes?", "bn": "হ্যাঁ, বলো?"},
@@ -522,6 +528,13 @@ def record_turn(user_text: str, reply: str) -> None:
     messages.extend([{"role": "user", "content": user_text}, {"role": "assistant", "content": reply}])
     log_message("user", user_text)
     log_message("assistant", reply)
+
+
+def record_outcome(text: str) -> None:
+    """What an Approve card did (a tap on the page), kept in the open chat as Javid's line so the next turn, and the
+    history, know it happened. Call under hold_turn."""
+    messages.append({"role": "assistant", "content": text, "approval": True})
+    log_message("assistant", text, approval=True)
 
 
 def read_history(session: str | None = None) -> list[dict]:
@@ -948,7 +961,10 @@ TOOL_MAP = {
 }
 # Tools that change Mahadi's data. On a channel whose writes need a button press (Telegram), think_stream gets a
 # `gate`: for that turn these don't run, and gate(name, args) records the exact action and says what the model is
-# told instead (approvals.py). Wrapped here in TOOL_MAP itself, so an agent's or a skill's call is gated too.
+# told instead (approvals.py). Wrapped here in TOOL_MAP itself, so an agent's or a skill's call is gated too. Without
+# a gate (the web page, the CLI, the suite) _web_gate holds back only approvals.DESTRUCTIVE (delete_task, delete_event,
+# move_event) for an Approve card or a typed yes (SECURITY.md item 2, 2026-11-14); a gate that returns None lets the
+# tool run.
 WRITE_TOOLS = ("add_task", "complete_task", "delete_task", "add_event", "move_event", "delete_event", "propose_memory")
 # Tools that read or write Mahadi's personal data: calendar, memory, chat history, tasks. Privacy rule (the model
 # router, _open_stream): a request that carries their results, or a turn that needs them, goes only to providers with
@@ -957,10 +973,27 @@ PERSONAL_TOOLS = frozenset({"add_task", "list_tasks", "delete_task", "complete_t
                             "search_history", "morning_briefing", "list_events", "find_free_time", "add_event",
                             "move_event", "delete_event"})
 _write_gate = None
+_new_approvals: list = []     # this turn's web cards (approvals.py actions), yielded as ("approval", action) events
+
+
+def _web_gate(name: str, args: dict):
+    """The page's and the CLI's gate: a destructive tool becomes an Approve card (the model is told it waits); any
+    other write runs (None)."""
+    import approvals
+    if name not in approvals.DESTRUCTIVE:
+        return None
+    told, action = approvals.propose(name, args, typed_yes=True)
+    if action:
+        _new_approvals.append(action)
+    return told
 
 
 def _gated(name: str, run):
-    return lambda args: _write_gate(name, args) if _write_gate else run(args)
+    def call(args):
+        if _write_gate and (told := _write_gate(name, args)) is not None:
+            return told
+        return run(args)
+    return call
 
 
 for _name in WRITE_TOOLS:
@@ -2451,7 +2484,7 @@ def _relay(answer, lang: str, used: list):
         yield (kind, value)
 
 
-def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
+def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), yes_ok: bool = True):
     """Yield ("tool", name), ("say", text), ("sources", links), ("lang", code) and ("delta", text)
     events as the reply is produced. "say" is spoken but isn't part of the reply ("Searching…");
     "lang" means the message switched the reply language.
@@ -2461,12 +2494,18 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     time before get_datetime), so it is dropped instead of spoken.
 
     gate: for this turn, WRITE_TOOLS go to gate(name, args) instead of running (Telegram's Approve buttons), and a
-    typed yes doesn't decide a memory proposal. blocked: tools this turn never gets or runs, whatever the model
-    asks for (Telegram: the web tools for a message with a link).
+    typed yes doesn't decide a memory proposal. Without one, _web_gate makes an Approve card of each destructive
+    tool (approvals.DESTRUCTIVE), yielded as ("approval", action); a plain yes/no on the next message decides the card
+    here, in code (("approval_done", {...}) then the outcome as the reply), when yes_ok: typed, or push-to-talk; a
+    hands-free yes (yes_ok False) only says to tap the card. blocked: tools this turn never gets or runs, whatever the
+    model asks for (Telegram: the web tools for a message with a link).
     """
+    import approvals
     global _write_gate
     _start_turn_usage()
     calendar_tools.new_turn()   # lets delete_event tell "next message" from "same turn"
+    approvals.new_turn()        # a typed yes answers only a card made on the previous message
+    _new_approvals.clear()
     web_tools.new_turn()
     skills.new_turn()
     memory_store.new_turn()
@@ -2499,7 +2538,23 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
     previous = next((m for m in reversed(messages[1:turn_start]) if m["role"] == "assistant" and not m.get("tool_calls")), None)
     lang = get_language()
     try:
-        _write_gate = gate
+        _write_gate = gate or _web_gate
+        # A yes/no right after an Approve card (a delete or a move) decides it here, in code: never the model, and
+        # never from hands-free (yes_ok False: the page may be hearing the TV), where it only says to tap the card.
+        card = None if gate else approvals.answer(user_text, yes_ok)
+        if card:
+            outcome, action, said = card
+            tracing.mark("routing_done")
+            if outcome == "tap":
+                reply = phrase("tap_approve", lang)
+            else:
+                yield ("approval_done", {"id": action["id"], "outcome": outcome, "text": said})
+                reply = {"done": said, "rejected": phrase("nothing_done", lang),
+                         "expired": phrase("approval_expired", lang)}[outcome]
+                if outcome == "done":
+                    code_tools.append(action["tool"])
+            yield ("delta", reply)
+            return
         # A yes/no right after a memory proposal decides it here: the model can't save memory. Not on a gated
         # channel: there only a button saves, and a typed yes there must not approve a card on the web page.
         decided = None if gate else memory_store.answer_from_reply(user_text)
@@ -2776,6 +2831,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset()):
                     skill_results.append(result)
                 while _new_proposals:
                     yield ("memory_proposal", _new_proposals.pop(0))
+                while _new_approvals:
+                    yield ("approval", _new_approvals.pop(0))
                 if call["name"] == "delegate":
                     # One agent run per turn: if it failed, the model answers instead of starting it again.
                     tools = [t for t in tools if t["function"]["name"] != "delegate"]
@@ -2855,7 +2912,7 @@ def _drive_save(want: str, report: dict | None, lang: str) -> tuple[str, list]:
         return drive_tools.say("refused", lang), []
     if not report:
         return drive_tools.say("nothing", lang), []
-    if _write_gate:
+    if _write_gate and _write_gate is not _web_gate:     # Telegram: the save waits for its button
         _write_gate("save_report", {"report": report})
         return drive_tools.say("approve", lang, title=drive_tools.title_of(report)), []
     if want == "ask":
@@ -2866,6 +2923,36 @@ def _drive_save(want: str, report: dict | None, lang: str) -> tuple[str, list]:
 
 def think(user_text: str) -> str:
     return "".join(text for kind, text in think_stream(user_text) if kind == "delta").strip()
+
+
+def cli_approvals(ask=input, say=print) -> list[str]:
+    """The CLI's Approve cards: after a reply, each destructive action the turn proposed is asked about on the terminal
+    (y/N) and run or dropped at once. Returns what was said about each (the CLI speaks them too)."""
+    import approvals
+    outcomes = []
+    for action in approvals.made_this_turn():
+        try:
+            answer = ask(f"Approve: {action['text']}? [y/N] ")
+        except EOFError:
+            answer = ""
+        if answer.strip().lower() in ("y", "yes"):
+            taken, note = approvals.take(action["id"])
+            said = run_outcome(taken) if taken else note
+        else:
+            approvals.drop(action["id"])
+            said = phrase("nothing_done")
+        say(f"Javid: {said}")
+        outcomes.append(said)
+    return outcomes
+
+
+def run_outcome(action: dict) -> str:
+    """Run an approved action (approvals.run) and keep its outcome in the chat (record_outcome). Call under
+    hold_turn, or from the CLI's own loop."""
+    import approvals
+    said = approvals.run(action)
+    record_outcome(said)
+    return said
 
 
 # ---------- 4. MOUTH: text -> speech ----------
@@ -3191,6 +3278,8 @@ def main() -> None:
             trace.mark("first_text")
             speak(reply, trace)
             tracing.finish_local(trace)
+            for said in cli_approvals():        # a delete or a move waits for y/N here
+                speak(said)
 
             if "goodbye" in text.lower():
                 break

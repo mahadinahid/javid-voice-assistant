@@ -1240,6 +1240,12 @@ def _start_turn_usage() -> None:
     _turn_usage = {}
 
 
+def turn_usage() -> dict | None:
+    """The finished turn's token record (model, requests, prompt, completion, total, cached), for the page's
+    live readout; None when the turn made no model request (answered in code)."""
+    return last_turn_usage
+
+
 def _finish_turn_usage() -> None:
     """Log the turn's tokens, credited to the model that served most of its requests."""
     global _turn_usage, last_turn_usage
@@ -2616,6 +2622,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
             yield ("delta", reply)
             return
         tracing.mark("routing_done")    # tools chosen; the next step is the first LLM request
+        llm_requests = 0
         retried_empty = False
         retried_error = False
         retried_garbled = False
@@ -2673,6 +2680,9 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                     text, handoff = handoff["spoken"], None
                 else:
                     text = "".join(_stream_completion(tool_calls, req, round_tools))
+                    if _round_model["id"]:      # the page's live readout: which model answered, and how many requests so far
+                        llm_requests += 1
+                        yield ("llm", {"model": _round_model["id"], "n": llm_requests})
             except API_ERRORS as e:
                 # The model reached for a tool select_tools didn't send (Groq rejects the call):
                 # widen to every tool and ask again.

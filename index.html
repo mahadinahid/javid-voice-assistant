@@ -1110,6 +1110,114 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 
 /* ── Talk controls ── */
 .controls { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+/* ── Systems (2026-11-15): live telemetry under the voice ball. Shown only beside the conversation (.main.side, its
+   grid's last row); the stacked layout keeps that room for the chat. Its accent follows the orb's state
+   (data-state, set with setOrb), and while Javid works (.busy) the frame glows and the dot breathes. ── */
+.vitals { display: none; }
+.main.side .vitals {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);     /* never the content's width: the pulse canvas sizes itself to its box */
+    grid-area: 3 / 1;
+    align-self: start;
+    justify-self: center;
+    width: min(100%, 372px);
+    max-height: 100%;
+    min-height: 0;
+    overflow: hidden;
+    gap: 6px;
+    padding: 9px 13px 10px;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.03);
+    font: 11px/1.45 var(--vit-font, 'JetBrains Mono', ui-monospace, monospace);
+    letter-spacing: 0.03em;
+    color: var(--text-2);
+    --vit-accent: var(--text-3);
+    --vit-trace: rgba(var(--cyan-rgb), 0.85);
+    transition: border-color 0.4s, box-shadow 0.4s;
+}
+.vitals[data-state="listening"] { --vit-accent: #ff9cc8; --vit-trace: #ff9cc8; }
+.vitals[data-state="thinking"]  { --vit-accent: var(--violet-soft); --vit-trace: var(--violet-soft); }
+.vitals[data-state="speaking"]  { --vit-accent: var(--cyan-soft); --vit-trace: var(--cyan-soft); }
+.vitals[data-state="standby"]   { --vit-accent: #7eeccc; --vit-trace: #7eeccc; }
+.vitals[data-state="followup"]  { --vit-accent: #9dbbff; --vit-trace: #9dbbff; }
+.main.side .vitals.busy {
+    border-color: color-mix(in srgb, var(--vit-accent) 45%, transparent);
+    box-shadow: 0 0 28px -12px var(--vit-accent);
+}
+.vit-head { display: flex; align-items: center; gap: 10px; min-height: 22px; }
+.vit-title {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--vit-accent);
+    white-space: nowrap;
+    transition: color 0.3s;
+}
+.vit-title::before {
+    content: '';
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    margin: 0 7px 1px 0;
+    border-radius: 50%;
+    background: var(--vit-accent);
+    box-shadow: 0 0 8px var(--vit-accent);
+}
+.vitals.busy .vit-title::before { animation: vit-blink 1s ease-in-out infinite; }
+.vit-pulse { flex: 1 1 0; min-width: 0; height: 22px; position: relative; }
+.vit-pulse canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.vit-up { font-size: 10px; color: var(--text-4); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.vit-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 12px; }
+.vit-cell { min-width: 0; }
+.vit-k { display: block; font-size: 9.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--label); }
+.vit-v {
+    display: block;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
+    transition: color 0.3s;
+}
+.vit-v.live { color: var(--vit-accent); }
+.vit-s { display: block; font-size: 10px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vit-crew { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+.vit-crew:empty { display: none; }
+.vit-chip {
+    font-size: 10px;
+    padding: 1px 7px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    color: var(--text-3);
+    white-space: nowrap;
+    transition: color 0.3s, border-color 0.3s;
+}
+.vit-chip.on {
+    color: var(--vit-accent);
+    border-color: currentColor;
+    box-shadow: 0 0 10px -3px currentColor;
+    animation: vit-breathe 1.6s ease-in-out infinite;
+}
+.vit-chip.tool { color: var(--text); border-style: dashed; }
+.vit-two { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 0 12px; }
+.vit-list { margin: 2px 0 0; padding: 0; list-style: none; font-size: 10.5px; line-height: 1.42; }
+.vit-list li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-2); }
+.vit-list li.empty { color: var(--text-4); }
+.vit-list li i { font-style: normal; color: var(--vit-accent); margin-right: 5px; }
+.vit-log li { color: var(--text-3); }
+.vit-log li small { font-size: 9.5px; color: var(--text-4); margin-right: 6px; font-variant-numeric: tabular-nums; }
+.vit-log li.new { color: var(--text); animation: vit-in 0.5s ease-out; }
+@keyframes vit-blink { 50% { opacity: 0.25; } }
+@keyframes vit-breathe { 50% { box-shadow: 0 0 14px -2px currentColor; } }
+@keyframes vit-in { from { opacity: 0; transform: translateX(-6px); } }
+@media (prefers-reduced-motion: reduce) {
+    .vitals.busy .vit-title::before, .vit-chip.on, .vit-log li.new { animation: none; }
+}
 .talk-btn {
     display: flex;
     align-items: center;
@@ -1190,27 +1298,29 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 .main.side {
     display: grid;
     grid-template-columns: clamp(300px, 34%, 440px) minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) auto auto minmax(0, 1fr);       /* the left side centred top to bottom */
-    gap: 22px 32px;
+    grid-template-rows: auto auto minmax(0, 1fr);       /* the ball, the buttons, then the Systems panel in what's left */
+    gap: 18px 32px;
     padding: 18px 24px;
 }
-.main.side .orb-section { grid-area: 2 / 1; }
+.main.side .orb-section { grid-area: 1 / 1; }
 html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
-.main.side .controls {          /* Hold to talk on its own row; Hands-free shares the next with Stop */
-    grid-area: 3 / 1;
+.main.side .controls {          /* Hold to talk and Hands-free side by side (2026-11-15, Mahadi: the room goes to the globe);
+    grid-area: 2 / 1;              Stop, while shown, takes a row under them */
     justify-self: center;
     flex-wrap: wrap;
-    width: min(100%, 300px);
+    width: min(100%, 372px);
 }
-.main.side .talk-btn { flex: 1 1 100%; justify-content: center; }
-.main.side :is(.hf-btn, .stop-btn) {        /* one line each, so Stop never moves the ball */
+.main.side :is(.talk-btn, .hf-btn) {
     flex: 1 1 0;
     align-self: stretch;
     align-items: center;
     justify-content: center;
-    padding-inline: 12px;
+    padding-inline: 10px;
     white-space: nowrap;
 }
+.main.side .talk-btn { gap: 7px; }
+.main.side .talk-hint { display: none; }     /* "· Space" doesn't fit beside Hands-free; the title says it */
+.main.side .stop-btn { flex: 1 1 100%; justify-content: center; }
 .main.side .chat-section {
     grid-area: 1 / 2 / -1;
     align-self: stretch;
@@ -2189,7 +2299,7 @@ html[data-theme="orbit"] .main.side .orb-section {
 }
 html[data-theme="orbit"] .main.side .orb-wrapper {
     grid-area: globe;
-    width: clamp(236px, min(100% - 24px, 100vh - 390px), 320px);
+    width: clamp(200px, min(100%, 100vh - 535px), 360px);     /* 535: the buttons' and the Systems panel's room under it */
     height: auto;
     aspect-ratio: 236 / 220;
 }
@@ -2205,6 +2315,24 @@ html[data-theme="orbit"] .main.side .hud-right { grid-area: time; justify-self: 
 html[data-theme="orbit"] .main.side .hud::after { top: auto; bottom: 0; width: 100%; }
 html[data-theme="orbit"] .main.side .hud-left::after { left: 0; }
 html[data-theme="orbit"] .main.side .hud-right::after { right: 0; }
+html[data-theme="orbit"] .vitals {          /* the Systems panel: a HUD readout, bracketed like the cards */
+    --vit-font: var(--hud);
+    position: relative;
+    border-radius: 6px;
+    letter-spacing: 0.08em;
+    background: rgba(4, 9, 18, 0.55);
+}
+html[data-theme="orbit"] .vitals::before, html[data-theme="orbit"] .vitals::after {
+    content: '';
+    position: absolute;
+    width: 12px;
+    height: 12px;
+    border: 0 solid rgba(56, 225, 255, .75);
+    pointer-events: none;
+}
+html[data-theme="orbit"] .vitals::before { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; border-top-left-radius: 5px; }
+html[data-theme="orbit"] .vitals::after { right: 0; bottom: 0; border-right-width: 2px; border-bottom-width: 2px; border-bottom-right-radius: 5px; }
+html[data-theme="orbit"] .vit-chip { border-radius: 3px; }
 html[data-theme="orbit"] .sidebar {         /* the panels' dropdown in deep space */
     background: rgba(4, 9, 18, .92);
     box-shadow: 0 24px 60px -16px rgba(0, 0, 0, .85), inset 0 1px 0 rgba(160, 230, 255, .08);
@@ -2545,6 +2673,24 @@ html[data-theme="overdrive"] .orb.followup ~ .orb-ring:nth-child(2) { border-col
 }
 @keyframes od-wave { from { transform: scale(1); } to { transform: scale(1.09); } }
 html[data-theme="overdrive"] .orb-label { font-family: var(--od-font); font-size: 11.5px; letter-spacing: 0.3em; }
+html[data-theme="overdrive"] .main.side .vitals {       /* the Systems panel: a chamfered plate in red and amber */
+    --vit-font: var(--od-font);
+    --vit-accent: #f2413a;
+    --vit-trace: var(--od-red);
+    border-radius: 0;
+    border-color: var(--od-line);
+    background: rgba(255, 0, 0, 0.035);
+    clip-path: polygon(10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%, 0 10px);
+    letter-spacing: 0.06em;
+}
+html[data-theme="overdrive"] .vitals[data-state="listening"] { --vit-accent: var(--od-hot); --vit-trace: var(--od-hot); }
+html[data-theme="overdrive"] .vitals[data-state="thinking"]  { --vit-accent: var(--od-amber); --vit-trace: var(--od-amber); }
+html[data-theme="overdrive"] .vitals[data-state="speaking"]  { --vit-accent: #fff; --vit-trace: #fff; }
+html[data-theme="overdrive"] .vitals[data-state="standby"]   { --vit-accent: #d0675d; --vit-trace: #d0675d; }
+html[data-theme="overdrive"] .vitals[data-state="followup"]  { --vit-accent: var(--od-amber); --vit-trace: var(--od-amber); }
+html[data-theme="overdrive"] .vit-chip { border-radius: 0; }
+html[data-theme="overdrive"] .vit-k { color: var(--od-muted); }
+html[data-theme="overdrive"] .vit-up, html[data-theme="overdrive"] .vit-log li small, html[data-theme="overdrive"] .vit-list li.empty { color: var(--od-faint); }
 html[data-theme="overdrive"] .orb-label.idle { color: #f2413a; }
 html[data-theme="overdrive"] .orb-label.listening { color: var(--od-hot); }
 html[data-theme="overdrive"] .orb-label.listening::before {      /* the dot blinks; the words stay readable */
@@ -2871,13 +3017,35 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 
         <!-- Hold-to-talk -->
         <div class="controls">
-            <button id="talk-btn" class="talk-btn">
+            <button id="talk-btn" class="talk-btn" title="Hold to talk, or hold Space">
                 <span>🎙</span>
-                <span id="btn-label">Hold to Talk &nbsp;·&nbsp; Space</span>
+                <span id="btn-label">Hold to Talk</span><span class="talk-hint">&nbsp;·&nbsp; Space</span>
             </button>
             <button id="hf-btn" class="hf-btn" title="Hands-free: say “Javid…” to talk (H)">🎧 Hands-free</button>
             <button id="stop-btn" class="stop-btn" title="Stop (Esc)">■ Stop</button>
         </div>
+
+        <!-- Systems: live telemetry under the voice ball (shown beside the conversation): the model answering and its
+             tokens, this turn's clock and the usual latency, pending tasks, the skills and agents with the one at work
+             lit, and a log of what Javid is doing right now -->
+        <section id="vitals" class="vitals glass" data-state="idle" aria-label="Live status">
+            <div class="vit-head">
+                <span class="vit-title" id="vit-state">Online</span>
+                <span class="vit-pulse" aria-hidden="true"><canvas id="vit-pulse"></canvas></span>
+                <span class="vit-up" id="vit-up" title="Since this page opened">UP 00:00</span>
+            </div>
+            <div class="vit-grid">
+                <div class="vit-cell"><span class="vit-k">Model</span><span class="vit-v" id="vit-model">—</span><span class="vit-s" id="vit-model-sub">&nbsp;</span></div>
+                <div class="vit-cell"><span class="vit-k">Latency</span><span class="vit-v" id="vit-lat">—</span><span class="vit-s" id="vit-lat-sub">&nbsp;</span></div>
+                <div class="vit-cell"><span class="vit-k">Tasks</span><span class="vit-v" id="vit-tasks">—</span><span class="vit-s" id="vit-tasks-sub">&nbsp;</span></div>
+                <div class="vit-cell"><span class="vit-k">Keeping</span><span class="vit-v" id="vit-keep">—</span><span class="vit-s" id="vit-keep-sub">&nbsp;</span></div>
+            </div>
+            <div class="vit-crew" id="vit-crew"></div>
+            <div class="vit-two">
+                <div><span class="vit-k">Pending</span><ul class="vit-list" id="vit-tasklist"></ul></div>
+                <div><span class="vit-k">Activity</span><ul class="vit-list vit-log" id="vit-log"></ul></div>
+            </div>
+        </section>
 
         <!-- Chat -->
         <div class="chat-section">
@@ -3031,7 +3199,316 @@ function setOrb(state) {
     orb.className   = `orb ${s.cls}`;
     label.className = `orb-label ${s.cls}`;
     label.textContent = (LOOK_LABELS[document.documentElement.dataset.theme] || {})[state] || s.label;
+    vitals.state(state);
 }
+
+// ── Systems: the live telemetry under the voice ball (2026-11-15) ─────────
+// Shows, from what the page already receives, what Javid is doing while he does it: the model answering (the `llm`
+// event after each request, the turn's tokens on `done`), a clock from Send to first audio and to the reply, pending
+// tasks, the skills and agents with the one at work lit, timers and watches, and a log of the turn's steps. The pulse
+// is a trace that breathes while he rests, follows the microphone while he listens, beats while he thinks and follows
+// the playback while he speaks (hands-free, where the playback tap exists; a steady rhythm otherwise). It reads only;
+// nothing here changes a request. Drawn at 30 fps while busy and 12 while resting, never when the panel is hidden
+// (the stacked layout) or the tab is; one still line under reduced motion.
+let vitMic = 0;             // the hands-free mic's level, set by onFrame
+const vitals = (() => {
+    const $ = id => document.getElementById(id);
+    const STATE_WORD = { idle: 'Online', listening: 'Listening', thinking: 'Thinking', speaking: 'Speaking',
+                         standby: 'Standby', followup: 'Channel open' };
+    const LOG_SHOW = 4, TASKS_SHOW = 3;
+    const openedAt = Date.now();
+    let state = 'idle', turn = null, lastTurn = null, tool = null, crew = { skills: [], agents: [] }, lit = { skill: null, agent: null };
+    let tasks = [], keep = { timers: 0, watches: 0 }, log = [], seq = 0, clockTimer = null;
+    let raf = 0, lastDraw = 0, trace = null, tracePos = 0, lastSample = 0, drawn = { state: null };
+    const reduced = matchMedia('(prefers-reduced-motion: reduce)');
+
+    const root = () => $('vitals');
+    const shown = () => { const el = root(); return !!el && el.offsetParent !== null; };
+    const busy = () => state === 'thinking' || state === 'speaking' || state === 'listening';
+    const esc2 = v => esc(String(v ?? ''));
+    const secs = ms => ms < 10000 ? `${(ms / 1000).toFixed(1)} s` : `${Math.round(ms / 1000)} s`;
+    const clock = () => new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+
+    function note(mark, text) {
+        log.push({ at: clock(), mark, text, id: ++seq });
+        if (log.length > 60) log.shift();
+        renderLog();
+    }
+
+    // ── the readouts ──
+    function nextModel() {
+        if (!llmStatus) return null;
+        const ms = llmStatus.models.map(liveModel);
+        return ms.find(m => m.state === 'serving') || ms.find(m => m.state === 'ready' || m.state === 'reserve') || null;
+    }
+    const shortName = id => (id || '').split(':').pop().split('/').pop();
+    function renderModel() {
+        const v = $('vit-model'), sub = $('vit-model-sub');
+        if (!v) return;
+        const m = nextModel();
+        if (turn) {
+            v.textContent = turn.model ? shortName(turn.model) : (m ? m.name : 'choosing a model');
+            v.classList.add('live');
+            sub.textContent = turn.model ? `request ${turn.n} answered · ${turn.inCode ? 'answered in code' : 'working…'}`
+                                         : turn.inCode ? 'answered in code, no model request' : 'request out…';
+            return;
+        }
+        v.classList.remove('live');
+        v.textContent = m ? m.name : (llmStatus ? 'no model ready' : '—');
+        let today = '';
+        if (m) today = m.tpd_limit ? `${fmtK(m.est_used_24h ?? m.tokens_24h.total)}/${fmtK(m.tpd_limit)} tok today`
+                                   : `${fmtK(m.tokens_24h.total)} tok today`;
+        const last = lastTurn?.usage ? `last turn ${fmtK(lastTurn.usage.total)} tok · ${lastTurn.usage.requests} req` : '';
+        sub.textContent = [last, today].filter(Boolean).join(' · ') || '\u00a0';
+    }
+
+    function medians() {
+        const st = latencyData?.stats || {};
+        return ['chat', 'command', 'web'].filter(k => st[k]?.ttfa_median != null).map(k => `${k} ${fmtMs(st[k].ttfa_median)}`);
+    }
+    function renderLat() {
+        const v = $('vit-lat'), sub = $('vit-lat-sub');
+        if (!v) return;
+        const med = medians();
+        if (turn) {
+            const now = Date.now();
+            v.classList.add('live');
+            if (turn.firstAudio != null) {
+                v.textContent = `voice ${secs(turn.firstAudio - turn.t0)}`;
+                sub.textContent = turn.replyAt ? `reply ${secs(turn.replyAt - turn.t0)} · ${secs(now - turn.t0)} on air` : `${secs(now - turn.t0)} on air`;
+            } else {
+                v.textContent = secs(now - turn.t0);
+                sub.textContent = turn.firstText ? `first words at ${secs(turn.firstText - turn.t0)}` : (tool ? `running ${tool}` : 'waiting for the first words…');
+            }
+            return;
+        }
+        v.classList.remove('live');
+        if (lastTurn) {
+            v.textContent = lastTurn.firstAudio != null ? `voice ${secs(lastTurn.firstAudio - lastTurn.t0)}` : lastTurn.replyAt ? `reply ${secs(lastTurn.replyAt - lastTurn.t0)}` : '—';
+            const reply = lastTurn.replyAt && lastTurn.firstAudio != null ? `reply ${secs(lastTurn.replyAt - lastTurn.t0)}` : '';
+            sub.textContent = [reply, med.length ? `median ${med[0]}` : ''].filter(Boolean).join(' · ') || '\u00a0';
+        } else {
+            v.textContent = med.length ? `~${med[0].split(' ').slice(1).join(' ')}` : '—';
+            sub.textContent = med.length ? `to first audio · ${med.join(' · ')}` : 'nothing timed yet';
+        }
+    }
+
+    function renderTasks() {
+        const v = $('vit-tasks'), sub = $('vit-tasks-sub'), list = $('vit-tasklist');
+        if (!v) return;
+        const pending = tasks.filter(t => !t.done), done = tasks.length - pending.length;
+        v.textContent = pending.length ? `${pending.length} pending` : tasks.length ? 'all done' : 'none';
+        sub.textContent = done ? `${done} done` : tasks.length ? 'nothing done yet' : 'say "add a task"';
+        list.innerHTML = pending.length
+            ? pending.slice(0, TASKS_SHOW).map(t => `<li title="${esc2(stripTimestamp(t.text))}"><i>▸</i>${esc2(stripTimestamp(t.text))}</li>`).join('')
+              + (pending.length > TASKS_SHOW ? `<li class="empty">+${pending.length - TASKS_SHOW} more</li>` : '')
+            : '<li class="empty">nothing pending</li>';
+    }
+
+    function renderKeep() {
+        const v = $('vit-keep'), sub = $('vit-keep-sub');
+        if (!v) return;
+        const parts = [];
+        if (keep.timers) parts.push(`${keep.timers} timer${keep.timers === 1 ? '' : 's'}`);
+        if (keep.watches) parts.push(`${keep.watches} watch${keep.watches === 1 ? '' : 'es'}`);
+        v.textContent = parts.length ? parts.join(' · ') : 'nothing set';
+        sub.textContent = parts.length ? 'rings in my voice when due' : 'timers & alerts show here';
+    }
+
+    function renderCrew() {
+        const el = $('vit-crew');
+        if (!el) return;
+        const chips = [
+            ...crew.skills.map(n => ({ mark: '⚡', n, on: lit.skill === n, title: 'skill' })),
+            ...crew.agents.map(n => ({ mark: '◆', n, on: lit.agent === n, title: 'agent' })),
+        ];
+        el.innerHTML = chips.map(c => `<span class="vit-chip${c.on ? ' on' : ''}" title="${c.title}${c.on ? ' · at work' : ''}">${c.mark} ${esc2(c.n)}</span>`).join('')
+            + (tool ? `<span class="vit-chip tool on" title="tool running">▸ ${esc2(tool)}</span>` : '');
+    }
+
+    function renderLog() {
+        const el = $('vit-log');
+        if (!el) return;
+        const rows = log.slice(-LOG_SHOW);
+        el.innerHTML = rows.length
+            ? rows.map((r, i) => `<li class="${i === rows.length - 1 && r.id === seq ? 'new' : ''}" title="${esc2(r.at)} ${esc2(r.text)}"><small>${esc2(r.at.slice(3))}</small><i>${r.mark}</i>${esc2(r.text)}</li>`).join('')
+            : '<li class="empty">waiting for you</li>';
+    }
+
+    function renderHead() {
+        const el = $('vit-state');
+        if (el) el.textContent = STATE_WORD[state] || state;
+        const up = $('vit-up');
+        if (up) {
+            const t = Math.floor((Date.now() - openedAt) / 1000), h = Math.floor(t / 3600), m = Math.floor(t / 60) % 60, sec = t % 60;
+            up.textContent = 'UP ' + (h ? `${h}:${String(m).padStart(2, '0')}:` : `${m}:`) + String(sec).padStart(2, '0');
+        }
+    }
+
+    function tick() {           // once a second: the uptime; the turn's clock while one runs
+        renderHead();
+        if (turn) renderLat();
+    }
+
+    // ── the pulse ──
+    function sample(t) {        // the trace's next value, -1..1, from the state
+        switch (state) {
+            case 'listening': { const amp = Math.max(0.12, Math.min(1, vitMic * 14)); return amp * Math.sin(t * Math.PI * 2 * 3.2) + (Math.random() - 0.5) * 0.08; }
+            case 'thinking': {  // a heartbeat at ~100 bpm: a small wave, the sharp spike, a round wave
+                const ph = (t * 1.65) % 1;
+                if (ph < 0.08) return 0.18 * Math.sin(ph / 0.08 * Math.PI);
+                if (ph >= 0.26 && ph < 0.30) return -0.25 * Math.sin((ph - 0.26) / 0.04 * Math.PI);
+                if (ph >= 0.30 && ph < 0.36) return Math.sin((ph - 0.30) / 0.06 * Math.PI);
+                if (ph >= 0.36 && ph < 0.40) return -0.4 * Math.sin((ph - 0.36) / 0.04 * Math.PI);
+                if (ph >= 0.52 && ph < 0.66) return 0.3 * Math.sin((ph - 0.52) / 0.14 * Math.PI);
+                return (Math.random() - 0.5) * 0.04;
+            }
+            case 'speaking': {
+                const pr = typeof playbackRms === 'function' ? playbackRms() : 0;
+                const amp = pr > 0 ? Math.min(1, pr * 5) : 0.55 + 0.35 * Math.sin(t * Math.PI * 2 * 0.9);
+                return amp * (Math.sin(t * Math.PI * 2 * 5.1) + 0.5 * Math.sin(t * Math.PI * 2 * 11.3)) / 1.5;
+            }
+            case 'followup': return 0.4 * Math.sin(t * Math.PI * 2 * 0.35);
+            default: return 0.32 * Math.sin(t * Math.PI * 2 * 0.2) + 0.03 * Math.sin(t * Math.PI * 2 * 1.3);   // breathing
+        }
+    }
+    function draw(now) {
+        const canvas = $('vit-pulse');
+        if (!canvas) return;
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const w = Math.max(1, Math.round(canvas.clientWidth)), h = Math.max(1, Math.round(canvas.clientHeight));
+        if (canvas.width !== w * dpr || canvas.height !== h * dpr) { canvas.width = w * dpr; canvas.height = h * dpr; trace = null; }
+        if (!trace || trace.length !== w) {     // a full trace from the start, not a line that fills in
+            trace = new Float32Array(w); tracePos = 0;
+            for (let i = 0; i < w; i++) trace[i] = sample(now / 1000 - (w - i) / 14);
+        }
+        const ctx = canvas.getContext('2d');
+        const color = getComputedStyle(root()).getPropertyValue('--vit-trace').trim() || '#8be3ff';
+        const t = now / 1000;
+        if (reduced.matches) {              // one still line per state
+            if (drawn.state === state && drawn.w === w) return;
+            drawn = { state, w };
+            for (let i = 0; i < w; i++) trace[i] = sample(i / 60);
+            tracePos = 0;
+        } else {
+            const speed = busy() ? 3 : 1.2;             // columns per frame
+            const n = Math.max(1, Math.round(speed));
+            for (let i = 0; i < n; i++) { trace[tracePos] = sample(t + i / 60 / n); tracePos = (tracePos + 1) % w; }
+        }
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, w, h);
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.2;
+        ctx.lineJoin = 'round';
+        ctx.shadowColor = color;
+        ctx.shadowBlur = busy() ? 6 : 3;
+        ctx.beginPath();
+        const mid = h / 2, amp = h / 2 - 2;
+        for (let x = 0; x < w; x++) {
+            const v = trace[(tracePos + x) % w];
+            const y = mid - v * amp;
+            x ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+        ctx.shadowBlur = 0;
+        const fade = ctx.createLinearGradient(0, 0, w, 0);     // the older part of the trace fades
+        const bg = getComputedStyle(document.body).backgroundColor;
+        fade.addColorStop(0, bg); fade.addColorStop(0.35, 'transparent');
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.fillStyle = fade;
+        ctx.fillRect(0, 0, w * 0.35, h);
+        ctx.globalCompositeOperation = 'source-over';
+    }
+    function frame(now) {
+        raf = requestAnimationFrame(frame);
+        if (!shown()) return;
+        const every = reduced.matches ? 500 : busy() ? 33 : 83;
+        if (now - lastDraw < every) return;
+        lastDraw = now;
+        draw(now);
+    }
+
+    // ── what the page tells it ──
+    return {
+        start() {
+            if (clockTimer) return;
+            clockTimer = setInterval(tick, 1000);
+            raf = requestAnimationFrame(frame);
+            renderHead(); renderModel(); renderLat(); renderTasks(); renderKeep(); renderCrew(); renderLog();
+        },
+        state(s) {
+            if (s === state) return;
+            const el = root();
+            state = s;
+            if (el) { el.dataset.state = s; el.classList.toggle('busy', busy() || !!turn); }
+            if (s === 'listening') note('●', 'listening');
+            renderHead();
+        },
+        turnStart(how) {        // how: 'typed' | 'voice'
+            turn = { t0: Date.now(), model: null, n: 0, firstText: null, firstAudio: null, replyAt: null, inCode: false, trace: reqTrace };
+            lastTurn = null;
+            root()?.classList.add('busy');
+            note('▲', how === 'voice' ? 'heard you' : 'message sent');
+            renderModel(); renderLat();
+        },
+        tool(name) {
+            tool = name;
+            if (name) note('▸', name.replace(/_/g, ' '));
+            renderCrew(); renderLat();
+        },
+        llm(model, n) {
+            if (!turn) return;
+            turn.model = model; turn.n = n;
+            note('◇', `${shortName(model)} · request ${n}`);
+            renderModel();
+        },
+        firstText() {
+            if (!turn || turn.firstText) return;
+            turn.firstText = Date.now();
+            if (!turn.model) turn.inCode = true;
+            note('✎', turn.inCode ? 'answered in code' : 'first words');
+            renderModel(); renderLat();
+        },
+        audio(t) {              // the first audio of the turn's reply started playing
+            if (!turn || turn.firstAudio != null || (t && turn.trace && t !== turn.trace)) return;
+            turn.firstAudio = Date.now();
+            note('♪', `voice at ${secs(turn.firstAudio - turn.t0)}`);
+            renderLat();
+        },
+        event(kind, text) {     // other steps worth a line
+            const marks = { approval: '⚠', memory: '◈', sources: '⌕', error: '✕', skill: '⚡', agent: '◆', timer: '⏱', watch: '◉' };
+            note(marks[kind] || '·', text);
+        },
+        turnDone(usage, outcome = 'done') {
+            if (!turn) return;
+            turn.replyAt = Date.now();
+            if (usage) turn.usage = usage;
+            if (outcome === 'done') note('✓', `reply in ${secs(turn.replyAt - turn.t0)}${usage ? ` · ${fmtK(usage.total)} tok` : ''}`);
+            else note('■', outcome);
+            lastTurn = turn;
+            turn = null;
+            tool = null;
+            root()?.classList.toggle('busy', busy());
+            renderModel(); renderLat(); renderCrew();
+        },
+        tasks(list) { tasks = Array.isArray(list) ? list : []; renderTasks(); },
+        crew(kind, list) { crew[kind] = (list || []).map(x => x.name); renderCrew(); },
+        lit(kind, name) {
+            if (lit[kind] === name) return;
+            lit[kind] = name;
+            if (name) note(kind === 'skill' ? '⚡' : '◆', `${name} ${kind === 'skill' ? 'skill' : 'agent'} at work`);
+            renderCrew();
+        },
+        keep(kind, n) {
+            if (keep[kind] === n) return;
+            if (n > keep[kind] && seq) note(kind === 'timers' ? '⏱' : '◉', kind === 'timers' ? 'timer set' : 'watch set');
+            keep[kind] = n;
+            renderKeep();
+        },
+        model() { renderModel(); },
+        latency() { renderLat(); },
+    };
+})();
 
 // ── Orbit's globe: the orb in the Orbit look, drawn on the canvas #globe ─────
 // A holographic Earth: the dots of a Fibonacci sphere that fall on land (rough continent outlines, with Hudson Bay and
@@ -3624,7 +4101,7 @@ function stopRecording() {
     micStream.getTracks().forEach(t => t.stop());
     const btn = document.getElementById('talk-btn');
     btn.classList.remove('active');
-    document.getElementById('btn-label').textContent = 'Hold to Talk · Space';
+    document.getElementById('btn-label').textContent = 'Hold to Talk';
     setOrb('thinking');
 }
 
@@ -3833,6 +4310,7 @@ function onFrame(frame) {
         let sum = 0;
         for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
         const rms = Math.sqrt(sum / frame.length);
+        vitMic = rms;
         hf.barge.pre.push(frame);
         if (hf.barge.pre.length * hf.frameSec > VAD.preRollSec) hf.barge.pre.shift();
         hf.deafUntil = Date.now() + VAD.cooldownSec * 1000;   // his speaker tail after he stops
@@ -3852,6 +4330,7 @@ function onFrame(frame) {
     let sum = 0;
     for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
     const rms = Math.sqrt(sum / frame.length);
+    vitMic = rms;
     const startAt = Math.max(hf.noise * 3.5, 0.015);
     const endAt   = Math.max(hf.noise * 2,   0.010);
 
@@ -4021,6 +4500,7 @@ async function playNext() {
         a.addEventListener('playing', () => {
             traceMark(item.trace, 'first_audio');
             if (item.kind === 'reply') traceMark(item.trace, 'first_answer_audio');
+            if (item.kind === 'reply') vitals.audio(item.trace);
         }, { once: true });
         a.onended = a.onerror = done;
         a.play().catch(done);
@@ -4121,6 +4601,8 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
     }
 
     let bubble = null, reply = '', sources = null, screen = null, skill = null, agent = null, proposals = [], actions = [];
+    let turnOutcome = 'stopped';
+    if (!quiet) vitals.turnStart(init.body instanceof FormData ? 'voice' : 'typed');
     const ensureBubble = () => {
         if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); speechMsg = bubble.closest('.message'); }
         return bubble;
@@ -4147,7 +4629,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                 if (ev.type === 'trace') {
                     if (ctrl === abortCtrl && reqTrace) reqTrace.id = ev.id;
                 } else if (ev.type === 'transcript') {
-                    if (quiet) { setOrb('thinking'); setStopVisible(true); }
+                    if (quiet) { setOrb('thinking'); setStopVisible(true); vitals.turnStart('voice'); }
                     onTranscript?.(ev.text);
                 } else if (ev.type === 'ignored') {
                     // overheard speech without the wake word — no UI, but log it for debugging
@@ -4155,10 +4637,14 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     onIgnored?.(ev.text);
                 } else if (ev.type === 'tool') {
                     showToolNote(ev.name);
+                    vitals.tool(ev.name);
+                } else if (ev.type === 'llm') {
+                    vitals.llm(ev.model, ev.n);     // a model request finished: the Systems panel names the model
                 } else if (ev.type === 'say') {
                     speakChunk(ev.text, 'say');    // e.g. "Searching…" while a web search runs
                 } else if (ev.type === 'sources') {
                     sources = ev.items;
+                    vitals.event('sources', `${ev.items.length} source${ev.items.length === 1 ? '' : 's'}`);
                 } else if (ev.type === 'skill') {
                     skill = ev.name;
                     markSkill(ev.name);
@@ -4169,8 +4655,10 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     screen = ev.text;
                 } else if (ev.type === 'memory_proposal') {
                     proposals.push(ev);
+                    vitals.event('memory', 'memory proposed');
                 } else if (ev.type === 'approval') {
                     actions.push(ev);           // a delete or a move waits: the card goes under this reply
+                    vitals.event('approval', 'waiting for Approve');
                 } else if (ev.type === 'approval_done') {
                     settleAction(ev.id, ev.outcome === 'done' ? `✓ ${ev.text}` : ev.outcome === 'rejected' ? '✕ Nothing was done' : '⌛ Expired: nothing was done');
                 } else if (ev.type === 'memory') {
@@ -4183,13 +4671,17 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                 } else if (ev.type === 'delta') {
                     reply += ev.text;
                     traceMark(reqTrace, 'first_text');
+                    vitals.firstText();
                     if (handsFree) followupPending = true;
                     ensureBubble().textContent = reply;
                     scrollChat();
                     feedSpeech(ev.text);
                 } else if (ev.type === 'error') {
                     showToast(ev.message);
+                    vitals.event('error', 'something went wrong');
                 } else if (ev.type === 'done') {
+                    turnOutcome = 'done';
+                    vitals.turnDone(ev.usage);
                     if (ev.lang) setLang(ev.lang);
                     refreshSidebar(ev.tasks, ev.memory);
                     refreshCalendar();  // a reply may have added an event
@@ -4206,6 +4698,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
     } finally {
         markSkill(null);
         markAgent(null);
+        if (turnOutcome !== 'done') vitals.turnDone(null, ctrl !== abortCtrl ? 'replaced' : 'stopped');
         if (bubble && !reply.trim()) bubble.closest('.message').remove();
         else if (bubble) {
             if (screen) addScreen(bubble.closest('.message'), screen, skill, agent);
@@ -4714,6 +5207,7 @@ async function connectCalendar() {
 }
 
 function renderTasks(tasks) {
+    vitals.tasks(tasks);
     const tl = document.getElementById('tasks-list');
     tl.innerHTML = tasks.length
         ? tasks.map(t => {
@@ -4730,6 +5224,7 @@ function renderTasks(tasks) {
 
 // ── Skills ────────────────────────────────────────────────────────────────
 function renderSkills(list) {
+    vitals.crew('skills', list);
     const el = document.getElementById('skills-list');
     el.innerHTML = list.length
         ? list.map(s => `<div class="skill-item" data-skill="${esc(s.name)}" title="${esc(s.description)}">
@@ -4737,12 +5232,14 @@ function renderSkills(list) {
         : '<p class="empty">No skills installed.</p>';
 }
 function markSkill(name) {
+    vitals.lit('skill', name);
     document.querySelectorAll('.skill-item[data-skill]').forEach(r => r.classList.toggle('running', r.dataset.skill === name));
 }
 fetch('/skills').then(r => r.json()).then(renderSkills).catch(() => {});
 
 // ── Agents: specialists Javid hands big jobs to (research, planning, markets) ──
 function renderAgents(list) {
+    vitals.crew('agents', list);
     const el = document.getElementById('agents-list');
     el.innerHTML = list.length
         ? list.map(a => `<div class="skill-item agent-item" data-agent="${esc(a.name)}" title="${esc(a.description)}">
@@ -4750,6 +5247,7 @@ function renderAgents(list) {
         : '<p class="empty">No agents installed.</p>';
 }
 function markAgent(name) {
+    vitals.lit('agent', name);
     document.querySelectorAll('.agent-item').forEach(r => r.classList.toggle('running', r.dataset.agent === name));
 }
 fetch('/agents').then(r => r.json()).then(renderAgents).catch(() => {});
@@ -5437,6 +5935,7 @@ async function refreshModels() {
         llmFetchedAt = Date.now();
     } catch { provStatus = llmStatus = null; }
     renderModelsPanel();
+    vitals.model();
     if (!modelsModal.hidden) renderModelsModal();
 }
 
@@ -5545,6 +6044,7 @@ function renderLatencyModal() {
 async function refreshLatency() {
     try { latencyData = await (await fetch('/latency')).json(); } catch { latencyData = null; }
     renderLatencyPanel();
+    vitals.latency();
     if (!latencyModal.hidden) renderLatencyModal();
 }
 
@@ -5973,6 +6473,7 @@ let ringHideTimer = null;
 
 function syncTimers(list) {
     timerList = Array.isArray(list) ? list : [];
+    vitals.keep('timers', timerList.filter(t => !rungTimers.has(t.id)).length);
     renderTimers();
 }
 
@@ -6081,6 +6582,7 @@ const WATCH_ICONS = { price: '↗', news: '◉', rain: '☂' };
 
 function syncWatches(list) {
     watchList = Array.isArray(list) ? list : [];
+    vitals.keep('watches', watchList.length);
     document.getElementById('watches-panel').hidden = !watchList.length;
     document.getElementById('watches-list').innerHTML = watchList.map(w => `
         <div class="timer-item watch-item" data-id="${esc(w.id)}">
@@ -6108,6 +6610,7 @@ refreshWatches();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────
 (async () => {
+    vitals.start();
     try {
         const [tr, mr] = await Promise.all([fetch('/tasks'), fetch('/memory')]);
         refreshSidebar(await tr.json(), await mr.json());

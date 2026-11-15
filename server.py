@@ -39,7 +39,7 @@ from javid import (
     clear_provider_key, get_language, is_noise, llm_status, phrase, providers_status,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
-    active_session, has_session, hold_turn, run_outcome,
+    active_session, has_session, hold_turn, run_outcome, turn_usage,
     set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
     SpeechCancelled,
 )
@@ -202,7 +202,7 @@ async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool
     finally:
         hung_up.set()
     yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language(),
-                 timers=timers.active_json(), watches=watches.active_json())
+                 timers=timers.active_json(), watches=watches.active_json(), usage=turn_usage())
 
 
 def _reply_event(kind: str, value) -> str | None:
@@ -210,6 +210,8 @@ def _reply_event(kind: str, value) -> str | None:
     spoken as reply text."""
     if kind in ("tool", "skill", "agent"):
         return _event(type=kind, name=value)
+    if kind == "llm":               # a model request finished: which model, and how many this turn (the live readout)
+        return _event(type="llm", model=value["model"], n=value["n"])
     if kind in ("say", "screen", "delta"):
         return _event(type=kind, text=value)
     if kind == "sources":

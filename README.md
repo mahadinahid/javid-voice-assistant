@@ -31,7 +31,9 @@ and is now a web app with 25 tools, two agents, a Telegram bot and its own test 
 - **Your look.** Orbit (the default): a sci-fi look where the voice ball is a holographic globe, with satellites
   and a ring of letters orbiting it and light arcing out from Dhaka while Javid thinks. Or Glass, Overdrive, and
   colour themes you can make in the app with a live preview. In every look, a wide window puts the voice ball
-  beside the conversation, and your panels (today, tasks, timers, providers…) open from a Dashboard button.
+  beside the conversation, with a live Systems panel under it (the model answering and its tokens, the turn's clock,
+  pending tasks, the skill or agent at work, a pulse that breathes, beats and speaks with Javid), and your panels
+  (today, tasks, timers, providers…) open from a Dashboard button.
 
 ## How it works
 

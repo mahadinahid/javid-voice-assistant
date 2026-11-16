@@ -124,7 +124,7 @@ treated as data, so nothing written in a file can change your tasks, calendar or
 ## Testing
 
 ```bash
-python regression.py                         # 150 scripted checks: no network, no API tokens
+python regression.py                         # 151 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)

@@ -1533,6 +1533,9 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
 /* ── Files (2026-11-16, documents.py): chips for a file sent with a message, above the composer before it goes and on
    the message after; a thumbnail for a picture; the clip button; the drop hint over the conversation ── */
 .attach-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.reading-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 11.5px; color: var(--label); }
+.reading-row[hidden] { display: none; }
+.reading-row .rr-k { letter-spacing: 0.12em; text-transform: uppercase; font-size: 10px; }
 .attach-list:empty { display: none; }
 .msg-files { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
 .file-chip {
@@ -3121,6 +3124,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
                 <button type="button" data-say="Set a timer for 10 minutes."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg><span>10-min timer</span></button>
             </div>
 
+            <!-- The file the chat is reading (documents.py): it rides with follow-ups about it for a few turns; ✕ stops it -->
+            <div id="reading-row" class="reading-row" hidden></div>
             <!-- Files to send with the next message (documents.py): chips with ✕, filled by the clip button or a drop -->
             <div id="attach-list" class="attach-list" aria-live="polite"></div>
             <div id="drop-hint" class="drop-hint" aria-hidden="true">Drop a PDF, Word, text file or picture to read it</div>
@@ -4753,6 +4758,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                 } else if (ev.type === 'done') {
                     turnOutcome = 'done';
                     vitals.turnDone(ev.usage);
+                    if ('attached' in ev) showReading(ev.attached);
                     if (ev.lang) setLang(ev.lang);
                     refreshSidebar(ev.tasks, ev.memory);
                     refreshCalendar();  // a reply may have added an event
@@ -4893,10 +4899,36 @@ document.getElementById('file-input').addEventListener('change', e => { attachFi
         attachFiles(e.dataTransfer.files);
     });
 }
-// A reload shows the chat's open attachment (the server keeps it for a few turns) as chips under the composer hint.
-fetch('/uploads').then(r => r.json()).then(d => {
-    if (d.attached?.length) showToast(`Still reading: ${d.attached.map(f => f.name).join(', ')} (say "forget the file" to drop it)`);
-}).catch(() => {});
+// The file the open chat is reading: a "Reading:" chip above the composer while it lasts (follow-ups about it carry
+// it for a few turns), ✕ stops it (POST /uploads/detach; the file itself is kept). Refreshed after every reply, on
+// load and when another chat opens.
+function showReading(list) {
+    const row = document.getElementById('reading-row');
+    row.innerHTML = '';
+    row.hidden = !list?.length;
+    if (!list?.length) return;
+    const k = document.createElement('span');
+    k.className = 'rr-k';
+    k.textContent = 'Reading';
+    row.appendChild(k);
+    for (const f of list) {
+        const chip = fileChip(f, { removable: true, thumb: attachThumbs[f.id] || null });
+        chip.querySelector('.fc-x').title = 'Stop reading this file';
+        chip.querySelector('.fc-x').onclick = async () => {
+            row.hidden = true;
+            try { await fetch('/uploads/detach', { method: 'POST' }); } catch {}
+            vitals.event('file', `stopped reading ${f.name}`);
+        };
+        row.appendChild(chip);
+    }
+}
+async function refreshReading() {
+    try {
+        const q = activeChat ? `?session=${encodeURIComponent(activeChat)}` : '';
+        showReading((await (await fetch('/uploads/attached' + q)).json()).attached);
+    } catch { showReading([]); }
+}
+refreshReading();
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const TOOL_LABELS = {
@@ -5070,6 +5102,7 @@ function historyNodes(entries) {
 }
 
 async function loadHistory(before = null) {
+    if (before === null) refreshReading();      // another chat: its own attachment, or none
     const params = new URLSearchParams();
     if (activeChat) params.set('session', activeChat);
     if (before !== null) params.set('before', before);

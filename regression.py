@@ -3468,10 +3468,16 @@ def file_untrusted_text():
                                                      "That waits for your Approve."])
     if not [v for k, v in ev3 if k == "approval" and v["tool"] == "propose_memory"]:
         problems.append(f"a memory from a file turn wasn't a card: {[k for k, v in ev3]}")
-    for _ in range(documents.DOC_TURNS - 3):     # follow-ups 3 to 5
+    # 2026-11-16: an unrelated question mid-way gets no file, no file rules and its web tools back (the PDF's payment
+    # details were tacked onto an answer about research models, and its web search was refused)
+    _, ev_off = _turn("Can you look up which language model is best for writing academic papers?",
+                      [call("web_search", query="language model for academic writing"), "Several models are built for that."])
+    if [v for k, v in ev_off if k == "files"] or javid._doc_block["text"] or any("isn't available" in t for t in _tool_said()[-1:]):
+        problems.append(f"an unrelated question carried the file: {[k for k, v in ev_off]} {_tool_said()[-1:]}")
+    for _ in range(documents.DOC_TURNS - 4):     # follow-ups 4 and 5
         _turn("Thanks.", ["Any time."])
-    _, ev_6 = _turn("Still there?", ["Yes."])     # the 6th follow-up still has it
-    _, ev_7 = _turn("And now?", ["Yes."])          # the 7th doesn't
+    _, ev_6 = _turn("Who signed it?", ["Mahadi Nahid and S. Rahman (p. 3)."])      # the 6th follow-up still has it
+    _, ev_7 = _turn("Who signed it?", ["Which document do you mean?"])           # the 7th doesn't
     if not [v for k, v in ev_6 if k == "files"] or [v for k, v in ev_7 if k == "files"]:
         problems.append(f"the file should last {documents.DOC_TURNS} follow-ups: {bool([v for k, v in ev_6 if k == 'files'])}, "
                         f"{bool([v for k, v in ev_7 if k == 'files'])}")
@@ -3616,10 +3622,24 @@ def file_routes():
         problems.append(f"the reply: {[e for e in events if e['type'] == 'delta']}")
     if [f["name"] for f in client.get("/uploads", headers=KEYED).json().get("attached", [])] != ["order.pdf"]:
         problems.append("the attachment isn't listed after the turn")
+    done = next((e for e in events if e["type"] == "done"), {})
+    if [f["name"] for f in done.get("attached") or []] != ["order.pdf"]:
+        problems.append(f"the done event's attachment: {done.get('attached')}")
+    if [f["name"] for f in client.get("/uploads/attached", headers=KEYED).json().get("attached", [])] != ["order.pdf"]:
+        problems.append("GET /uploads/attached doesn't list it")
+    if client.post("/uploads/detach", headers=KEYED).status_code != 403:
+        problems.append("detach without Origin was allowed")
+    r = client.post("/uploads/detach", headers=PAGE)
+    if r.status_code != 200 or r.json() != {"dropped": True} or javid.attached_files() or not documents.list_docs():
+        problems.append(f"detach: {r.status_code} {r.text} (the file must stay kept)")
+    _script.extend(["Which document do you mean?"])
+    r = client.post("/type", json={"text": "Who signed it?"}, headers=PAGE)
+    if any(json.loads(l)["type"] == "files" for l in r.text.splitlines() if l.strip()):
+        problems.append("after detach a follow-up still carried the file")
     if client.delete(f"/uploads/{chip.get('id')}", headers=KEYED).status_code != 403:
         problems.append("DELETE without Origin was allowed")
     r = client.delete(f"/uploads/{chip.get('id')}", headers=PAGE)
-    if r.status_code != 200 or r.json() != {"deleted": True} or documents.list_docs() or javid.attached_files():
+    if r.status_code != 200 or r.json() != {"deleted": True} or documents.list_docs() or javid.attached_files():  # gone for good
         problems.append(f"DELETE: {r.status_code} {r.text} {documents.list_docs()} {javid.attached_files()}")
     return {"problems": problems}
 
@@ -3665,6 +3685,23 @@ def tg_file():
         if fetched[-1] != "p-big" or "Nadia" not in fake.texts(OWNER)[-1]:
             problems.append(f"the photo: fetched {fetched[-1]}, said {fake.texts(OWNER)[-1]!r}")
         return {"problems": problems}
+
+
+def file_relevance():
+    """Which follow-ups carry the attached file (documents.relevant): ones about it do, unrelated ones don't."""
+    doc = documents.parse(FIX["order.pdf"], "order.pdf")
+    research = ("There is a LLM specifically for research purposes. I cannot remember the name. Can you search it for "
+                "me? Papers, research papers, paper writing, something like this. And also, give me the details. How can "
+                "I use this LLM freely into your system?")
+    about = ["What's the delivery date?", "Who signed it?", "What's the price per metre?", "Which warehouse is it going to?",
+             "Explain this doc", "Tell me about page 2.", "When is the payment due?", "Search the web for the supplier.",
+             "What did it say?", "পিডিএফে কী লেখা আছে?"]
+    other = ["What's the weather like?", "Thanks.", research, "Still there?", "Set a timer for 10 minutes.", "What time is it?",
+             "Give me 10 news from all over the world.", "Plan my day tomorrow.", "How's bitcoin doing?", "Thanks, that's all.",
+             "Add a task to call mom tomorrow."]
+    problems = [f"not about the file: {q!r}" for q in about if not documents.relevant(q, [doc])]
+    problems += [f"about the file: {q[:50]!r}" for q in other if documents.relevant(q, [doc])]
+    return {"problems": problems}
 
 
 def file_sent_ok(r):
@@ -4880,7 +4917,9 @@ CASES += [
          [], [drive_ok], drive=file_pictures, script=[]),
     Case("file: refusals in words, Word and text and scanned files parse, 'forget the file', pruning, file mode",
          [], [drive_ok], drive=file_parsing, script=[]),
-    Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, DELETE detaches",
+    Case("file: follow-ups about the file carry it; unrelated ones (weather, a research question) don't",
+         [], [drive_ok], drive=file_relevance, script=[]),
+    Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
          [], [drive_ok], drive=file_routes, script=[]),
     Case("file: the file's text goes only to a provider cleared for personal data, as data with its pages",
          ["Summarise this."], [file_sent_ok, reply_has(r"\(p\. 2\)")], files={0: ["order.pdf"]},
@@ -4891,7 +4930,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 214, len(CASES)
+assert len(CASES) == 215, len(CASES)
 
 
 def print_token_summary() -> None:

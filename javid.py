@@ -1007,8 +1007,10 @@ def _doc_gate(name: str, args: dict):
 _doc_state = {"session": None, "docs": [], "left": 0}
 
 
-def _attach(files: list | None) -> list[dict]:
-    """The documents for this turn: the ones just sent (their ids), else the chat's attachment while it lasts."""
+def _attach(files: list | None, user_text: str = "") -> list[dict]:
+    """The documents for this turn: the ones just sent (their ids), else the chat's attachment while it lasts
+    (DOC_TURNS more turns), and only when the message is about it (documents.relevant): an unrelated question gets
+    no file, no file rules, and the web tools back."""
     sid = current_session()
     if files:
         docs = [d for d in (documents.load(i) for i in files[:documents.MAX_FILES]) if d]
@@ -1016,7 +1018,8 @@ def _attach(files: list | None) -> list[dict]:
         return list(docs)
     if _doc_state["docs"] and _doc_state["session"] == sid and _doc_state["left"] > 0:
         _doc_state["left"] -= 1
-        return list(_doc_state["docs"])
+        if documents.relevant(user_text, _doc_state["docs"]):
+            return list(_doc_state["docs"])
     return []
 
 
@@ -2651,7 +2654,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
     elif _MARKET_ASK.search(user_text):      # a live price: market_price, no web search (no Tavily credits)
         tools = [t for t in tools if t["function"]["name"] not in WEB_TOOLS]
     widened = False
-    docs = [] if documents.forget_request(user_text) else _attach(files)
+    docs = [] if documents.forget_request(user_text) else _attach(files, user_text)
     chips = [documents.chip(d) for d in docs]
     messages.append({"role": "user", "content": user_text, **({"_files": chips} if chips else {})})   # "_": never sent
     log_message("user", user_text, **({"files": chips} if chips else {}))

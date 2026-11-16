@@ -40,7 +40,7 @@ from javid import (
     clear_provider_key, get_language, is_noise, llm_status, phrase, providers_status,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
-    active_session, has_session, hold_turn, run_outcome, turn_usage, attached_files, detach,
+    active_session, has_session, hold_turn, run_outcome, turn_usage, attached_files, detach, drop_files,
     set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
     SpeechCancelled,
 )
@@ -205,7 +205,8 @@ async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool
     finally:
         hung_up.set()
     yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language(),
-                 timers=timers.active_json(), watches=watches.active_json(), usage=turn_usage())
+                 timers=timers.active_json(), watches=watches.active_json(), usage=turn_usage(),
+                 attached=attached_files())
 
 
 def _reply_event(kind: str, value) -> str | None:
@@ -420,6 +421,19 @@ def upload(request: Request, file: UploadFile = File(...)):
 @app.get("/uploads")
 def uploads():
     return {"files": documents.list_docs(), "attached": attached_files()}
+
+
+@app.get("/uploads/attached")
+def uploads_attached(session: str | None = None):
+    """The open chat's attachment (the page's "Reading:" chip); none for another chat."""
+    return {"attached": attached_files() if not session or session == active_session() else []}
+
+
+@app.post("/uploads/detach")
+def uploads_detach(request: Request):
+    """Stop reading the attached file (the chip's ✕): the file stays kept, the chat stops carrying it."""
+    _local_page_only(request)
+    return {"dropped": drop_files()}
 
 
 @app.delete("/uploads/{doc_id}")

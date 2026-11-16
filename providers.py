@@ -182,7 +182,7 @@ def _models(name: str, raw) -> list[dict]:
         if not isinstance(options, dict):
             raise ValueError(f"{name}: {item['id']}'s options must be a mapping")
         out.append({"id": item["id"].strip(), "price": price, "stream": item.get("stream", True) is not False,
-                    "options": options})
+                    "options": options, "vision": item.get("vision") is True})   # vision: takes a picture (documents.py)
     return out
 
 
@@ -285,6 +285,19 @@ def voices(name: str) -> dict[str, dict]:
 
 def models(name: str) -> list[dict]:
     return list((get(name) or {}).get("models", []))
+
+
+def vision_models() -> list[str]:
+    """Model ids marked `vision: true`, provider by provider in priority order (only providers that are on), as
+    "<provider>:<model>" for a registry provider (bare for Groq, as the chain names them)."""
+    out = []
+    for e in entries():
+        if e["kind"] != "llm" or not is_on(e["name"]):
+            continue
+        for m in e["models"]:
+            if m.get("vision"):
+                out.append(m["id"] if e["name"] == "groq" else f"{e['name']}:{m['id']}")
+    return out
 
 
 def model_entry(name: str, model: str) -> dict | None:

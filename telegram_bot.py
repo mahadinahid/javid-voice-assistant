@@ -49,6 +49,7 @@ from datetime import datetime
 import httpx
 
 import approvals
+import documents
 import javid
 import memory_store
 import providers
@@ -447,16 +448,18 @@ def _ask(chat_id: int, action: dict) -> None:
     _asked[action["id"]] = (chat_id, msg_id, text)
 
 
-def run_turn(chat_id: int, text: str, voice: bool, trace: tracing.Trace | None = None, link: bool = False) -> None:
+def run_turn(chat_id: int, text: str, voice: bool, trace: tracing.Trace | None = None, link: bool = False,
+             files: list | None = None) -> None:
     """One Javid turn for Telegram, its reply sent as messages (and a voice note if `voice`). link: the message has
-    a link, so the turn gets no web tools (nor the research agent): Javid never opens or searches it."""
+    a link, so the turn gets no web tools (nor the research agent): Javid never opens or searches it. files: ids of
+    documents sent with it (documents.py); such a turn gets no web tools either."""
     reply, screen, links, actions = "", "", [], []
     last_action = 0.0
-    blocked = frozenset(javid.WEB_TOOLS | {"delegate"}) if link else frozenset()
+    blocked = frozenset(javid.WEB_TOOLS | {"delegate"}) if link or files else frozenset()
     with _in_telegram_chat():
         tracing.activate(trace)
         try:
-            for kind, value in javid.think_stream(text, gate=_gate(link, actions), blocked=blocked):
+            for kind, value in javid.think_stream(text, gate=_gate(link, actions), blocked=blocked, files=files):
                 if kind == "delta":
                     reply += value
                 elif kind == "screen":
@@ -498,6 +501,42 @@ def _forwarded_turn(chat_id: int, msg: dict) -> None:
     with _in_telegram_chat():
         javid.record_turn(kept, reply)
     send(chat_id, reply)
+
+
+def _file_turn(chat_id: int, msg: dict) -> None:
+    """A document or a photo from a paired account (forwarded ones never get here): fetched, kept and parsed like an
+    upload on the page, then one turn with its caption as the question. Nothing in the file can act: the turn is
+    gated like every Telegram turn, and gets no web tools."""
+    doc, photo = msg.get("document"), msg.get("photo")
+    if doc:
+        file_id, name, size = doc.get("file_id"), doc.get("file_name") or "file", doc.get("file_size") or 0
+    else:
+        best = max(photo, key=lambda p: p.get("file_size") or 0) if isinstance(photo, list) and photo else {}
+        file_id, name, size = best.get("file_id"), "photo.jpg", best.get("file_size") or 0
+    if documents._ext(name) not in documents.KINDS:
+        send(chat_id, f"I can't read {documents._ext(name) or 'that kind of file'} yet: {documents.SUPPORTED}.")
+        return
+    if size > documents.MAX_BYTES or not file_id:
+        send(chat_id, f"That file is too big: I take up to {documents.MAX_BYTES // 1048576} MB.")
+        return
+    caption = (msg.get("caption") or "").strip() or "What is in this file?"
+    trace = tracing.start("telegram", "file", caption[:60])
+    trace.mark("speech_end", trace.stages.get("request_received"))
+    try:
+        _typing(chat_id, "typing")
+        try:
+            stored = documents.store(_download(file_id), name)
+        except documents.Unsupported as e:
+            send(chat_id, str(e))
+            return
+        except Exception as e:
+            print(f"[telegram] file: {type(e).__name__}: {_safe(e)[:100]}")
+            send(chat_id, "I couldn't fetch that file.")
+            return
+        link = bool(_LINK.search(caption)) or any(e.get("type") == "text_link" for e in msg.get("caption_entities") or [])
+        run_turn(chat_id, caption, voice=_load().get("voice") == "always", trace=trace, link=link, files=[stored["id"]])
+    finally:
+        tracing.finish_local(trace)
 
 
 def _voice_turn(chat_id: int, msg: dict, trace: tracing.Trace) -> None:
@@ -668,8 +707,11 @@ def handle_update(update: dict) -> None:
     if any(msg.get(k) for k in _FORWARD_KEYS):
         _forwarded_turn(chat_id, msg)
         return
+    if msg.get("document") or msg.get("photo"):      # a PDF, Word or text file, or a picture: read (documents.py)
+        _file_turn(chat_id, msg)
+        return
     if any(msg.get(k) for k in _FILE_KEYS):
-        send(chat_id, "I don't open files here. Send text or a voice message.")
+        send(chat_id, f"I don't open that kind of file here. I can read {documents.SUPPORTED}, text and voice messages.")
         return
     if text.startswith("/"):
         _command(chat_id, text)

@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 import agents
 import approvals
+import documents
 import calendar_tools
 import drive_tools
 import edge_pool
@@ -39,7 +40,7 @@ from javid import (
     clear_provider_key, get_language, is_noise, llm_status, phrase, providers_status,
     ping_models, read_history, reset_conversation, set_chain, set_language, set_provider_key,
     _restore_context, current_session, delete_session, list_sessions, new_session, open_session, update_session,
-    active_session, has_session, hold_turn, run_outcome, turn_usage,
+    active_session, has_session, hold_turn, run_outcome, turn_usage, attached_files, detach,
     set_task_done, startup_greeting, strip_wake_word, synthesize, think_stream, transcribe_turn, warm_phrases,
     SpeechCancelled,
 )
@@ -84,6 +85,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_check_models, daemon=True).start()
     telegram_bot.start()    # only with TELEGRAM_BOT_TOKEN in .env
     watches.start()         # price, news and rain watches: checked in code, alerts ring like timers
+    documents.prune()       # uploads older than KEEP_DAYS go
     yield
     watches.stop()
     telegram_bot.stop()
@@ -129,6 +131,7 @@ class TypeBody(BaseModel):
 class ChatBody(BaseModel):
     text: str
     session: str | None = None    # the chat this message belongs to (the page's open chat)
+    files: list[str] | None = None    # ids of uploads (POST /upload) sent with the message
 
 
 def _use_session(sid: str | None) -> None:
@@ -157,7 +160,7 @@ def _event(**data) -> str:
     return json.dumps(data) + "\n"
 
 
-async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool = True):
+async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool = True, files: list | None = None):
     """Javid's reply as newline-delimited JSON events, in the page's chat, one turn at a time. yes_ok: a plain yes
     may approve the previous message's Approve card (typed, or push-to-talk; never hands-free). The turn runs in
     its own thread, which holds the turn lock and hands events over a queue: when the page hangs up (Stop), the
@@ -178,7 +181,7 @@ async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool
             with hold_turn():
                 if session and session != active_session():
                     open_session(session)
-                turn = think_stream(user_text, yes_ok=yes_ok)
+                turn = think_stream(user_text, yes_ok=yes_ok, files=files)
                 try:
                     for event in turn:
                         hand_over(event)
@@ -212,6 +215,8 @@ def _reply_event(kind: str, value) -> str | None:
         return _event(type=kind, name=value)
     if kind == "llm":               # a model request finished: which model, and how many this turn (the live readout)
         return _event(type="llm", model=value["model"], n=value["n"])
+    if kind == "files":             # the documents this turn is about (chips under the reply)
+        return _event(type="files", items=value)
     if kind in ("say", "screen", "delta"):
         return _event(type=kind, text=value)
     if kind == "sources":
@@ -303,7 +308,8 @@ def greeting():
 
 
 @app.post("/talk")
-def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str | None = Form(None)):
+def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str | None = Form(None),
+         files: str | None = Form(None)):
     """
     mode = "push"     push-to-talk: always answer
            "wake"     hands-free, idle: only answer if it starts with "Javid"
@@ -379,7 +385,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             yield _event(type="delta", text=phrase("not_caught"))
             yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
             return
-        async for line in _reply_stream(request, session, yes_ok=(mode == "push")):   # hands-free: tap only
+        sent = [f for f in (files or "").split(",") if f] if mode == "push" else None   # uploads go with push-to-talk
+        async for line in _reply_stream(request, session, yes_ok=(mode == "push"), files=sent):   # hands-free: tap only
             yield line
 
     return _ndjson(_traced(trace, events()))
@@ -389,7 +396,37 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 def type_message(body: ChatBody):
     _use_session(body.session)
     edge_pool.want()
-    return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text, body.session)))
+    return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text, body.session, files=body.files)))
+
+
+# ---------- uploads: documents and pictures Javid reads (documents.py) ----------
+@app.post("/upload")
+def upload(request: Request, file: UploadFile = File(...)):
+    """Keep and parse a file for the next message: {id, name, kind, pages, method, warnings, snippet}. Parsed on the
+    Mac (a picture Tesseract can't read goes to the vision model once, here). 400 with the reason in words when Javid
+    can't take it."""
+    _local_page_only(request)
+    data = file.file.read(documents.MAX_BYTES + 1)
+    try:
+        doc = documents.store(data, file.filename or "file")
+    except documents.Unsupported as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        print(f"[upload] {type(e).__name__}: {str(e)[:120]}")
+        raise HTTPException(500, "I couldn't read that file.")
+    return documents.chip(doc)
+
+
+@app.get("/uploads")
+def uploads():
+    return {"files": documents.list_docs(), "attached": attached_files()}
+
+
+@app.delete("/uploads/{doc_id}")
+def delete_upload(doc_id: str, request: Request):
+    _local_page_only(request)
+    detach(doc_id)
+    return {"deleted": documents.delete(doc_id)}
 
 
 @app.get("/history")

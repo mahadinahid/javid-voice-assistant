@@ -1529,6 +1529,66 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     transition: color 0.18s, border-color 0.18s, background 0.18s, transform 0.18s;
 }
 .msg-sources a:hover { color: var(--text); border-color: rgba(var(--violet-rgb), 0.45); background: rgba(var(--violet-rgb), 0.08); transform: translateY(-1px); }
+
+/* ── Files (2026-11-16, documents.py): chips for a file sent with a message, above the composer before it goes and on
+   the message after; a thumbnail for a picture; the clip button; the drop hint over the conversation ── */
+.attach-list { display: flex; flex-wrap: wrap; gap: 6px; }
+.attach-list:empty { display: none; }
+.msg-files { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
+.file-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    max-width: 300px;
+    padding: 4px 8px 4px 6px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.035);
+    color: var(--text-2);
+    font-size: 11.5px;
+    white-space: nowrap;
+}
+.file-chip .fc-name { overflow: hidden; text-overflow: ellipsis; }
+.file-chip .fc-meta { color: var(--text-3); }
+.file-chip .fc-warn { color: var(--amber); }
+.file-chip img { width: 28px; height: 28px; border-radius: 6px; object-fit: cover; }
+.file-chip .fc-x {
+    border: none;
+    background: none;
+    color: var(--text-3);
+    font: inherit;
+    cursor: pointer;
+    padding: 0 2px;
+}
+.file-chip .fc-x:hover { color: var(--text); }
+.file-chip.uploading { opacity: 0.6; }
+.attach-btn {
+    flex-shrink: 0;
+    width: 36px;
+    height: 36px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    border-radius: 999px;
+    background: none;
+    color: var(--text-3);
+    cursor: pointer;
+    transition: color 0.2s, background 0.2s;
+}
+.attach-btn svg { width: 18px; height: 18px; }
+.attach-btn:hover, .attach-btn.has { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.attach-btn:disabled { opacity: 0.5; cursor: default; }
+.drop-hint {
+    display: none;
+    padding: 10px 14px;
+    border: 1px dashed rgba(var(--violet-rgb), 0.5);
+    border-radius: 12px;
+    color: var(--text-2);
+    font-size: 12.5px;
+    text-align: center;
+}
+.chat-section.dropping .drop-hint { display: block; }
 .src-n {
     flex-shrink: 0;
     width: 18px;
@@ -3061,8 +3121,16 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
                 <button type="button" data-say="Set a timer for 10 minutes."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5M9 2h6"/></svg><span>10-min timer</span></button>
             </div>
 
+            <!-- Files to send with the next message (documents.py): chips with ✕, filled by the clip button or a drop -->
+            <div id="attach-list" class="attach-list" aria-live="polite"></div>
+            <div id="drop-hint" class="drop-hint" aria-hidden="true">Drop a PDF, Word, text file or picture to read it</div>
+
             <!-- Input -->
             <div class="input-row glass">
+                <button id="attach-btn" class="attach-btn" title="Attach a PDF, Word, text file or picture" aria-label="Attach a file">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5 12.5 20a5.5 5.5 0 0 1-7.8-7.8l9-9a3.5 3.5 0 0 1 5 5l-9 9a1.5 1.5 0 0 1-2.1-2.1l8.3-8.3"/></svg>
+                </button>
+                <input id="file-input" type="file" multiple accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg" hidden>
                 <input id="text-input" class="text-input" type="text"
                        placeholder="Ask Javid anything…" autocomplete="off">
                 <button id="send-btn" class="send-btn">Send <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
@@ -3476,7 +3544,7 @@ const vitals = (() => {
             renderLat();
         },
         event(kind, text) {     // other steps worth a line
-            const marks = { approval: '⚠', memory: '◈', sources: '⌕', error: '✕', skill: '⚡', agent: '◆', timer: '⏱', watch: '◉' };
+            const marks = { approval: '⚠', memory: '◈', sources: '⌕', error: '✕', skill: '⚡', agent: '◆', timer: '⏱', watch: '◉', file: '📎' };
             note(marks[kind] || '·', text);
         },
         turnDone(usage, outcome = 'done') {
@@ -4601,7 +4669,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
     }
 
     let bubble = null, reply = '', sources = null, screen = null, skill = null, agent = null, proposals = [], actions = [];
-    let turnOutcome = 'stopped';
+    let turnOutcome = 'stopped', replyFiles = null;
     if (!quiet) vitals.turnStart(init.body instanceof FormData ? 'voice' : 'typed');
     const ensureBubble = () => {
         if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); speechMsg = bubble.closest('.message'); }
@@ -4640,6 +4708,9 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     vitals.tool(ev.name);
                 } else if (ev.type === 'llm') {
                     vitals.llm(ev.model, ev.n);     // a model request finished: the Systems panel names the model
+                } else if (ev.type === 'files') {
+                    replyFiles = ev.items;          // the documents this turn is about
+                    vitals.event('file', `reading ${ev.items.map(f => f.name).join(', ')}`);
                 } else if (ev.type === 'say') {
                     speakChunk(ev.text, 'say');    // e.g. "Searching…" while a web search runs
                 } else if (ev.type === 'sources') {
@@ -4705,6 +4776,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
             for (const p of proposals) bubble.closest('.message').appendChild(memoryCard(p));
             for (const a of actions) bubble.closest('.message').appendChild(approvalCard(a));
             if (sources?.length) addSources(bubble.closest('.message'), sources);
+            if (replyFiles?.length) addFiles(bubble.closest('.message'), replyFiles);
             scrollChat();
         }
         if (ctrl !== abortCtrl) return;  // a newer request has taken over
@@ -4721,6 +4793,8 @@ async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null)
     fd.append('audio', blob, `audio.${ext}`);
     fd.append('mode', mode);
     if (activeChat) fd.append('session', activeChat);
+    const sent = mode === 'push' ? takeAttachments() : [];      // a file goes with push-to-talk, never hands-free
+    if (sent.length) fd.append('files', sent.map(f => f.id).join(','));
     await streamReply('/talk', { method: 'POST', body: fd }, {
         quiet: mode !== 'push',
         marks,
@@ -4729,7 +4803,8 @@ async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null)
             if (barge) logBarge(barge, text ? 'speech' : 'false', text);
             if (!text) return;
             hideTyping();
-            addMsg('user', text);
+            const b = addMsg('user', text);
+            if (sent.length) addFiles(b.closest('.message'), sent, attachThumbs);
             showTyping();
         },
     });
@@ -4737,13 +4812,91 @@ async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null)
 
 async function submitText(text) {
     if (!text.trim() || isBusy) return;
-    addMsg('user', text);
+    const sent = takeAttachments();
+    const b = addMsg('user', text);
+    if (sent.length) addFiles(b.closest('.message'), sent, attachThumbs);
     await streamReply('/type', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, session: activeChat }),
+        body: JSON.stringify({ text, session: activeChat, files: sent.length ? sent.map(f => f.id) : undefined }),
     });
 }
+
+// ── Files to read (documents.py): picked with the clip, or dropped on the conversation; each is uploaded at once
+// (POST /upload parses it on the Mac) and waits as a chip until the next message takes it ──
+let attachments = [];             // chips from /upload, waiting for the next message
+const attachThumbs = {};          // id -> object URL of a picture's thumbnail (this page only)
+const ATTACH_MAX = 3;
+
+function renderAttachments() {
+    const list = document.getElementById('attach-list');
+    list.innerHTML = '';
+    for (const f of attachments) {
+        const chip = fileChip(f, { removable: true, thumb: attachThumbs[f.id] || null });
+        if (f.uploading) chip.classList.add('uploading');
+        chip.querySelector('.fc-x').onclick = () => removeAttachment(f.id);
+        list.appendChild(chip);
+    }
+    document.getElementById('attach-btn').classList.toggle('has', attachments.length > 0);
+    updatePlaceholder();
+}
+
+function takeAttachments() {
+    const ready = attachments.filter(f => !f.uploading);
+    attachments = [];
+    renderAttachments();
+    return ready;
+}
+
+async function removeAttachment(id) {
+    attachments = attachments.filter(f => f.id !== id);
+    renderAttachments();
+    try { await fetch(`/uploads/${id}`, { method: 'DELETE' }); } catch {}
+}
+
+async function attachFiles(fileList) {
+    for (const file of Array.from(fileList || [])) {
+        if (attachments.length >= ATTACH_MAX) { showToast(`Up to ${ATTACH_MAX} files a message.`); break; }
+        const temp = { id: `tmp-${Date.now()}-${Math.random()}`, name: file.name, kind: 'file', pages: 0, uploading: true };
+        attachments.push(temp);
+        renderAttachments();
+        const fd = new FormData();
+        fd.append('file', file, file.name);
+        try {
+            const r = await fetch('/upload', { method: 'POST', body: fd });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) throw new Error(out.detail || 'I couldn\'t read that file.');
+            if (out.kind === 'image') { try { attachThumbs[out.id] = URL.createObjectURL(file); } catch {} }
+            attachments = attachments.map(f => f.id === temp.id ? out : f);
+            vitals.event('file', `read ${out.name}`);
+        } catch (e) {
+            attachments = attachments.filter(f => f.id !== temp.id);
+            showToast(e.message || 'Upload failed.');
+        }
+        renderAttachments();
+    }
+}
+
+document.getElementById('attach-btn').addEventListener('click', () => document.getElementById('file-input').click());
+document.getElementById('file-input').addEventListener('change', e => { attachFiles(e.target.files); e.target.value = ''; });
+{
+    const zone = document.querySelector('.chat-section');
+    let depth = 0;
+    zone.addEventListener('dragenter', e => { if (e.dataTransfer?.types?.includes('Files')) { depth++; zone.classList.add('dropping'); } });
+    zone.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
+    zone.addEventListener('dragleave', () => { if (--depth <= 0) { depth = 0; zone.classList.remove('dropping'); } });
+    zone.addEventListener('drop', e => {
+        if (!e.dataTransfer?.files?.length) return;
+        e.preventDefault();
+        depth = 0;
+        zone.classList.remove('dropping');
+        attachFiles(e.dataTransfer.files);
+    });
+}
+// A reload shows the chat's open attachment (the server keeps it for a few turns) as chips under the composer hint.
+fetch('/uploads').then(r => r.json()).then(d => {
+    if (d.attached?.length) showToast(`Still reading: ${d.attached.map(f => f.name).join(', ')} (say "forget the file" to drop it)`);
+}).catch(() => {});
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 const TOOL_LABELS = {
@@ -4778,7 +4931,7 @@ function scrollChat() {
     chat.scrollTop = chat.scrollHeight;
 }
 
-function makeMsg(role, text, sources, screen, skill, agent) {
+function makeMsg(role, text, sources, screen, skill, agent, files) {
     const el = document.createElement('div');
     el.className = `message ${role}`;
     el.innerHTML = `
@@ -4786,7 +4939,28 @@ function makeMsg(role, text, sources, screen, skill, agent) {
         <div class="msg-bubble${role === 'javid' ? ' glass' : ''}">${esc(text)}</div>`;
     if (screen) addScreen(el, screen, skill, agent);
     if (sources?.length) addSources(el, sources);
+    if (files?.length) addFiles(el, files);
     return el;
+}
+
+// The files a message carried (documents.py chips: name, pages, how it was read), under the bubble.
+function fileChip(f, { removable = false, thumb = null } = {}) {
+    const chip = document.createElement('span');
+    chip.className = 'file-chip';
+    const icon = f.kind === 'image' ? '🖼' : f.kind === 'pdf' ? '📄' : f.kind === 'docx' ? '📝' : '📃';
+    const how = f.kind === 'image' ? ({ ocr: 'text read', vision: 'described' }[f.method] || '') :
+        `${f.pages} page${f.pages === 1 ? '' : 's'}`;
+    chip.innerHTML = `${thumb ? `<img src="${esc(thumb)}" alt="">` : `<span>${icon}</span>`}<span class="fc-name" title="${esc(f.name)}${f.snippet ? ' — ' + esc(f.snippet) : ''}">${esc(f.name)}</span>` +
+        `<span class="fc-meta">${esc(how)}</span>` +
+        ((f.warnings || []).length ? `<span class="fc-warn" title="${esc(f.warnings.join('; '))}">⚠</span>` : '') +
+        (removable ? `<button class="fc-x" title="Remove" aria-label="Remove ${esc(f.name)}">✕</button>` : '');
+    return chip;
+}
+function addFiles(msgEl, files, thumbs = {}) {
+    const box = document.createElement('div');
+    box.className = 'msg-files';
+    for (const f of files) box.appendChild(fileChip(f, { thumb: thumbs[f.id] || null }));
+    msgEl.appendChild(box);
 }
 
 // A skill's or agent's full version (on screen only; the bubble above holds what was spoken).
@@ -4890,7 +5064,7 @@ function historyNodes(entries) {
             continue;
         }
         if (day !== lastDay) { nodes.push(makeDivider(fmtDay(d))); lastDay = day; }
-        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources, e.screen, e.skill, e.agent));
+        nodes.push(makeMsg(e.role === 'user' ? 'user' : 'javid', e.text, e.sources, e.screen, e.skill, e.agent, e.files));
     }
     return nodes;
 }
@@ -5533,7 +5707,7 @@ const textInput = document.getElementById('text-input');
 const sendBtn   = document.getElementById('send-btn');
 
 function handleSend() {
-    const text = textInput.value.trim();
+    const text = textInput.value.trim() || (attachments.some(f => !f.uploading) ? 'What is in this file?' : '');
     if (text) { textInput.value = ''; submitText(text); }
 }
 sendBtn.addEventListener('click', handleSend);

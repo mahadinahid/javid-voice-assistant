@@ -5,7 +5,7 @@ Telegram on your phone), and it answers aloud: your tasks and calendar, timers, 
 exchange rates, research and more.
 
 It began on 2026-10-11 as a 10-tool terminal loop (the day-by-day story is in [`LEARNING_LOG.md`](LEARNING_LOG.md))
-and is now a web app with 25 tools, two agents, a Telegram bot and its own test suite.
+and is now a web app with 25 tools, two agents, a Telegram bot, a reader for your files, and its own test suite.
 
 ## What it does
 
@@ -25,6 +25,10 @@ and is now a web app with 25 tools, two agents, a Telegram bot and its own test 
   Past chats are searchable.
 - **On your phone.** A Telegram bot, paired by scanning a QR code. Anything that changes your data waits for an
   Approve button.
+- **Your files.** Give it a PDF, a Word file, a text file or a picture (the clip button, a drop on the chat, or a
+  file sent to the bot) and ask: "summarise this", "what's the delivery date?", "what's on this card?". Answers cite
+  the page. Files are parsed on your Mac; a picture with text is read there too (Tesseract), and only a picture
+  without readable text goes to a vision model.
 - **Long answers, kept.** Reports, briefs and plans can be saved as Google Docs in a "Javid Reports" folder.
 - **It knows itself.** "Is everything working?" runs a self-check; "where did you get that?" names the source of
   the last answer.
@@ -70,7 +74,8 @@ bigger decisions.
 ## Quick start
 
 **You need:** macOS, Python 3.14 (what Javid is developed and tested on), and a free
-[Groq API key](https://console.groq.com). Optional: `ffmpeg` for voice notes on Telegram (`brew install ffmpeg`).
+[Groq API key](https://console.groq.com). Optional: `ffmpeg` for voice notes on Telegram (`brew install ffmpeg`),
+and Tesseract to read scanned pages and pictures on your Mac (`brew install tesseract tesseract-lang`).
 
 ```bash
 git clone https://github.com/mahadinahid/javid-voice-assistant.git
@@ -111,14 +116,15 @@ rest, all kept out of git. The server listens on `127.0.0.1` only, and every req
 from Javid's own page: another website, a DNS-rebinding page or another program on the Mac gets a refusal and nothing
 else. What does leave the machine: each voice clip goes to Groq for transcription, each spoken
 reply to Microsoft's edge-tts, and your requests to the language model and search providers that are on. Calendar,
-tasks, memory and chats go only to providers with `personal_ok: true`.
+tasks, memory, chats and the files you give it go only to providers with `personal_ok: true`; a file's text is
+treated as data, so nothing written in a file can change your tasks, calendar or memory without your Approve.
 
 [`SECURITY.md`](SECURITY.md) lists the threats, the defences and everything still open.
 
 ## Testing
 
 ```bash
-python regression.py                         # 142 scripted checks: no network, no API tokens
+python regression.py                         # 150 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -144,6 +150,7 @@ Telegram and Drive, so it never touches your data or spends a credit. Run it bef
 | `watches.py` | Alerts on prices, news and rain |
 | `telegram_bot.py`, `telegram.html` | The Telegram bot and its setup page |
 | `approvals.py` | Approve cards: a delete or a move waits for a tap or your yes (every write, on Telegram) |
+| `documents.py`, `fixtures/files/` | Reading PDFs, Word and text files and pictures (parsed locally; Tesseract, then a vision model only for pictures without text), and the sample files its tests use |
 | `drive_tools.py` | Saving long answers to Google Drive |
 | `selfcheck.py`, `about.py` | The self-check, and answers to questions about Javid |
 | `themes.py`, `themes/` | Colour themes ([how to make one](themes/README.md)) |

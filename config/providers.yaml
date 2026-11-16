@@ -64,7 +64,8 @@ providers:
     models:
       - openai/gpt-oss-20b
       - openai/gpt-oss-120b
-      - qwen/qwen3.8-27b
+      - id: qwen/qwen3.8-27b
+        vision: true           # the only model on this key that takes a picture (2026-11-16): documents.py's pictures
 
   - name: gemini
     label: Google Gemini
@@ -83,7 +84,8 @@ providers:
     personal_ok: false
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
     models:
-      - gemini-3-flash-preview   # ~2 s, 5 requests a minute (2026-10-13)
+      - id: gemini-3-flash-preview   # ~2 s, 5 requests a minute (2026-10-13)
+        vision: true               # takes a picture too, but only once personal_ok (an upload is Mahadi's)
       - gemini-3.7-flash         # 6-17 s, often 503 "high demand"
 
   - name: openrouter

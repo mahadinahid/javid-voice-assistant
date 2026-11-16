@@ -33,6 +33,7 @@ import about
 import agents
 import calc
 import calendar_tools
+import documents
 import drive_tools
 import edge_pool
 import markets
@@ -127,6 +128,8 @@ PHRASES = {
     "tap_approve": {"en": "That one needs a tap on the Approve card on your screen, or a typed yes. Nothing was done yet.",
                     "bn": "এটার জন্য স্ক্রিনের Approve কার্ডে ট্যাপ করো, বা লিখে হ্যাঁ বলো। এখনো কিছু করা হয়নি।"},
     "nothing_done": {"en": "Okay, nothing was done.", "bn": "ঠিক আছে, কিছু করা হয়নি।"},
+    "file_dropped": {"en": "Okay, I've put the file away.", "bn": "ঠিক আছে, ফাইলটা সরিয়ে রাখলাম।"},
+    "no_file":      {"en": "There's no file open right now.", "bn": "এখন কোনো ফাইল খোলা নেই।"},
     "approval_expired": {"en": "That request expired, so nothing was done. Ask again if you still want it.",
                          "bn": "ওই অনুরোধের সময় পেরিয়ে গেছে, তাই কিছু করা হয়নি। চাইলে আবার বলো।"},
     "switched":   {"en": "Sure, Mahadi. I'll speak English from now on.",
@@ -986,6 +989,58 @@ def _web_gate(name: str, args: dict):
     if action:
         _new_approvals.append(action)
     return told
+
+
+def _doc_gate(name: str, args: dict):
+    """The gate of a turn that carries a file (documents.py): every write tool becomes an Approve card, bound to its
+    target, like Telegram's. The file's text is untrusted: whatever it says, nothing changes without Mahadi's tap or
+    his own yes on the next message."""
+    import approvals
+    told, action = approvals.propose(name, args, typed_yes=True)
+    if action:
+        _new_approvals.append(action)
+    return told
+
+
+# The file(s) attached to the open chat (documents.py): set by the turn that brought them, carried for DOC_TURNS more
+# turns of the same chat, dropped by a new file, "forget the file", or another chat.
+_doc_state = {"session": None, "docs": [], "left": 0}
+
+
+def _attach(files: list | None) -> list[dict]:
+    """The documents for this turn: the ones just sent (their ids), else the chat's attachment while it lasts."""
+    sid = current_session()
+    if files:
+        docs = [d for d in (documents.load(i) for i in files[:documents.MAX_FILES]) if d]
+        _doc_state.update(session=sid, docs=docs, left=documents.DOC_TURNS)
+        return list(docs)
+    if _doc_state["docs"] and _doc_state["session"] == sid and _doc_state["left"] > 0:
+        _doc_state["left"] -= 1
+        return list(_doc_state["docs"])
+    return []
+
+
+def drop_files() -> bool:
+    had = bool(_doc_state["docs"])
+    _doc_state.update(session=None, docs=[], left=0)
+    return had
+
+
+def detach(doc_id: str) -> None:
+    """A deleted upload leaves the chat's attachment."""
+    _doc_state["docs"] = [d for d in _doc_state["docs"] if d["id"] != doc_id]
+    if not _doc_state["docs"]:
+        _doc_state.update(session=None, left=0)
+
+
+def attached_files() -> list[dict]:
+    """The open chat's attachment as chips (the page shows them after a reload)."""
+    if _doc_state["docs"] and _doc_state["session"] == current_session() and _doc_state["left"] > 0:
+        return [documents.chip(d) for d in _doc_state["docs"]]
+    return []
+
+
+_doc_block = {"text": ""}     # the turn's file text for the request (never in `messages`)
 
 
 def _gated(name: str, run):
@@ -2076,6 +2131,62 @@ def _estimate(msgs: list, tools: list | None, out_tokens: int = 600) -> tuple[in
     return int((chars + len(json.dumps(tools or []))) / 3.5) + 1, out_tokens
 
 
+VISION_PROMPT = ("Transcribe every piece of text in this picture exactly as written, line by line, keeping numbers, "
+                 "names and addresses as they are. Then, in at most two sentences, say what the picture shows. "
+                 "Output only that, no preamble.")
+
+
+class NoVisionModel(NoModelReady):
+    """No vision model may take the picture now: none marked `vision: true` on a provider that's on, may take
+    personal data (an upload is Mahadi's), and isn't resting or at its allowance."""
+
+
+def vision_describe(image: bytes, mime: str) -> str:
+    """One request with a picture (documents.py, for a picture Tesseract couldn't read): the first model marked
+    `vision: true` in the registry whose provider is on and personal_ok, in chain order then registry order; no tools,
+    no history, no memory block. Counted in the ledger as op "vision" and in llm_usage like a chat request. Raises
+    NoVisionModel when none may take it, else the model's error."""
+    import base64
+    allowed = [m for m in providers.vision_models() if _usable(m) and providers.personal_ok(_split(m)[0])]
+    chain = current_chain()
+    allowed.sort(key=lambda m: chain.index(m) if m in chain else len(chain))
+    msgs = [{"role": "user", "content": [
+        {"type": "text", "text": VISION_PROMPT},
+        {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64.b64encode(image).decode()}"}}]}]
+    last_error = None
+    for model in allowed:
+        provider = _split(model)[0]
+        if not providers.allow(provider, model)[0]:
+            continue
+        t0 = time.time()
+        try:
+            raw = _create(model, msgs, max_tokens=700)
+            done = raw.parse()
+        except API_ERRORS as e:
+            providers.record(provider, 0, model=model, op="vision", latency_ms=(time.time() - t0) * 1000,
+                             status=providers.error_kind(e), detail=type(e).__name__)
+            if not _is_unavailable(e):
+                raise
+            _cool(model, e)
+            _note_error(model, e)
+            print(f"[vision] {model} unavailable ({type(e).__name__}), skipping it")
+            last_error = e
+            continue
+        _note_headers(model, getattr(raw, "headers", {}))
+        usage = getattr(done, "usage", None)
+        if usage:
+            _record_usage(model, usage)
+        providers.record(provider, _call_units(provider, usage, model, (len(image) // 750 + 200, 300)), model=model,
+                         op="vision", latency_ms=(time.time() - t0) * 1000, status="ok")
+        llm_usage[model] = llm_usage.get(model, 0) + 1
+        text = (done.choices[0].message.content or "") if getattr(done, "choices", None) else ""
+        print(f"[vision] {model}: {len(text)} characters")
+        return text
+    if last_error is not None:
+        raise last_error
+    raise NoVisionModel("no vision model may take the picture now")
+
+
 def _check_cost(model: str, usage) -> None:
     """OpenRouter reports what each call cost, and a free model's is 0. Anything more means a paid model was reached
     somehow: OpenRouter is switched off (a 30-day rest, until someone checks the account) and it's said loudly."""
@@ -2293,7 +2404,8 @@ def _request_messages(turn_start: int, lang: str = "en") -> list:
             out.append({"role": "assistant", "content": reply, "_personal": True})
     current = messages[turn_start:]
     out.append({**current[0], "content": context_block(_summarize(older), lang, _facts_note(turn_start))
-                + current[0]["content"], "_public": context_block("", lang) + current[0]["content"]})
+                + current[0]["content"] + (_doc_block["text"] if current[0].get("_files") else ""),
+                "_public": context_block("", lang) + current[0]["content"]})
     return out + current[1:]
 
 
@@ -2383,6 +2495,8 @@ def _personal_items() -> list[tuple[str, str]]:
     for m in messages:
         if m.get("role") == "tool" and m.get("_needs_personal"):
             items += [("your calendar or tasks", line) for line in str(m.get("content") or "").splitlines() if line.strip()]
+    for d in _doc_state["docs"]:        # a file Mahadi sent is his too
+        items += [("your file", line) for p in d["pages"] for line in p.splitlines() if line.strip()]
     return items
 
 
@@ -2490,7 +2604,8 @@ def _relay(answer, lang: str, used: list):
         yield (kind, value)
 
 
-def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), yes_ok: bool = True):
+def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), yes_ok: bool = True,
+                 files: list | None = None):
     """Yield ("tool", name), ("say", text), ("sources", links), ("lang", code) and ("delta", text)
     events as the reply is produced. "say" is spoken but isn't part of the reply ("Searching…");
     "lang" means the message switched the reply language.
@@ -2504,7 +2619,10 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
     tool (approvals.DESTRUCTIVE), yielded as ("approval", action); a plain yes/no on the next message decides the card
     here, in code (("approval_done", {...}) then the outcome as the reply), when yes_ok: typed, or push-to-talk; a
     hands-free yes (yes_ok False) only says to tap the card. blocked: tools this turn never gets or runs, whatever the
-    model asks for (Telegram: the web tools for a message with a link).
+    model asks for (Telegram: the web tools for a message with a link). files: ids of documents just sent with the
+    message (documents.py); with them, or with the chat's attachment still open, the turn is personal, every write
+    tool is an Approve card (_doc_gate), the web tools and agents are blocked, and a multi-page PDF's answer must
+    cite a page.
     """
     import approvals
     global _write_gate
@@ -2533,8 +2651,16 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
     elif _MARKET_ASK.search(user_text):      # a live price: market_price, no web search (no Tavily credits)
         tools = [t for t in tools if t["function"]["name"] not in WEB_TOOLS]
     widened = False
-    messages.append({"role": "user", "content": user_text})
-    log_message("user", user_text)
+    docs = [] if documents.forget_request(user_text) else _attach(files)
+    chips = [documents.chip(d) for d in docs]
+    messages.append({"role": "user", "content": user_text, **({"_files": chips} if chips else {})})   # "_": never sent
+    log_message("user", user_text, **({"files": chips} if chips else {}))
+    if docs:
+        messages[-1]["_needs_personal"] = True      # his file: only providers that may see his data
+        blocked = blocked | WEB_TOOLS | {"delegate"}
+        _doc_block["text"] = documents.block(docs, user_text)
+    else:
+        _doc_block["text"] = ""
     reply = ""
     links = []
     screen = ""
@@ -2544,7 +2670,14 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
     previous = next((m for m in reversed(messages[1:turn_start]) if m["role"] == "assistant" and not m.get("tool_calls")), None)
     lang = get_language()
     try:
-        _write_gate = gate or _web_gate
+        _write_gate = gate or (_doc_gate if docs else _web_gate)
+        if chips:
+            yield ("files", chips)
+        if documents.forget_request(user_text):     # "forget the file": the attachment is dropped, in code
+            tracing.mark("routing_done")
+            reply = phrase("file_dropped" if drop_files() else "no_file", lang)
+            yield ("delta", reply)
+            return
         # A yes/no right after an Approve card (a delete or a move) decides it here, in code: never the model, and
         # never from hands-free (yes_ok False: the page may be hearing the TV), where it only says to tap the card.
         card = None if gate else approvals.answer(user_text, yes_ok)
@@ -2628,6 +2761,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         retried_garbled = False
         retried_web = False
         retried_lang = False
+        retried_cite = False
         retried_required = False
         retried_holiday = False
         required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
@@ -2725,6 +2859,13 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                 print(f"[lang] not in {lang}, asking for a rewrite: {text[:60]!r}")
                 notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
                                               {"role": "user", "content": language_note(lang)}]))
+                continue
+            if not tool_calls and docs and not retried_cite and not any(m.get("tool_calls") for m in messages[turn_start:]) \
+                    and (cite := documents.cite_problem(text, docs)):
+                retried_cite = True     # a multi-page PDF's answer names its page, or says the file doesn't say
+                print(f"[file] no page cited, asking for a rewrite: {text[:60]!r}")
+                notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
+                                              {"role": "user", "content": cite}]))
                 continue
             if not tool_calls and web_tools.used():
                 problems = web_tools.check_reply(text + ("\n" + via_agent["screen"] if via_agent else ""))
@@ -2902,6 +3043,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         used = list(dict.fromkeys([c["function"]["name"] for m in messages[turn_start:] for c in m.get("tool_calls") or []]
                                   + code_tools + sorted(agents.tools_used())))
         basis = {**({"tools": used} if used else {}), **({"sources": links} if links else {})}
+        if chips:
+            basis["files"] = chips
         messages.append({"role": "assistant", "content": reply.strip(), **({"screen": screen} if screen else {}), **basis,
                          **({"skill": skills.active()["name"]} if skills.active() else {}),
                          **({"agent": via_agent["agent"]} if via_agent else {})})

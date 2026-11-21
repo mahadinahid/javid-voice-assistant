@@ -639,11 +639,15 @@ def agenda(day: str = "today") -> dict:
     return {"status": "connected", "events": out}
 
 
-def briefing_line() -> str | None:
-    """Today's events for the morning briefing, or None if not connected."""
-    if status() != "connected":
-        return None
-    return list_events("today")
+def briefing_line() -> str:
+    """Today's events for the morning briefing, or why they couldn't be read: never left out. Without a calendar
+    line the model said "you have nothing on your calendar today" with the sign-in expired for weeks (2026-11-21)."""
+    if status() == "connected":
+        return list_events("today")
+    expired = os.path.exists(TOKEN_FILE)
+    why = "Google's sign-in has expired" if expired else "Google Calendar isn't connected"
+    return (f"couldn't be read ({why}), so today's events are unknown. Say so, and that Mahadi can "
+            f"{'sign in again' if expired else 'connect it'} from the Dashboard; never say his calendar is empty or clear.")
 
 
 # ---------- tool schemas ----------

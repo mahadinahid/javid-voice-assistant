@@ -27,8 +27,8 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
   Approve button.
 - **Your files.** Give it a PDF, a Word file, a text file or a picture (the clip button, a drop on the chat, or a
   file sent to the bot) and ask: "summarise this", "what's the delivery date?", "what's on this card?". Answers cite
-  the page. Files are parsed on your Mac; a picture with text is read there too (Tesseract), and only a picture
-  without readable text goes to a vision model.
+  the page, and a later "explain the PDF I sent" finds the file again. Files are parsed on your Mac; a picture with
+  text is read there too (Tesseract), and only a picture without readable text goes to a vision model.
 - **Long answers, kept.** Reports, briefs and plans can be saved as Google Docs in a "Javid Reports" folder.
 - **It knows itself.** "Is everything working?" runs a self-check; "where did you get that?" names the source of
   the last answer.
@@ -48,7 +48,7 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
                                            questions about Javid, the self-check
                                            otherwise a language model with 25 tools:
                                            Groq gpt-oss-20b, then the fallbacks in config/providers.yaml
-                                           speech: edge-tts (en-US-AndrewNeural, bn-BD-PradeepNeural),
+                                           speech: edge-tts (en-US-GuyNeural, bn-BD-PradeepNeural),
                                            ElevenLabs only as a backup
 ```
 
@@ -124,7 +124,7 @@ treated as data, so nothing written in a file can change your tasks, calendar or
 ## Testing
 
 ```bash
-python regression.py                         # 151 scripted checks: no network, no API tokens
+python regression.py                         # 156 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)

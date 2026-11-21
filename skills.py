@@ -19,7 +19,7 @@ import os
 import re
 
 SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
-WORDS_PER_SECOND = 2.3      # Andrew speaks ~140 words a minute
+WORDS_PER_SECOND = 2.2      # Guy, ~130 words a minute (2.3 for Andrew until 2026-11-21: Guy speaks 6% slower)
 DEFAULT_SPOKEN_SECONDS = 30
 
 _skills: dict[str, dict] = {}

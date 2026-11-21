@@ -89,8 +89,12 @@ class _SuiteGroq(Groq):
         return response.status_code != 429 and super()._should_retry(response)
 
 
+# Javid's own Groq clients, for the chain's 429 drive: Whisper's (the SDK's retries) and the chain's (none).
+APP_GROQ, APP_GROQ_CHAT = javid.client, javid.chat_client
 # A stalled stream must fail the run, not hang the suite.
-javid.client = _SuiteGroq(timeout=30.0, max_retries=2)
+javid.client = javid.chat_client = _SuiteGroq(timeout=30.0, max_retries=2)
+# The suite rides out per-minute 429s itself (below), outside a turn's measured time: the chain doesn't wait for them.
+javid.REST_WAIT_SEC = 0
 RUN_TIMEOUT_SEC = 150      # hard cap for one case run
 INFRA_RETRIES = 2          # re-runs when the API itself failed (not the assistant)
 API_FAILED_REPLY = tuple(javid.PHRASES["api_failed"].values())   # think_stream's canned reply on APIError
@@ -2336,6 +2340,107 @@ def prov_cooldowns():
     return {"problems": problems}
 
 
+def _groq_reply(model: str, text: str, stream: bool = True) -> bytes:
+    """Groq's chat completion for a fake transport: server-sent chunks with the usage in x_groq, or one JSON body."""
+    usage = {"prompt_tokens": 120, "completion_tokens": 5, "total_tokens": 125, "fake": True}   # no real tokens
+    if not stream:
+        return json.dumps({"id": "chatcmpl-test", "object": "chat.completion", "created": 0, "model": model,
+                           "choices": [{"index": 0, "message": {"role": "assistant", "content": text},
+                                        "finish_reason": "stop"}], "usage": usage}).encode()
+    head = {"id": "chatcmpl-test", "object": "chat.completion.chunk", "created": 0, "model": model}
+    delta = {"role": "assistant", "content": text}
+    chunks = [{**head, "choices": [{"index": 0, "delta": delta, "finish_reason": None}]},
+              {**head, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+               "x_groq": {"id": "req_test", "usage": usage}}]
+    return ("".join(f"data: {json.dumps(c)}\n\n" for c in chunks) + "data: [DONE]\n\n").encode()
+
+
+def chain_groq_429():
+    """Groq's per-minute 429 comes straight back from the chain's own request: no retry inside the SDK, the next model
+    answers at once and the first rests until its retry-after (2026-11-16: the SDK slept 8-28 s where the router
+    couldn't see it, while gpt-oss-120b was free). Every model resting a moment: the first back is waited for;
+    resting long (a daily limit): the error at once. Whisper, pings and pictures keep the SDK's retries. The real groq
+    SDK over a fake transport (httpx.MockTransport: no socket, no key)."""
+    import httpx
+    problems, seen, plan = [], [], {}       # plan: model -> the responses it gets, in order (then "ok")
+    tpm, tpd = fixture("groq_429_tpm.json"), fixture("groq_429.json")
+
+    def limited(fx, **headers):
+        return httpx.Response(429, headers={**fx["headers"], **headers}, json=fx["body"])
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen.append(body["model"])
+        step = plan[body["model"]].pop(0) if plan.get(body["model"]) else "ok"
+        if step != "ok":
+            return step
+        if body.get("stream"):      # the chain counts it in llm_usage: not a real request (the run's summary)
+            FAKE_REQUESTS[body["model"]] = FAKE_REQUESTS.get(body["model"], 0) + 1
+        return httpx.Response(200, headers={"content-type": "text/event-stream" if body.get("stream") else
+                                            "application/json"},
+                              content=_groq_reply(body["model"], f"Hello from {body['model']}.", body.get("stream")))
+
+    def fake(c):
+        transport = httpx.MockTransport(handler)
+        return c.with_options(api_key="gsk_test_not_a_key", http_client=httpx.Client(transport=transport))
+
+    def ask():
+        t0 = time.time()
+        try:
+            return "".join(_orig_stream_completion({}, [{"role": "user", "content": "Hi"}], [])), time.time() - t0
+        except (javid.NoModelReady, *javid.API_ERRORS) as e:
+            return type(e).__name__, time.time() - t0
+
+    if APP_GROQ_CHAT.max_retries != 0:
+        problems.append(f"the chain's Groq client retries {APP_GROQ_CHAT.max_retries} times inside the SDK")
+    if APP_GROQ.max_retries < 1:
+        problems.append("Whisper's Groq client lost the SDK's retries")
+    saved = javid.client, javid.chat_client, javid.REST_WAIT_SEC
+    javid.client, javid.chat_client, javid.REST_WAIT_SEC = fake(APP_GROQ), fake(APP_GROQ_CHAT), 30.0
+    try:
+        with chain_of(DEFAULT_MODEL, BIG_MODEL):
+            plan[DEFAULT_MODEL] = [limited(tpm)]
+            t0 = time.time()
+            text, took = ask()
+            if seen != [DEFAULT_MODEL, BIG_MODEL] or text != f"Hello from {BIG_MODEL}." or took > 2:
+                problems.append(f"a per-minute 429 on 20b: asked {seen}, got {text!r} in {took:.1f} s")
+            until = providers.cooldown("groq", DEFAULT_MODEL)[0]
+            if not until or not 27 <= until - t0 <= 31:
+                problems.append(f"20b rests {until and round(until - t0)} s after a 429 that says 30 s")
+            if providers.cooldown("groq", BIG_MODEL)[0]:
+                problems.append("20b's 429 rested 120b too")
+            rows = [(r["model"], r["status"]) for r in providers.calls("groq", since=t0)]
+            if rows != [(DEFAULT_MODEL, "rate_limited"), (BIG_MODEL, "ok")]:
+                problems.append(f"the ledger: {rows}")
+
+            providers.clear_cooldown("groq")        # both at their per-minute limit, back in a second
+            seen.clear()
+            plan.update({DEFAULT_MODEL: [limited(tpm, **{"retry-after": "1"})],
+                         BIG_MODEL: [limited(tpm, **{"retry-after": "1"})]})
+            text, took = ask()
+            if seen != [DEFAULT_MODEL, BIG_MODEL, DEFAULT_MODEL] or text != f"Hello from {DEFAULT_MODEL}." \
+                    or not 0.9 <= took <= 3:
+                problems.append(f"both resting 1 s: asked {seen}, got {text!r} in {took:.1f} s")
+
+            providers.clear_cooldown("groq")        # both at their daily limit (7 minutes): nothing to wait for
+            seen.clear()
+            plan.update({DEFAULT_MODEL: [limited(tpd)], BIG_MODEL: [limited(tpd)]})
+            text, took = ask()
+            if seen != [DEFAULT_MODEL, BIG_MODEL] or text != "RateLimitError" or took > 2:
+                problems.append(f"both at a daily limit: asked {seen}, got {text!r} in {took:.1f} s")
+
+            providers.clear_cooldown("groq")        # a ping (like a picture's request) still has the SDK's retry
+            seen.clear()
+            plan[DEFAULT_MODEL] = [limited(tpm, **{"retry-after-ms": "10"})]
+            done = javid._create(DEFAULT_MODEL, [{"role": "user", "content": "ping"}], max_tokens=8).parse()
+            if seen != [DEFAULT_MODEL, DEFAULT_MODEL] or \
+                    done.choices[0].message.content != f"Hello from {DEFAULT_MODEL}.":
+                problems.append(f"a ping's 429: asked {seen} (the SDK's retry should answer it)")
+    finally:
+        javid.client, javid.chat_client, javid.REST_WAIT_SEC = saved
+    return {"problems": problems}
+
+
 def prov_groq_headers():
     """Groq's x-ratelimit headers (recorded) are each model's remaining quota; a reading older than its reset isn't."""
     fx, problems = fixture("groq_headers.json"), []
@@ -3699,8 +3804,124 @@ def file_relevance():
     other = ["What's the weather like?", "Thanks.", research, "Still there?", "Set a timer for 10 minutes.", "What time is it?",
              "Give me 10 news from all over the world.", "Plan my day tomorrow.", "How's bitcoin doing?", "Thanks, that's all.",
              "Add a task to call mom tomorrow."]
+    about += ["Can you explain the previous PDF that I just uploaded?", "What does the last file say?"]
     problems = [f"not about the file: {q!r}" for q in about if not documents.relevant(q, [doc])]
     problems += [f"about the file: {q[:50]!r}" for q in other if documents.relevant(q, [doc])]
+    # a five-letter stem matched "transformers" to the payment PDF's "transfer"; inflections still count
+    payment = {"id": "p", "name": "payment.pdf", "pages": ["Domestic payment confirmation: a transfer of 750 CZK, "
+                                                           "variable symbol 6253, confirmed by Raiffeisenbank."]}
+    for q, want in (("Can you find the best paper on transformers?", False),
+                    ("When were the payments confirmed?", True), ("How much was transferred?", True)):
+        if documents.relevant(q, [payment]) != want:
+            problems.append(f"payment.pdf, {q!r}: {not want}")
+    return {"problems": problems}
+
+
+def file_asked_again():
+    """A file he means that the turn doesn't carry: "explain the previous PDF that I just uploaded" after its six turns,
+    and "eplain the doc" after a reload, attach the chat's last file again; in a chat with no file, "can you read the
+    pdf?" is told how to attach one, in code (2026-11-16: the model said "I'm sorry, but I can't read PDFs"); "can you
+    read PDFs?" is about.py's unless a file is attached; a reminder about "the PDF" is the model's. A scanned page read
+    at low confidence says so."""
+    problems = []
+    doc = _store("order.pdf")
+    _turn("Summarise this.", ["A purchase order for twill and denim (p. 1), delivered on 24 November (p. 2)."],
+          files=[doc["id"]])
+    for _ in range(documents.DOC_TURNS):
+        _turn("Thanks.", ["Any time."])
+    if javid.attached_files():
+        problems.append("the file was still attached after its turns")
+    _, events = _turn("Can you explain the previous PDF that I just uploaded?",
+                      ["A purchase order from Dhaka Textile Mills (p. 1), delivered on 24 November (p. 2)."])
+    if not [v for k, v in events if k == "files"] or "(p. 2) DELIVERY" not in javid._doc_block["text"]:
+        problems.append(f"the previous PDF wasn't attached again: {[k for k, v in events]}")
+    javid.drop_files()          # a restart: the chat comes back from the log, which keeps the message's files
+    javid.open_session(javid.current_session())
+    _, ev2 = _turn("eplain the doc", ["A purchase order (p. 1)."])
+    if not [v for k, v in ev2 if k == "files"]:
+        problems.append("after a reload, the chat's file wasn't found again")
+    javid.new_session()
+    asked = SCRIPTED_REQUESTS
+    reply, _ = _turn("can you read the pdf?")
+    if reply != javid.phrase("no_file_here") or SCRIPTED_REQUESTS != asked:
+        problems.append(f"a chat with no file: {reply!r}")
+    reply, _ = _turn("Can you read PDFs?")
+    if not reply.startswith("Yes: PDFs") or SCRIPTED_REQUESTS != asked:
+        problems.append(f"'Can you read PDFs?' got {reply!r}")
+    _turn("Remind me to send the PDF to the accountant tomorrow.", ["What time tomorrow?"])
+    if _script:
+        problems.append("a reminder about the PDF didn't reach the model")
+        _script.clear()
+    note = _store("note.txt")
+    _, ev6 = _turn("Can you read PDFs?", ["Yes, and this note is about the Monday meeting."], files=[note["id"]])
+    if _script or not [v for k, v in ev6 if k == "files"]:
+        problems.append("with a file attached, 'can you read PDFs?' wasn't answered from it")
+        _script.clear()
+    saved = documents.OCR
+    documents.OCR = lambda image: (SCAN_TEXT, 41.0)
+    try:
+        warnings = documents.parse(FIX["scanned.pdf"], "scanned.pdf")["warnings"]
+    finally:
+        documents.OCR = saved
+    if not any("low confidence (41%)" in w for w in warnings):
+        problems.append(f"a scanned page read at 41% gave no warning: {warnings}")
+    return {"problems": problems}
+
+
+def spoken_unmarked():
+    """The prompt says no markdown, and gpt-oss still wrote "**Claude 3.5 Sonnet**" and a `model-id` (2026-11-16),
+    shown with its marks and read out: the spoken reply keeps the words without them, and so does the chat."""
+    problems = []
+    reply, _ = _turn("Tell me two good note-taking apps.",
+                     ["Try **Obsidian** or *Joplin*, at `joplinapp.org`; "
+                      "see [their guide](https://joplinapp.org/help)."])
+    if reply != "Try Obsidian or Joplin, at joplinapp.org; see their guide.":
+        problems.append(f"the reply: {reply!r}")
+    if javid.messages[-1]["content"] != reply:
+        problems.append(f"the chat keeps {javid.messages[-1]['content']!r}")
+    return {"problems": problems}
+
+
+def spoken_prices():
+    """A price said aloud is in cents above $1 ("Solana is at $66.1100" was read out, 2026-11-21); the screen keeps
+    the exchange's digits, and a coin under $1 keeps its own."""
+    problems, sol = [], {"kind": "crypto", "symbol": "SOLUSDT", "name": "Solana", "price": 66.11, "pct": -8.21,
+                         "quote": "USDT"}
+    for lang in ("en", "bn"):
+        if "$66.11," not in (said := markets._said(sol, lang, True)):
+            problems.append(f"said ({lang}): {said!r}")
+    if markets._value(sol) != "$66.1100":
+        problems.append(f"on screen: {markets._value(sol)!r}")
+    if "$0.52341," not in (said := markets._said(dict(sol, price=0.52341), "en", True)):
+        problems.append(f"a coin under $1: {said!r}")
+    if (watched := watches._fmt("crypto", "USDT", 66.11)) != "$66.11":
+        problems.append(f"a watch says {watched!r}")
+    return {"problems": problems}
+
+
+def brief_calendar_unread():
+    """With the Google sign-in expired, morning_briefing left the calendar out and the model filled in "you have
+    nothing on your calendar today" (2026-11-21): the brief says the calendar couldn't be read, never that it's empty."""
+    def calendar_line():
+        return next((l for l in javid.morning_briefing().splitlines() if l.startswith("Calendar:")), "no calendar line")
+    problems, token, saved = [], os.path.join(SCRATCH, "calendar_token.json"), (ct.status, ct.TOKEN_FILE)
+    try:
+        ct.status, ct.TOKEN_FILE = (lambda: "needs_auth"), token
+        for signed_in_before, why in ((True, "Google's sign-in has expired"), (False, "Google Calendar isn't connected")):
+            if signed_in_before:
+                open(token, "w").close()
+            else:
+                os.remove(token)
+            line = calendar_line()
+            if why not in line or "never say his calendar is empty" not in line or "No events" in line:
+                problems.append(f"{why}: {line!r}")
+        ct.status = lambda: "connected"
+        if calendar_line() != "Calendar: " + ct.list_events("today").splitlines()[0]:
+            problems.append(f"connected: {calendar_line()!r}")
+    finally:
+        ct.status, ct.TOKEN_FILE = saved
+        with contextlib.suppress(OSError):
+            os.remove(token)
     return {"problems": problems}
 
 
@@ -4040,7 +4261,7 @@ CASES = [
           lambda r: None if r.extra["title"] == "Telegram" else f"chat title {r.extra['title']!r}",
           lambda r: None if "Hey Mahadi." in tg_texts(OWNER)(r) else "no reply sent"],
          drive=tg_own_chat, script=["Hey Mahadi."]),
-    Case("telegram: a voice message gets its transcript, a reply and a voice note in Andrew's voice", [],
+    Case("telegram: a voice message gets its transcript, a reply and a voice note in Guy's voice", [],
          [lambda r: None if any("What's on my task list?" in t for t in tg_texts(OWNER)(r)) else "transcript not echoed",
           lambda r: None if any("three pending" in t for t in tg_texts(OWNER)(r)) else "no text reply",
           lambda r: None if [m for m, _, _ in r.extra["fake"].calls].count("sendVoice") == 1 else "no voice note",
@@ -4156,7 +4377,7 @@ CASES = [
     Case("voice: Bangla mode is Pradeep only, English words too", ["কাল আমার কী আছে?"],
          [one_voice(javid.EDGE_VOICE_BN)], lang="bn", speak=True,
          script=["ঠিক আছে, মাহাদি। OK. Project review কাল দুপুর ২টায়।"]),
-    Case("voice: a taka sign stays in Andrew's voice, whatever a stale tab sends", ["Hello Javid."],
+    Case("voice: a taka sign stays in Guy's voice, whatever a stale tab sends", ["Hello Javid."],
          [one_voice(javid.EDGE_VOICE)], speak=True, page_lang="bn",
          script=["The dollar is ৳122.50 today, Mahadi. That's the Bangladesh Bank rate."]),
     # ---------- garble guard (scripted: the model's output is fixed, so these never depend on luck) ----------
@@ -4438,7 +4659,7 @@ def edge_pool_sockets():
         ssml = [m for m in fake.log if "Path:ssml" in m]
         if audio != b"ID3 warm mp3" or len(TTS_CALLS) != before:
             problems.append(f"a ready socket wasn't used: {audio!r}, {len(TTS_CALLS) - before} Communicate calls")
-        if not ssml or "<voice name='Microsoft Server Speech Text to Speech Voice (en-US, AndrewNeural)'>" not in ssml[0] \
+        if not ssml or "<voice name='Microsoft Server Speech Text to Speech Voice (en-US, GuyNeural)'>" not in ssml[0] \
                 or "<prosody pitch='+0Hz' rate='+0%' volume='+0%'>" not in ssml[0]:
             problems.append(f"the request isn't Communicate's, in the locked voice: {ssml[:1]}")
         if not _wait_for(lambda: fake.opened == edge_pool.POOL_SIZE + 1 and len(edge_pool._pool) == edge_pool.POOL_SIZE):
@@ -4765,6 +4986,8 @@ CASES += [
          [], [drive_ok], drive=chain_free_only, script=[]),
     Case("chain: Cloudflare counts neurons at the model's price and never goes past the free 10,000 a day",
          [], [drive_ok], drive=cloudflare_neurons, client_script=[]),
+    Case("chain: Groq's per-minute 429 goes straight to the next model, no wait in the SDK; a short rest is waited for",
+         [], [drive_ok], drive=chain_groq_429, script=[]),
     # ---------- Google Drive (drive_tools.py, 2026-10-26): long outputs saved as Google Docs in "Javid Reports" ----------
     Case("drive: 'save that' after the headlines saves them in Javid Reports, titled, dated, with their sources",
          ["Show me the world news", "Save that to my Drive."],
@@ -4919,6 +5142,14 @@ CASES += [
          [], [drive_ok], drive=file_parsing, script=[]),
     Case("file: follow-ups about the file carry it; unrelated ones (weather, a research question) don't",
          [], [drive_ok], drive=file_relevance, script=[]),
+    Case("file: the chat's last file comes back when he asks about it; with none, he's told how to attach one",
+         [], [drive_ok], drive=file_asked_again, script=[]),
+    Case("reply: a spoken reply loses its markdown (bold, italics, code, links) and keeps the words",
+         [], [drive_ok], drive=spoken_unmarked, script=[]),
+    Case("brief: a calendar Javid can't read (an expired Google sign-in) is said so, never called empty",
+         [], [drive_ok], drive=brief_calendar_unread, script=[]),
+    Case("market: a price said aloud is in cents above $1; the screen keeps the exchange's digits",
+         [], [drive_ok], drive=spoken_prices, script=[]),
     Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
          [], [drive_ok], drive=file_routes, script=[]),
     Case("file: the file's text goes only to a provider cleared for personal data, as data with its pages",
@@ -4930,7 +5161,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 215, len(CASES)
+assert len(CASES) == 220, len(CASES)
 
 
 def print_token_summary() -> None:

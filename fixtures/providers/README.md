@@ -5,6 +5,8 @@ Responses `regression.py` replays so its default run never calls a real API. Eac
 - `groq_headers.json`: **recorded** 2026-10-25 from one real request to `openai/gpt-oss-20b` (only the
   `x-ratelimit-*` headers and the token counts were kept).
 - `groq_429.json`, `gemini_429.json`: the error texts as Javid has logged them (org id replaced).
+- `groq_429_tpm.json`: Groq's documented 429 for the per-minute token limit, with the figures of a real one
+  (2026-11-16). Not recorded: until then the SDK waited these out silently, so Javid never logged one.
 - `deepseek_402.json`, `tavily_432.json`, `elevenlabs_subscription.json`: the providers' documented formats, not
   recorded (no key, or the error never happened here).
 - `openrouter_429_daily.json`, `openrouter_429_upstream.json`: OpenRouter's documented 429s (the account's free

@@ -40,7 +40,7 @@ quirks are in `CLAUDE.md`; this file is about the path and its timings.
    ├─ text shown                           ● first_text
    ├─ feedSpeech(): cut into sentences
    ├─ POST /speak, one per sentence ─────────► speak_text() → synthesize() ───────────────────► edge-tts
-   │                                       ● tts_first_request                                  (en-US-AndrewNeural /
+   │                                       ● tts_first_request                                  (en-US-GuyNeural /
    └─ playNext(): play the clips in order  ● first_audio, first_answer_audio, tts_done           bn-BD-PradeepNeural)
                                                 │
  POST /latency/<id>  (the page's stages) ──────► tracing.add_client() ──► data/traces.jsonl
@@ -461,3 +461,30 @@ sign-in (never Hermes's), as a write action that asks first, and never with memo
   makes, and nothing else in his Drive is reachable.
 - Plain text or Markdown files: rejected for Google Docs, which read well on the phone and keep the links.
 
+
+### 6. Guy in place of Andrew (2026-11-21)
+
+**Context.** Andrew (`en-US-AndrewNeural`), locked since 2026-10-14, had become the slowest part of a reply. On
+2026-11-20, 4 of 8 requests failed (`NoAudioReceived` after ~3 s) and the others took 6.3–10.9 s to the first sound;
+on 2026-11-21, after a restart, a crypto update was on screen in 1.6 s and its first sentence waited 32 s (three tries
+at 10, 10 and 12 s). Pradeep and the older voices answered in about a second. Nothing in Javid could change that:
+edge-tts 7.3.1 is the latest, hedged requests for one sentence made it slower (2026-10), and the backup voice has no
+key yet.
+
+**Decision.** Mahadi asked for the switch and chose Guy (`en-US-GuyNeural`) after hearing eight male US voices say the
+same sentence, timed in the same minutes (first audio, median of 4): Andrew 4.8 s, Brian Multilingual 2.9, Brian 1.9,
+Christopher 1.4, Steffan 1.3, Eric 0.9, Roger 0.9, Guy 0.8. It is locked as Andrew was (`EDGE_VOICE`); Bangla stays
+Pradeep, and the ElevenLabs backup stays Eric.
+
+**Consequences.**
+- When edge-tts is well, the first sound comes in about 0.8 s instead of about 5 s. That is Guy's backend, not a
+  change in Javid: if Guy's servers slow down too, so does the voice.
+- A different voice from the one approved as "perfect", by Mahadi's choice; Guy is from an older generation of
+  Microsoft's voices than Andrew.
+- Guy speaks about 6% slower, so `skills.WORDS_PER_SECOND` went from 2.3 to 2.2 to keep spoken budgets within their
+  seconds. He reads "৳" as taka, as Andrew did, so the `_BN_LETTERS` rule is unchanged.
+
+**Alternatives considered.**
+- Brian, Andrew's generation and the closest in style (1.9 s): offered first; Mahadi chose Guy.
+- Keeping Andrew and adding an ElevenLabs key: the backup speaks only after every edge-tts try has failed (about 9 s
+  of failed tries), and does nothing for Andrew's slow answers.

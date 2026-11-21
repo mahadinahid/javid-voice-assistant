@@ -181,7 +181,7 @@ def request(text: str) -> dict | None:
 # ---------- wording ----------
 def _fmt(kind: str, cur: str, value: float, level: bool = False) -> str:
     """A price as said and shown: "$67,420.15", a level as "$70,000", an index in points."""
-    num = f"{value:,.0f}" if level and value == int(value) else markets._price(value)
+    num = f"{value:,.0f}" if level and value == int(value) else markets._price(value, spoken=True)
     if kind == "index":
         return f"{num} points"
     return f"${num}" if cur in ("USDT", "USDC", "FDUSD", "USD", "") else f"{num} {cur}"

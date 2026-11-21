@@ -286,7 +286,7 @@ providers:
     # high side until ElevenLabs' next balance check replaces the estimate. Never change a voice_id without Mahadi.
     voices:
       en:
-        voice_id: cjVigY5qzO86Huf0OWal   # "Eric", a premade American male voice (Andrew is a US male voice)
+        voice_id: cjVigY5qzO86Huf0OWal   # "Eric", a premade American male voice, like Javid's own (Guy)
         name: Eric
         model: eleven_flash_v2_5         # its fastest (~75 ms) and cheapest model; it has no Bengali
         cost_per_char: 1

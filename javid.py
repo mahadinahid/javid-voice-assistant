@@ -1,6 +1,6 @@
 """
 Javid v1.0 — push-to-talk voice assistant (7-day build, complete)
-Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> edge-tts en-US-AndrewNeural (voice)
+Mic -> Groq Whisper (speech-to-text) -> Groq GPT-OSS 20B (brain) -> edge-tts en-US-GuyNeural (voice)
 Day 7 polish: startup greeting, graceful Ctrl+C, network-safe search, file-handle fix
 """
 
@@ -72,15 +72,17 @@ LLM_MODEL = "openai/gpt-oss-20b"
 # Daily token caps seen in Groq 429 messages; others are learned from the first 429 (llm_quota.json).
 KNOWN_TPD_LIMITS = {"openai/gpt-oss-20b": 200000}
 LLM_MIN_REQUEST_TOKENS = 1500   # one request is ~0.6-1.7k tokens (prompt + the tools sent); a turn ~2 requests
-# LOCKED by the user: approved as "perfect" on 2026-10-13, made permanent on 2026-10-14 ("set this
-# voice for everything, don't change it again"). Every spoken word, web UI and CLI, is this voice
-# via edge-tts. The one fallback, since Mahadi asked for it on 2026-10-26, is ElevenLabs' fixed backup voice after
-# every edge-tts try has failed (synthesize, _eleven); then the reply is shown as text. No other engine, ever (no
-# browser speech, no macOS say). Never change this unless told to.
-EDGE_VOICE = "en-US-AndrewNeural"
-# Bangla mode's voice, LOCKED the same way (added 2026-10-14 when the user asked for Bangla mode):
-# AndrewNeural turns Bengali script into near-silence, so Bengali needs its own voice. Male bn-BD, to
-# match Andrew. Never change it or add a substitute unless told to.
+# LOCKED by the user. Andrew (en-US-AndrewNeural) was approved as "perfect" on 2026-10-13 and made permanent on
+# 2026-10-14 ("set this voice for everything, don't change it again"); on 2026-11-21 Mahadi chose Guy from samples
+# of eight voices, after Andrew's servers took 3.3-6.6 s to the first sound (Guy 0.6-1.5 s) and had failed half
+# the time the evening before. Every spoken word, web UI and CLI, is this voice via edge-tts. The one fallback,
+# since Mahadi asked for it on 2026-10-26, is ElevenLabs' fixed backup voice after every edge-tts try has failed
+# (synthesize, _eleven); then the reply is shown as text. No other engine, ever (no browser speech, no macOS say).
+# Never change this unless told to.
+EDGE_VOICE = "en-US-GuyNeural"
+# Bangla mode's voice, LOCKED the same way (added 2026-10-14 when the user asked for Bangla mode): the English
+# voice turns Bengali script into near-silence (AndrewNeural did), so Bengali needs its own voice. Male bn-BD,
+# to match. Never change it or add a substitute unless told to.
 EDGE_VOICE_BN = "bn-BD-PradeepNeural"
 VOICES = {"en": EDGE_VOICE, "bn": EDGE_VOICE_BN}
 LANGUAGE_FILE = "language.json"      # {"lang": "en" | "bn"}: the reply language, kept across reloads
@@ -96,6 +98,12 @@ HISTORY_TURNS = 6       # past turns sent in full with each request; older ones 
 
 load_dotenv()
 client = Groq(timeout=providers.timeout_s("groq", 60.0))
+# The chain's own requests (_open_stream) go to Groq with no retries inside the SDK, as every other provider's do.
+# The SDK slept out a 429's retry-after (up to 60 s, twice) where the router couldn't see it: on 2026-11-15 and 16,
+# at Groq's free 8,000 tokens a minute, 4 of 17 requests took 8-28 s (the rest 0.3-1.7 s) while gpt-oss-120b, on its
+# own allowance, sat idle. Now the 429 comes straight back (~0.2 s), that model rests until its retry-after and the
+# next one answers. Whisper, the model pings and pictures keep the SDK's retries (`client`).
+chat_client = client.with_options(max_retries=0)
 
 
 # ---------- reply language (English / Bangla) ----------
@@ -130,6 +138,10 @@ PHRASES = {
     "nothing_done": {"en": "Okay, nothing was done.", "bn": "ঠিক আছে, কিছু করা হয়নি।"},
     "file_dropped": {"en": "Okay, I've put the file away.", "bn": "ঠিক আছে, ফাইলটা সরিয়ে রাখলাম।"},
     "no_file":      {"en": "There's no file open right now.", "bn": "এখন কোনো ফাইল খোলা নেই।"},
+    "no_file_here": {"en": "I don't have a file from you in this chat, Mahadi. Attach it with the paperclip button and "
+                           "ask again: I can read PDFs, Word and text files, and pictures.",
+                     "bn": "এই চ্যাটে তোমার কোনো ফাইল আমার কাছে নেই, মাহাদি। পেপারক্লিপ বোতাম দিয়ে ফাইলটা দিয়ে আবার "
+                           "জিজ্ঞেস করো: আমি পিডিএফ, ওয়ার্ড আর টেক্সট ফাইল, আর ছবি পড়তে পারি।"},
     "approval_expired": {"en": "That request expired, so nothing was done. Ask again if you still want it.",
                          "bn": "ওই অনুরোধের সময় পেরিয়ে গেছে, তাই কিছু করা হয়নি। চাইলে আবার বলো।"},
     "switched":   {"en": "Sure, Mahadi. I'll speak English from now on.",
@@ -465,7 +477,8 @@ def open_session(sid: str) -> bool:
     # A reply keeps what it was based on (its tools and links), for "where did you get that?" after a restart.
     messages.extend({"role": e["role"], "content": e["text"],
                      **{k: e[k] for k in ("tools", "sources", "screen", "skill", "agent")
-                        if e["role"] == "assistant" and e.get(k)}}
+                        if e["role"] == "assistant" and e.get(k)},
+                     **({"_files": e["files"]} if e["role"] == "user" and e.get("files") else {})}   # "_": never sent
                     for e in turns[-CONTEXT_TURNS:])
     return True
 
@@ -839,9 +852,7 @@ def morning_briefing() -> str:
         parts.append("\n".join(f"  - {l}" for l in pending))
     if done:
         parts.append(f"Completed tasks: {len(done)}.")
-    calendar = calendar_tools.briefing_line()
-    if calendar:
-        parts.append(f"Calendar: {calendar}")
+    parts.append(f"Calendar: {calendar_tools.briefing_line()}")
     # Real weather, so it's never made up ("sunny, 28°C in India" in a greeting, 2026-10-17) - but after the
     # tasks and calendar: with it, a "good morning" reply once spent its two sentences on the weather.
     parts.append(weather.brief_line() or "Weather: unavailable right now; don't mention or guess it.")
@@ -1020,6 +1031,19 @@ def _attach(files: list | None, user_text: str = "") -> list[dict]:
         _doc_state["left"] -= 1
         if documents.relevant(user_text, _doc_state["docs"]):
             return list(_doc_state["docs"])
+    # "Explain the previous PDF that I just uploaded" once it's no longer carried (its turns are up, ✕, a restart):
+    # the chat's last file comes back. 2026-11-16: with nothing attached the model said "I can't read PDFs".
+    if documents.asks_about_file(user_text) and (docs := _chat_files()):
+        _doc_state.update(session=sid, docs=docs, left=documents.DOC_TURNS)
+        return list(docs)
+    return []
+
+
+def _chat_files() -> list[dict]:
+    """The files the open chat's latest message with any brought, while they're kept (documents.KEEP_DAYS)."""
+    for m in reversed(messages[1:]):
+        if m["role"] == "user" and m.get("_files"):
+            return [d for d in (documents.load(c["id"]) for c in m["_files"]) if d]
     return []
 
 
@@ -1575,8 +1599,9 @@ def _create(model_id: str, msgs: list, *, tools=None, stream=False, max_tokens=N
         kw["stream"] = True
         if provider != "groq":
             kw["stream_options"] = {"include_usage": True}   # else no token counts in the stream
-    raw = _provider_client(provider).chat.completions.with_raw_response.create(
-        model=name, messages=_messages_for(provider, msgs), **kw)
+    # stream: the chain's request (_open_stream, the only caller that streams), so on Groq no retries in the SDK
+    c = chat_client if stream and provider == "groq" else _provider_client(provider)
+    raw = c.chat.completions.with_raw_response.create(model=name, messages=_messages_for(provider, msgs), **kw)
     if whole:
         return types.SimpleNamespace(headers=raw.headers, parse=lambda: _as_stream(raw.parse()))
     return raw
@@ -2204,14 +2229,51 @@ def _check_cost(model: str, usage) -> None:
         print(f"[llm] {model} cost {cost}: OpenRouter is off until someone checks the account")
 
 
+REST_WAIT_SEC = 30.0    # every model that could answer is resting: the longest wait for the first one back
+
+
 def _open_stream(msgs: list, tools: list):
     """Start a streaming completion on the first model in the chain that may take this request (the budget guard:
     ready ones first, reserve ones only after them). The privacy rule: a request that needs personal data goes only to
     providers with personal_ok; every other provider gets it without its personal parts (_public_request). The tool
     gate: a model without a pass in config/model_tests.json gets the request without tools, and a request of a turn that
     needs tools skips it. A provider counted per token (Cloudflare) isn't asked when this request could take it past its
-    free allowance. Returns (model, stream, start time)."""
-    candidates = _models_to_try(personal=_needs_personal(msgs), tools=bool(tools) and _needs_tools(msgs))
+    free allowance. When every model that could take it is resting and one is back within REST_WAIT_SEC (a per-minute
+    limit), it waits for that one instead of giving up, as the SDK's own retries used to for every 429. Returns (model,
+    stream, start time)."""
+    personal, needs_tools = _needs_personal(msgs), bool(tools) and _needs_tools(msgs)
+    try:
+        return _first_answer(msgs, tools, personal, needs_tools)
+    except (NoModelReady, *API_ERRORS) as e:
+        back = None if isinstance(e, API_ERRORS) and not _is_unavailable(e) else _back_soon(personal, needs_tools)
+        if back is None:
+            raise
+    model, wait = back
+    print(f"[llm] every model that could answer is resting: waiting {wait:.1f}s for {model}")
+    time.sleep(wait)
+    return _first_answer(msgs, tools, personal, needs_tools)
+
+
+def _back_soon(personal: bool, tools: bool) -> tuple[str, float] | None:
+    """(model, seconds) for the model that could take this request and is back first from a rest ending within
+    REST_WAIT_SEC (a per-minute limit's 429, OpenRouter's requests a minute), and ready then, not off at its allowance;
+    None when there is none (a daily limit's rest is hours)."""
+    now, soonest = time.time(), None
+    for m in current_chain():
+        if not _usable(m) or (personal and not providers.personal_ok(_split(m)[0])) or (tools and not tools_allowed(m)):
+            continue
+        st = _model_state(m, now)
+        until = st["until"]
+        if (st["state"] == "cooldown" and until and until - now <= REST_WAIT_SEC
+                and (soonest is None or until < soonest[1])
+                and _model_state(m, until + 0.1)["state"] in ("ready", "reserve")):
+            soonest = (m, until)
+    return (soonest[0], soonest[1] - now + 0.2) if soonest else None
+
+
+def _first_answer(msgs: list, tools: list, personal: bool, needs_tools: bool):
+    """_open_stream's one pass down the chain: (model, stream, start time) from the first model that answers."""
+    candidates = _models_to_try(personal=personal, tools=needs_tools)
     if not candidates:
         raise NoModelReady("no model in the chain can take a request now")
     last_error = None
@@ -2306,6 +2368,22 @@ def _read_stream(model: str, stream, tool_calls: dict, span, done: dict | None =
 
 
 MAX_TOOL_ROUNDS = 4
+
+
+_MD_LINK = re.compile(r"\[([^\]\n]+)\]\((?:https?://|www\.)[^)\s]+\)")
+_MD_PAIR = re.compile(r"(\*\*|__|`)(?=\S)(.+?)(?<=\S)\1")
+_MD_ITALIC = re.compile(r"(?<![\w*])\*(?=[^\s*])([^*\n]+?)(?<=\S)\*(?![\w*])")
+_MD_LINE = re.compile(r"^[ \t]*(?:#{1,6}[ \t]+|[-*•][ \t]+)", re.M)
+
+
+def _unmark(text: str) -> str:
+    """A spoken reply without markdown. The prompt says none, and still: "You're probably thinking of **Claude 3.5
+    Sonnet** or **OpenAI's GPT-4o**" with a `model-id` (2026-11-16), shown with its asterisks and read out. Links keep
+    their words; a screen part keeps its own formatting (renderScreen)."""
+    text = _MD_LINK.sub(r"\1", text)
+    for _ in range(2):          # **`nested`**
+        text = _MD_PAIR.sub(r"\2", text)
+    return _MD_LINE.sub("", _MD_ITALIC.sub(r"\1", text))
 
 
 def _past_turns(msgs: list) -> list[tuple[str, str]]:
@@ -2681,6 +2759,11 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
             reply = phrase("file_dropped" if drop_files() else "no_file", lang)
             yield ("delta", reply)
             return
+        if not docs and documents.asks_about_file(user_text):    # a file he means, but none in this chat: how to attach
+            tracing.mark("routing_done")                          # one (the model said it can't read PDFs)
+            reply = phrase("no_file_here", lang)
+            yield ("delta", reply)
+            return
         # A yes/no right after an Approve card (a delete or a move) decides it here, in code: never the model, and
         # never from hands-free (yes_ok False: the page may be hearing the TV), where it only says to tap the card.
         card = None if gate else approvals.answer(user_text, yes_ok)
@@ -2738,7 +2821,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         # either), a question about Javid itself (the model only guesses), a rates question, a market brief or a
         # news request (the model only copied the figures and headlines, and got their sources wrong).
         check = selfcheck.request(user_text)
-        own = None if check else about.answer(user_text, lang, _self_facts())
+        own = None if check else about.answer(user_text, lang, {**_self_facts(), "attached": bool(docs)})
         in_code = ((lambda lang: selfcheck.answer(check, user_text, lang, previous)) if check else
                    None if own else _code_answer(user_text))
         if own or in_code:
@@ -2911,7 +2994,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
             if not tool_calls and screen:
                 yield ("screen", screen)
             if not tool_calls:
-                reply = text
+                reply = _unmark(text)
                 if reply:
                     yield ("delta", reply)
                 break
@@ -3138,14 +3221,14 @@ _edge_slots = threading.BoundedSemaphore(EDGE_PARALLEL)
 
 
 # Bengali letters, not the whole block: the taka sign and Bengali digits are in it too, and "৳122.50" in an
-# English reply would have switched that one sentence to Pradeep (Andrew reads "৳" fine).
+# English reply would have switched that one sentence to Pradeep (Guy reads "৳" as taka, as Andrew did).
 _BN_LETTERS = re.compile(r"[\u0985-\u09b9\u09ce\u09dc-\u09e1\u09f0\u09f1]")
 
 
 def voice_for(text: str, lang: str | None = None) -> str:
     """The reply language's locked voice; the server's setting unless a caller names the language (the
-    warm-up does). Bengali letters always get EDGE_VOICE_BN: AndrewNeural can't say them (it returns a
-    near-silent clip, which is how Bangla replies went unheard)."""
+    warm-up does). Bengali letters always get EDGE_VOICE_BN: the English voice can't say them (AndrewNeural
+    returned a near-silent clip, which is how Bangla replies went unheard)."""
     if _BN_LETTERS.search(text):
         return EDGE_VOICE_BN
     return VOICES[lang if lang in VOICES else get_language()]

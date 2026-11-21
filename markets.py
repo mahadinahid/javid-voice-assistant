@@ -63,8 +63,8 @@ def _get_json(url: str) -> dict:
         return json.loads(r.read().decode())
 
 
-def _price(p: float) -> str:
-    if p >= 100:
+def _price(p: float, spoken: bool = False) -> str:
+    if p >= 100 or spoken and p >= 1:      # said aloud, cents: "Solana is at $66.1100" was read out (2026-11-21)
         return f"{p:,.2f}"
     if p >= 1:
         return f"{p:,.4f}"
@@ -77,8 +77,9 @@ def _clock(t: datetime) -> str:
     return t.strftime("%I:%M %p").lstrip("0")
 
 
-def _money(p: float, quote: str) -> str:
-    return f"${_price(p)}" if quote in ("USDT", "USDC", "FDUSD", "USD") else f"{_price(p)} {quote}"
+def _money(p: float, quote: str, spoken: bool = False) -> str:
+    num = _price(p, spoken)
+    return f"${num}" if quote in ("USDT", "USDC", "FDUSD", "USD") else f"{num} {quote}"
 
 
 def _move(pct: float, span: str) -> str:
@@ -265,10 +266,10 @@ def _name(q: dict, lang: str = "en") -> str:
     return _COMPANY_SUFFIX.sub("", q["name"]).strip()
 
 
-def _value(q: dict) -> str:
+def _value(q: dict, spoken: bool = False) -> str:
     if q["kind"] == "index":
-        return f"{_price(q['price'])} points"
-    return _money(q["price"], q.get("quote") or q.get("currency") or "")
+        return f"{_price(q['price'], spoken)} points"
+    return _money(q["price"], q.get("quote") or q.get("currency") or "", spoken)
 
 
 def _change(pct: float, lang: str) -> str:
@@ -282,10 +283,10 @@ def _said(q: dict, lang: str, first: bool) -> str:
     span = {"crypto": ("in 24 hours", "২৪ ঘণ্টায়"), "stock": ("from the previous close", "আগের ক্লোজ থেকে"),
             "index": ("", "")}[q["kind"]]
     if lang == "bn":
-        return f"{_name(q, 'bn')} এখন {_value(q).replace('points', 'পয়েন্ট')}, {span[1] + ' ' if span[1] else ''}{_change(q['pct'], 'bn')}"
+        return f"{_name(q, 'bn')} এখন {_value(q, True).replace('points', 'পয়েন্ট')}, {span[1] + ' ' if span[1] else ''}{_change(q['pct'], 'bn')}"
     the = "the " if q["kind"] == "index" else ""
     tail = f" {span[0]}" if span[0] and (first or q["kind"] != "crypto") else ""
-    return f"{the}{_name(q)} is at {_value(q)}, {_change(q['pct'], 'en')}{tail}"
+    return f"{the}{_name(q)} is at {_value(q, True)}, {_change(q['pct'], 'en')}{tail}"
 
 
 def _and(items: list[str], lang: str) -> str:

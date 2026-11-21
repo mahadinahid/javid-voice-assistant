@@ -1,0 +1,7 @@
+{
+ "source": "Groq's documented 429 for a model's per-minute token limit (TPM), with the figures of 2026-11-16 12:00:54 (Used 7579, Requested 4389 of 8000). Not recorded: the SDK used to wait these out silently, so Javid never logged one; org id replaced",
+ "status": 429,
+ "headers": {"retry-after": "30", "x-ratelimit-limit-tokens": "8000", "x-ratelimit-remaining-tokens": "421",
+             "x-ratelimit-reset-tokens": "56.84s"},
+ "body": {"error": {"message": "Rate limit reached for model `openai/gpt-oss-20b` in organization `org_test` service tier `on_demand` on tokens per minute (TPM): Limit 8000, Used 7579, Requested 4389. Please try again in 29.76s. Need more tokens? Upgrade to Dev Tier today at https://console.groq.com/settings/billing", "type": "tokens", "code": "rate_limit_exceeded"}}
+}

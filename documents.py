@@ -199,6 +199,8 @@ def _pdf(data: bytes) -> tuple[list[str], list[str], str]:
             if read:
                 pages.append(read)
                 methods.add("ocr")
+                if conf < OCR_MIN_CONF:      # the model is told, as for a picture
+                    warnings.append(f"page {i + 1} was read with low confidence ({conf:.0f}%)")
                 continue
             warnings.append(f"page {i + 1} has no text I could read")
         else:
@@ -505,8 +507,14 @@ def forget_request(text: str) -> bool:
 # that", or shares words with the file's text. Anything else ("what's the weather?", "search the web for a research
 # LLM") gets the turn without the file (2026-11-16: with the file riding every turn for six turns, an unrelated
 # question was answered with the PDF's payment details tacked on, and its web search was blocked).
+_FILE_NOUN = r"(?:file|doc|document|pdf|picture|photo|image|scan|attachment)s?"
+_MODIFIER = (r"(?:previous|last|latest|recent|earlier|new|same|attached|uploaded|scanned|whole|entire|full|first|"
+             r"second|other|pdf|word)")
 _REFERS = re.compile(r"\b(?:this|that|the|my|your|attached|uploaded|same)\s+(?:file|doc|document|pdf|paper|picture|photo|"
                      r"image|scan|card|sheet|page|attachment|note|letter|invoice|order|receipt|contract)\b|"
+                     # "the previous PDF", "the last file", "my uploaded document": the file nouns only ("the last
+                     # order" is someone's order)
+                     rf"\b(?:this|that|the|my|your)\s+{_MODIFIER}\s+(?:{_FILE_NOUN}|pages?)\b|"
                      r"\b(?:summari[sz]e|explain|translate|read|describe)\s+(?:it|this|that)\b|\bpage\s*\d|"
                      r"^\W*(?:what|who|whom|when|where|which|how much|how many|is|are|does|did|was|were|can you (?:see|read|find))\b"
                      r".{0,40}\b(?:it|this|that|there|here)\b\W*$|"
@@ -514,27 +522,72 @@ _REFERS = re.compile(r"\b(?:this|that|the|my|your|attached|uploaded|same)\s+(?:f
 
 
 _SHORT_IT = re.compile(r"\b(?:it|this|that|they|them|its)\b", re.I)
+_ACTION = re.compile(r"\bremind|\btasks?\b|\bto-?do\b|\btimer\b|\balarm\b|\bcalendar\b|\bschedule\b|\bmeeting\b|"
+                     r"\bappointment\b", re.I)
 _NOT_ABOUT_IT = re.compile(r"\bwhat time is it\b|\bhow (?:are|is) (?:it|this) going\b|\bthat'?s (?:all|it)\b|"
                            r"\bthank|\bnever ?mind\b", re.I)
+
+
+# A message about a file Mahadi gave, on a turn that carries none (javid._attach): "explain the previous PDF that I just
+# uploaded", "what does the document say?", "can you read the pdf?". The chat's last file is attached again, or Javid
+# says how to attach one: the model alone answered "I'm sorry, but I can't read PDFs" (2026-11-16). Only file nouns
+# after this/that/the/my ("the invoice" in a reminder is a task), with a reading verb, as a question or in a few words,
+# and never a reminder, a task or something to do with the file ("remind me to send the PDF", "convert the PDF").
+_ASKS_FILE = re.compile(rf"\b(?:this|that|the|my|these|those)\s+(?:{_MODIFIER}\s+)?{_FILE_NOUN}\b|"
+                        r"\bi(?:'ve| have)?\s+(?:just\s+)?(?:uploaded|attached)\b|পিডিএফ|ফাইল|ডকুমেন্ট", re.I)
+_READ_ASK = re.compile(r"\b(?:explain|summari[sz]e|read|translate|describe|analy[sz]e|review|check|look\s+at|"
+                       r"go\s+through|open|see|tell\s+me)\b|^\W*(?:what|who|whom|when|where|which|how|is|are|does|did|"
+                       r"do|can|could|will|would)\b|\?\s*$|ব্যাখ্যা|পড়|বলো|কী|কি", re.I)
+_NOT_READING = re.compile(r"\bremind|\btasks?\b|\bto-?do\b|\btimer\b|\balarm\b|\bcalendar\b|\bschedule\b|"
+                          r"\bdeadline\b|\bmeeting\b|\bappointment\b|\b(?:send|email|mail|print|sign|submit|forward|"
+                          r"share|delete|remove|upload|download|save|convert|compress|merge|edit)\b|\b(?:format|reader|"
+                          r"viewer|editor|software|apps?|tools?|converter|extension)\b|পাঠাও|পাঠিয়ে|মুছে|সেভ", re.I)
+
+
+def asks_about_file(text: str) -> bool:
+    """Does the message ask about a file Mahadi gave (_ASKS_FILE), as opposed to mentioning one in a task?"""
+    text = text or ""
+    if not _ASKS_FILE.search(text) or _NOT_READING.search(text) or _NOT_ABOUT_IT.search(text):
+        return False
+    return bool(_READ_ASK.search(text)) or len(text.split()) <= 5
 
 
 def relevant(text: str, docs: list[dict]) -> bool:
     """Is a follow-up about the attached file(s)? It refers to one (_REFERS), is a short question about "it/this/that"
     ("which warehouse is it going to?", "what did it say?"; not "what time is it?"), or a good share of its words are
-    in the file: 30 % of its word stems (first five letters, so price/prices). A long unrelated question sharing a few
-    generic words ("details", "name", "specific") isn't (2026-11-16, a payment PDF and a question about research
+    in the file: 30 % of them, counting inflections (_same_word: price/prices). A long unrelated question sharing a
+    few generic words ("details", "name", "specific") isn't (2026-11-16, a payment PDF and a question about research
     models)."""
     text = text or ""
     if _NOT_ABOUT_IT.search(text):
         return False
     if _REFERS.search(text):
         return True
+    if _ACTION.search(text):        # a task, reminder or timer that doesn't name the file: "add a task to call mom"
+        return False
     from search import words
     if text.rstrip().endswith("?") and len(text.split()) <= 8 and _SHORT_IT.search(text):
         return True
-    asked = {w[:5] for w in words(text) if len(w) >= 4 or w.isdigit()}
+    asked = {w for w in words(text) if len(w) >= 4 or w.isdigit()}
     if not asked:
         return False
-    stems = {w[:5] for d in docs for p in d["pages"] for w in words(p)}
-    hits = len(asked & stems)
+    vocab: dict[str, list[str]] = {}
+    for w in {w for d in docs for p in d["pages"] for w in words(p)}:
+        vocab.setdefault(w[:3], []).append(w)
+    hits = sum(any(_same_word(w, v) for v in vocab.get(w[:3], ())) for w in asked)
     return hits >= 1 and hits / len(asked) >= 0.3
+
+
+def _same_word(a: str, b: str) -> bool:
+    """A word and its inflection: one starts the other, they share all but the shorter one's last letter
+    (price/prices, deliver/delivered, delivery/delivered), or seven letters (confirmed/confirmation). Not
+    transfer/transformers: a five-letter stem matched them on "trans", so a question about transformers would have
+    carried a payment PDF. Numbers match only themselves."""
+    if a.isdigit() or b.isdigit():
+        return a == b
+    if len(a) > len(b):
+        a, b = b, a
+    n = 0
+    while n < len(a) and a[n] == b[n]:
+        n += 1
+    return n == len(a) or n >= min(7, max(4, len(a) - 1))

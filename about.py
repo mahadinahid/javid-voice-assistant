@@ -65,6 +65,15 @@ _TOPICS = [
     ("creator", _re(r"\bwho\s+(?:made|built|created|developed|designed|programmed|wrote|coded|owns|trained)\s+(?:you|javid)\b|"
                     r"\bwho(?:'s| is)\s+(?:your|javid'?s)\s+(?:creator|developer|maker|author|owner|programmer)\b|"
                     r"তোমাকে\s+কে\s+(?:বানিয়েছে|তৈরি করেছে|বানাল)")),
+    # "Can you read PDFs?" (not "can you read the pdf?": that one is a file of his, documents.asks_about_file). Only
+    # with nothing attached: with a file, the model answers from it (javid.think_stream passes facts["attached"]).
+    ("files", _re(r"\b(?:can|could|do|will|would)\s+(?:you|javid)\s+(?:read|open|see|view|understand|look\s+at|handle|"
+                  r"take|process|analy[sz]e|summari[sz]e|check)\s+(?:a\s+|an\s+|any\s+|my\s+)?(?:pdfs?|files?|"
+                  r"documents?|docs?|word\s+(?:files?|documents?)|pictures?|photos?|images?|scans?|attachments?|"
+                  r"screenshots?)\b|"
+                  r"\b(?:can|how\s+(?:do|can))\s+i\s+(?:send|give|upload|attach|share|show)\s+(?:you\s+)?(?:a\s+|an\s+|"
+                  r"my\s+)?(?:pdfs?|files?|documents?|docs?|pictures?|photos?|images?)\b|"
+                  r"(?:তুমি|তোমাকে).{0,25}(?:পিডিএফ|ফাইল|ডকুমেন্ট|ছবি).{0,25}(?:পড়তে|দেখতে|বুঝতে|পাঠাতে|দিতে)\s*পার")),
     ("capabilities", _re(r"\bwhat\s+(?:else\s+)?can\s+you\s+do\b(?!\s+(?:about|for|to|with)\b)|"
                          r"\bwhat\s+can\s+you\s+help(?:\s+me)?\s+with\b|"
                          r"\bwhat\s+are\s+(?:your|you)\s+(?:capabilities|skills|abilities|features|functions|tools|agents|"
@@ -97,13 +106,15 @@ _SOURCE_KINDS = [
 
 _SPOKEN = {
     "voice": {
-        "en": "In English I speak with Microsoft's Andrew neural voice, and in Bangla mode with Pradeep, both through "
-              "edge-tts; Bengali words are always Pradeep, because Andrew can't pronounce them. Only if that service "
-              "fails does a backup voice from ElevenLabs read the reply, one fixed voice, used only for the languages "
-              "you've approved; without it you get the reply as text with a voice-unavailable note.",
-        "bn": "ইংরেজিতে আমি Microsoft-এর Andrew নিউরাল ভয়েসে কথা বলি, আর বাংলা মোডে Pradeep-এর ভয়েসে, দুটোই edge-tts "
-              "দিয়ে। সার্ভিসটা কাজ না করলে শুধু তখন ElevenLabs-এর একটা নির্দিষ্ট বিকল্প ভয়েস পড়ে, যে ভাষাগুলো তুমি "
-              "অনুমোদন করেছ শুধু সেগুলোয়; নইলে উত্তর লেখা হিসেবে দেখাই।"},
+        "en": "In English I speak with Microsoft's Guy neural voice, which you picked on November 21 in place of "
+              "Andrew, for speed, and in Bangla mode with Pradeep, both through edge-tts; Bengali words are always "
+              "Pradeep, because the English voice can't pronounce them. Only if that service fails does a backup voice "
+              "from ElevenLabs read the reply, one fixed voice, used only for the languages you've approved; without it "
+              "you get the reply as text with a voice-unavailable note.",
+        "bn": "ইংরেজিতে আমি Microsoft-এর Guy নিউরাল ভয়েসে কথা বলি (২১ নভেম্বর তুমি দ্রুততার জন্য Andrew-এর বদলে "
+              "এটা বেছে নিয়েছ), আর বাংলা মোডে Pradeep-এর ভয়েসে, দুটোই edge-tts দিয়ে। সার্ভিসটা কাজ না করলে শুধু তখন "
+              "ElevenLabs-এর একটা নির্দিষ্ট বিকল্প ভয়েস পড়ে, যে ভাষাগুলো তুমি অনুমোদন করেছ শুধু সেগুলোয়; নইলে উত্তর লেখা "
+              "হিসেবে দেখাই।"},
     "hearing": {
         "en": "I hear you through Groq's Whisper speech recognition. I only listen when you press talk, or in "
               "hands-free mode, where a conversation starts with 'Javid' and then goes on without my name until "
@@ -143,15 +154,24 @@ _SPOKEN = {
               "language model, {model}, and everything else is code.",
         "bn": "মাহাদি নিজেই আমাকে বানিয়েছে, তার ম্যাকে চলা একটা পাইথন প্রোগ্রাম হিসেবে। কথাগুলো লেখে একটা ল্যাঙ্গুয়েজ "
               "মডেল, {model}, আর বাকি সব কোড।"},
+    "files": {
+        "en": "Yes: PDFs, Word and text files, and pictures, JPG or PNG. Attach one with the paperclip button, drop it "
+              "on the conversation or send it to me on Telegram, then ask, like 'summarise this' or 'what's the "
+              "delivery date?'. It's read on your Mac, and I name the page my answer comes from.",
+        "bn": "হ্যাঁ: পিডিএফ, ওয়ার্ড আর টেক্সট ফাইল, আর ছবি, JPG বা PNG। পেপারক্লিপ বোতাম দিয়ে দাও, কথোপকথনে টেনে "
+              "ছেড়ে দাও বা টেলিগ্রামে আমাকে পাঠাও, তারপর জিজ্ঞেস করো, যেমন 'এটার সারাংশ বলো'। ফাইলটা তোমার ম্যাকেই "
+              "পড়া হয়, আর উত্তর কোন পৃষ্ঠা থেকে সেটাও বলি।"},
     "capabilities": {
         "en": "I keep your tasks and calendar, set timers and reminders, check the weather, live prices and "
-              "exchange rates, do sums, read the news and search the web, and remember what you approve. I can also "
+              "exchange rates, do sums, read the news and search the web, read the PDFs, Word files and pictures you "
+              "give me, and remember what you approve. I can also "
               "watch a price, the news about something or the rain and tell you when it happens, check myself "
               "when something seems wrong, and save a report or a brief to your Google Drive when you say so. For "
               "bigger jobs I have {agents} agents; I can't send email or messages, "
               "make calls or buy anything.",
         "bn": "আমি তোমার কাজের তালিকা আর ক্যালেন্ডার রাখি, টাইমার দিই, আবহাওয়া, দাম আর এক্সচেঞ্জ রেট দেখি, হিসাব করি, "
-              "খবর পড়ি আর ওয়েবে খুঁজি, আর তুমি যা অনুমতি দাও তা মনে রাখি। কোনো দাম, কোনো বিষয়ের খবর বা বৃষ্টির দিকে "
+              "খবর পড়ি আর ওয়েবে খুঁজি, তোমার দেওয়া পিডিএফ, ওয়ার্ড ফাইল আর ছবি পড়ি, আর তুমি যা অনুমতি দাও তা মনে "
+              "রাখি। কোনো দাম, কোনো বিষয়ের খবর বা বৃষ্টির দিকে "
               "নজর রেখে সময়মতো জানাতে পারি, কিছু ঠিকমতো না চললে নিজেকে পরীক্ষা করতে পারি, আর তুমি বললে রিপোর্ট বা ব্রিফ "
               "তোমার Google Drive-এ সেভ করতে পারি। বড় কাজের জন্য {agents} "
               "এজেন্ট আছে; ইমেইল বা মেসেজ পাঠানো, কল করা বা কেনাকাটা পারি না।"},
@@ -195,6 +215,7 @@ _DESIGN_SCREEN = """How Javid works:
 - Ears: Groq Whisper speech recognition ({stt}); hands-free answers only what starts with "Javid".
 - Brain: {model}, backups {backups}. It writes the reply and picks tools; facts come from the tools.
 - Tools in code: tasks, Google Calendar, timers, weather (Open-Meteo, MET Norway), live prices (Binance, Yahoo Finance), exchange rates (ECB, ExchangeRate-API), calculator, news (Google News), web search (Tavily), public holidays (Google), memory, past chats.
+- Your files: PDFs, Word and text files read on the Mac (PyMuPDF, python-docx, Tesseract for scans and pictures); a picture with no text goes to a vision model cleared for personal data. The answer names its page.
 - Answered in code, no model: news headlines, exchange rates, market briefs, watches, the self-check, where an answer came from, and questions about Javid.
 - Watches: a price level or move, news about something, or rain, checked in code; when one happens it rings like a timer and goes to Telegram.
 - Skills: {skills}. Agents: {agents}, each with its own tools and steps.
@@ -212,6 +233,7 @@ _CAPABILITIES_SCREEN = """What Javid can do:
 - Watches: "tell me when bitcoin goes above 90,000", "...when there's news about X", "...when it starts raining"
 - Self-check: "what's wrong?", and "where did you get that?"
 - Memory you approve, and search of past chats
+- Your files: PDFs, Word and text files, pictures (the paperclip button, a drop, or Telegram), answered with the page
 Skills: {skills}
 Agents: {agents}
 Can't: send email or messages, make calls, buy anything"""
@@ -231,7 +253,7 @@ def _and(items: list[str], lang: str) -> str:
 
 def answer(text: str, lang: str, facts: dict) -> tuple[str, str] | None:
     """(spoken, screen) from the fixed self-description, or None (not a question about Javid)."""
-    found = topics(text)
+    found = [t for t in topics(text) if not (t == "files" and facts.get("attached"))]
     if not found:
         return None
     lang = lang if lang in ("en", "bn") else "en"

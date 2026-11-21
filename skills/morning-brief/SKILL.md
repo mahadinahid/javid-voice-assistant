@@ -12,7 +12,8 @@ metadata:
 1. Call morning_briefing (today's date, open tasks, today's calendar) and news_headlines with
    topics ["Bangladesh", "China", "AI"]. Call both in the same round if you can.
 2. Use only what those two results say. If the calendar is empty or no tasks are open, say so;
-   never invent events, tasks or news.
+   if morning_briefing says the calendar couldn't be read, say that instead, never that it's empty.
+   Never invent events, tasks or news.
 3. Reply in the format below: a spoken part and a screen part.
 
 ## Tools
@@ -20,11 +21,11 @@ metadata:
 - news_headlines: the top story for each topic, with its source and date.
 
 ## Output format
-SPOKEN: at most 90 words (under 45 seconds), plain sentences, no lists: today's events or
-"nothing on your calendar", how many tasks are open and the first one or two, then one short
-sentence per headline that names its source.
+SPOKEN: at most 90 words (under 45 seconds), plain sentences, no lists: today's events,
+"nothing on your calendar", or that the calendar couldn't be read, how many tasks are open and
+the first one or two, then one short sentence per headline that names its source.
 SCREEN:
-Calendar: each event with its time, or "Nothing scheduled today"
+Calendar: each event with its time, "Nothing scheduled today", or "Couldn't be read: <why>"
 Tasks (N open): each open task on its own line
 Headlines:
 - Bangladesh: <headline> (<source>, <date>)

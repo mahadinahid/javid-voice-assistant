@@ -21,7 +21,9 @@ import javid
 import memory_store
 
 APPROVE_SEC = 120
-DESTRUCTIVE = ("delete_task", "delete_event", "move_event")    # what waits on the web page and in the CLI
+# What waits on the web page and in the CLI: the model's deletes and moves, and hifz.py's delete or reset of
+# revision logs (asked for in code, carded through javid.gate_write).
+DESTRUCTIVE = ("delete_task", "delete_event", "move_event", "hifz_delete", "hifz_reset")
 _actions: dict[str, dict] = {}      # id -> {"id", "tool", "at", "turn", "typed_yes", "text", plus what run() needs}
 _turn = 0                           # bumped once per user message (javid.think_stream): a typed yes answers the last turn's card
 
@@ -131,6 +133,28 @@ def _plan(tool: str, args: dict, refuse_memory: str | None):
             return "Nothing to save."
         file = args.get("file") if args.get("file") in memory_store.FILES else "user"
         return {"text": f"Save to memory: {text}", "args": {"text": text, "file": file}}
+    if tool == "hifz":                 # the model's revision tool on Telegram: a log waits; a question is answered
+        import hifz
+        req = hifz.request(str(args.get("request") or ""))
+        if not req or req["action"] != "log":
+            return hifz.tool(str(args.get("request") or ""))
+        found = req["portions"] or hifz.today_portions()
+        if not found:
+            return "Today's revision is already logged."
+        labels = [hifz.quran.portion_label(p) for p in found]
+        return {"text": f"Log revision: {hifz.quran.join(labels)}" +
+                        (f" ({', '.join(req['strengths'])})" if set(req["strengths"]) != {"okay"} else ""),
+                "args": {"request": str(args.get("request") or "")}}
+    if tool == "hifz_delete":          # bound to those log entries
+        ids = [str(i) for i in args.get("ids") or []]
+        if not ids:
+            return "No revision log to delete."
+        labels = args.get("labels") or []
+        more = f" and {len(labels) - 3} more" if len(labels) > 3 else ""
+        return {"text": f"Delete revision log: {', '.join(labels[:3])}{more}", "ids": ids}
+    if tool == "hifz_reset":
+        return {"text": f"Delete your whole revision history: {args.get('count', 0)} logs since "
+                        f"{args.get('since', 'the start')}", "count": args.get("count", 0)}
     if tool == "save_report":          # Google Drive: bound to the document as it is now
         report = args.get("report") or {}
         if not report.get("screen"):
@@ -193,6 +217,18 @@ def run(action: dict) -> str:
             except ValueError as e:
                 memory_store.reject(proposal["id"])
                 result = f"Not saved: {e}"
+    elif tool == "hifz":
+        import hifz
+        return hifz.tool(action["args"]["request"]).split("\n")[0]
+    elif tool == "hifz_delete":
+        import hifz
+        n = hifz.delete(action["ids"])
+        return f"Deleted {n} revision log{'s' if n != 1 else ''}." if n else "Those logs were already gone, so nothing was done."
+    elif tool == "hifz_reset":
+        import hifz
+        n, copy = hifz.reset()
+        return (f"Deleted your revision history ({n} logs). A copy is kept in {copy} until the next reset."
+                if n else "There was no revision history to delete.")
     elif tool == "save_report":
         done = drive_tools.save(action["report"])
         result = drive_tools.say(done["said"]) + (f" {done['link']}" if done.get("link") else "")

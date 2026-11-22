@@ -36,11 +36,13 @@ import calendar_tools
 import documents
 import drive_tools
 import edge_pool
+import hifz
 import markets
 import memory_store
 import news
 import prayers
 import providers
+import quran
 import rates
 import selfcheck
 import skills
@@ -265,6 +267,8 @@ SYSTEM_PROMPT = (
     "and don't say you checked unless you called a tool. "
     "If you're not sure, say so instead of guessing. "
     "Weather, prices, prayer times and sums come only from get_weather, market_price, prayer_times and calculate, "
+    "and Mahadi's Quran revision only from hifz. Never quote, translate or number the Quran's verses yourself, and "
+    "never write Arabic; to hear a surah he says 'play Surah ...'. "
     "and a timer exists only "
     "once set_timer says so. "
     "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
@@ -666,6 +670,7 @@ TOOLS = [
     *skills.TOOLS,
     *weather.TOOLS,
     *prayers.TOOLS,
+    *hifz.TOOLS,
     *timers.TOOLS,
     *calc.TOOLS,
     *markets.TOOLS,
@@ -935,6 +940,9 @@ REQUIRED_TOOLS = [
     # A prayer-time question is answered in code too; with something else asked, the model must look the times up.
     (prayers.ASK, "prayer_times", "Mahadi asked about prayer times, which you can't know: call prayer_times now and "
                                   "use only its times."),
+    # A revision log or question is answered in code; with something else asked, the model logs or reads it with hifz.
+    (hifz.ASK, "hifz", "Mahadi told you about his Quran revision or asked about it: call hifz with his words about "
+                       "it now, and say only what it says. Don't say anything is logged unless it says so."),
 ]
 # A required agent's request goes to that agent (delegate), with nothing else to call first.
 for _a in agents.all_agents():
@@ -975,6 +983,7 @@ TOOL_MAP = {
     **skills.TOOL_MAP,
     **weather.TOOL_MAP,
     **prayers.TOOL_MAP,
+    **hifz.TOOL_MAP,
     **timers.TOOL_MAP,
     **calc.TOOL_MAP,
     **markets.TOOL_MAP,
@@ -986,13 +995,14 @@ TOOL_MAP = {
 # a gate (the web page, the CLI, the suite) _web_gate holds back only approvals.DESTRUCTIVE (delete_task, delete_event,
 # move_event) for an Approve card or a typed yes (SECURITY.md item 2, 2026-11-14); a gate that returns None lets the
 # tool run.
-WRITE_TOOLS = ("add_task", "complete_task", "delete_task", "add_event", "move_event", "delete_event", "propose_memory")
+WRITE_TOOLS = ("add_task", "complete_task", "delete_task", "add_event", "move_event", "delete_event", "propose_memory",
+               "hifz")
 # Tools that read or write Mahadi's personal data: calendar, memory, chat history, tasks. Privacy rule (the model
 # router, _open_stream): a request that carries their results, or a turn that needs them, goes only to providers with
 # personal_ok: true in config/providers.yaml; any other provider gets the request without them (_public_request).
 PERSONAL_TOOLS = frozenset({"add_task", "list_tasks", "delete_task", "complete_task", "propose_memory",
                             "search_history", "morning_briefing", "list_events", "find_free_time", "add_event",
-                            "move_event", "delete_event"})
+                            "move_event", "delete_event", "hifz", "hifz_log"})     # hifz_log: a log made in code
 _write_gate = None
 _new_approvals: list = []     # this turn's web cards (approvals.py actions), yielded as ("approval", action) events
 
@@ -1018,6 +1028,12 @@ def _doc_gate(name: str, args: dict):
     if action:
         _new_approvals.append(action)
     return told
+
+
+def gate_write(name: str, args: dict) -> str | None:
+    """A write that code decided on (hifz.py's delete or reset) through this turn's gate: an Approve card on the page
+    (approvals.DESTRUCTIVE) or a button on Telegram. What the gate said, or None when it let the write through."""
+    return _write_gate(name, args) if _write_gate else None
 
 
 # The file(s) attached to the open chat (documents.py): set by the turn that brought them, carried for DOC_TURNS more
@@ -1127,6 +1143,7 @@ TOOL_GROUPS = [
      r"\bminus\b|হিসাব|যোগফল|গুণ|ভাগ"),
     (["exchange_rates"], rates.ASK.pattern),
     (["prayer_times"], prayers.WORDS.pattern),
+    (["hifz"], hifz.WORDS.pattern),
     (["market_price"], r"bitcoin|\bbtc\b|ethereum|\beth\b|crypto|binance|solana|\bsol\b|\bbnb\b|\bxrp\b|dogecoin|"
      r"\bdoge\b|\bpepe\b|\busdt\b|altcoin|\bcoins?\b|\bstocks?\b|\bshares?\b|nasdaq|s&p|dow jones|ticker|nvidia|"
      r"tesla|apple stock|বিটকয়েন|ক্রিপ্টো|শেয়ার"),
@@ -2660,12 +2677,18 @@ def _personal_call(call: dict) -> bool:
     return False
 
 
-def _code_answer(user_text: str):
-    """A watch to set, list or cancel, a prayer-time question, a rates question, a market brief or a news request
-    that code answers whole (watches.request, prayers.request, rates.request, markets.brief_request, news.request): a
-    function of the reply language giving the answer's generator. None leaves the message to the model."""
+def _code_answer(user_text: str, player: dict | None = None, previous: dict | None = None, via: str = "page"):
+    """A watch to set, list or cancel, the recitation player or a question about the Quran's structure, a revision log
+    or question, a prayer-time question, a rates question, a market brief or a news request that code answers whole
+    (watches.request, quran.request, hifz.request, prayers.request, rates.request, markets.brief_request,
+    news.request): a function of the reply language giving the answer's generator. None leaves the message to the
+    model. player: the page's recitation player as it is ("next ayah"); previous: the reply before ("undo that")."""
     if (req := watches.request(user_text)):     # first: "tell me when bitcoin goes above 70k" isn't a market brief
         return lambda lang: watches.answer(req, lang)
+    if (req := quran.request(user_text, player)):    # before the prayers: "play Surah Al-Asr" isn't about Asr
+        return lambda lang: quran.answer(req, lang)
+    if (req := hifz.request(user_text, previous)):
+        return lambda lang: hifz.answer(req, lang, via)
     if (req := prayers.request(user_text)):
         return lambda lang: prayers.answer(req, lang)
     if (req := rates.request(user_text)):
@@ -2696,7 +2719,7 @@ def _relay(answer, lang: str, used: list):
 
 
 def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), yes_ok: bool = True,
-                 files: list | None = None):
+                 files: list | None = None, player: dict | None = None):
     """Yield ("tool", name), ("say", text), ("sources", links), ("lang", code) and ("delta", text)
     events as the reply is produced. "say" is spoken but isn't part of the reply ("Searching…");
     "lang" means the message switched the reply language.
@@ -2713,7 +2736,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
     model asks for (Telegram: the web tools for a message with a link). files: ids of documents just sent with the
     message (documents.py); with them, or with the chat's attachment still open, the turn is personal, every write
     tool is an Approve card (_doc_gate), the web tools and agents are blocked, and a multi-page PDF's answer must
-    cite a page.
+    cite a page. player: the page's recitation player as it is (quran.py: "next ayah", "repeat this ayah 3 times").
     """
     import approvals
     global _write_gate
@@ -2833,7 +2856,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         check = selfcheck.request(user_text)
         own = None if check else about.answer(user_text, lang, {**_self_facts(), "attached": bool(docs)})
         in_code = ((lambda lang: selfcheck.answer(check, user_text, lang, previous)) if check else
-                   None if own else _code_answer(user_text))
+                   None if own else _code_answer(user_text, player, previous, "page" if gate is None else "telegram"))
         if own or in_code:
             tracing.mark("routing_done")
         if in_code:
@@ -2841,6 +2864,10 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                 own = yield from _relay(in_code(lang), lang, code_tools)
             except Exception as e:      # a bug in a code answer must not lose the turn: the model answers it
                 print(f"[code] {type(e).__name__}: {e}; the model answers instead")
+            while _new_approvals:       # a delete or a reset hifz.py asked for: its card
+                yield ("approval", _new_approvals.pop(0))
+            if PERSONAL_TOOLS & set(code_tools):    # his revision log: the backup voice may not say it (_eleven)
+                messages[turn_start]["_needs_personal"] = True
         if own:
             reply, screen = own
             if web_tools.used():
@@ -2860,6 +2887,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         retried_cite = False
         retried_required = False
         retried_holiday = False
+        retried_quran = False
         required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
                     and not (skill_first and tool in WEB_TOOLS)   # the skill answers without the web
                     and not (agent_first and tool != "delegate" and tool not in agents.agent_tools(agent_first))]
@@ -2985,6 +3013,22 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                 if bad:
                     print(f"[holiday] rewrite still has {bad}; using the tool's list")
                     text = (lang == "en" and calendar_tools.holiday_fallback(list(held.values()))) or phrase("holiday_unsure", lang)
+                # The Quran's words never come from a model (quran.py): no Arabic, no verse references or ayah
+                # numbers but the ones this turn's hifz results give, no quoted verse. One rewrite, then those
+                # sentences go.
+                allowed = " ".join(_results_since(turn_start, ("hifz",)))
+                whole = text + ("\n" + via_agent["screen"] if via_agent else "")
+                if (q := quran.reply_problem(whole, allowed)) and not retried_quran:
+                    retried_quran = True
+                    print(f"[quran] reply has {q}, asking for a rewrite: {text[:60]!r}")
+                    notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
+                                                  {"role": "user", "content": quran.correction(q)}]))
+                    continue
+                if q:
+                    print(f"[quran] rewrite still has {q}; those sentences are dropped")
+                    text = quran.strip_reply(text, allowed, lang)
+                    if via_agent and via_agent.get("screen"):
+                        via_agent["screen"] = quran.strip_reply(via_agent["screen"], allowed, lang)
             skill = skills.active()
             if not tool_calls and via_agent and not screen:
                 screen = via_agent["screen"]
@@ -3414,7 +3458,10 @@ def synthesize(text: str, lang: str | None = None, backup: bool = True, cancelle
     voice (ElevenLabs, when its voice for the language is approved and it may take the sentence), and for
     EDGE_DOWN_SEC after that the backup speaks first. Raises when neither can: the page shows "voice unavailable".
     backup=False: edge-tts only (the warm-up: the backup costs characters). cancelled: a callable that turns true
-    when nobody is waiting any more (/speak's page hung up); then SpeechCancelled, with no retry and no backup."""
+    when nobody is waiting any more (/speak's page hung up); then SpeechCancelled, with no retry and no backup.
+    Arabic script is never voiced (quran.py: the Quran's words come only from a recitation, never from edge-tts):
+    it's taken out and the rest is said."""
+    text = quran.strip_arabic(text)
     voice = voice_for(text, lang)
     if (voice, text) in _tts_cache:
         return _tts_cache[voice, text]

@@ -23,7 +23,8 @@ try {
     const realFetch = window.fetch.bind(window);
     window.fetch = (input, init) => {
         const url = typeof input === 'string' ? input : (input && input.url) || '';
-        if (!(url.startsWith('/') || url.startsWith(location.origin + '/'))) return realFetch(input, init);
+        // Only this page's own paths: "//host/…" is another site (Quran.com writes its audio addresses that way).
+        if (!((url.startsWith('/') && !url.startsWith('//')) || url.startsWith(location.origin + '/'))) return realFetch(input, init);
         let key = '';
         try { key = localStorage.getItem('javid-key') || ''; } catch {}
         const headers = new Headers((init && init.headers) || (input instanceof Request ? input.headers : undefined));
@@ -2988,6 +2989,280 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     html[data-theme="overdrive"] *::before,
     html[data-theme="overdrive"] *::after { animation: none !important; }
 }
+
+/* ── Hifz (hifz.py, quran.py; 2026-11-22): the revision view, its Dashboard card, the recitation player and the
+   revision reminder. One Islamic look of its own in every theme: deep emerald, gold, the eight-pointed star the
+   mushaf marks its quarters with, Amiri for the Arabic names. Text contrast (checked by hand): ivory 14.5:1 and
+   the muted green 7.8:1 on the emerald, the dark ink on every tile colour 6.9:1 or more. ── */
+.hz-scope {
+    --hz-bg: #04211A;
+    --hz-bg-2: #08362A;
+    --hz-card: rgba(8, 48, 37, 0.80);
+    --hz-card-2: rgba(13, 64, 50, 0.88);
+    --hz-line: rgba(233, 196, 106, 0.22);
+    --hz-line-2: rgba(233, 196, 106, 0.48);
+    --hz-gold: #E9C46A;
+    --hz-gold-2: #C99A3E;
+    --hz-ink: #1E1606;
+    --hz-ivory: #F6EED8;
+    --hz-text-2: #D3E3D8;
+    --hz-muted: #A3BDB0;
+    --hz-fresh: #E9C46A;
+    --hz-steady: #B9A35A;
+    --hz-soon: #7FAE95;
+    --hz-over: #E08A5E;
+    --hz-weak: #FF7A6B;
+    --hz-ar: 'Amiri', 'Geeza Pro', 'Noto Naskh Arabic', serif;
+    --hz-head: 'Amiri', Georgia, 'Times New Roman', serif;
+    --hz-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='none' stroke='%23E9C46A' stroke-width='0.8' stroke-opacity='0.13'%3E%3Cpath d='M28 11L33 16L40 16L40 23L45 28L40 33L40 40L33 40L28 45L23 40L16 40L16 33L11 28L16 23L16 16L23 16Z'/%3E%3Cpath d='M0 -17L5 -12L12 -12L12 -5L17 0L12 5L12 12L5 12L0 17L-5 12L-12 12L-12 5L-17 0L-12 -5L-12 -12L-5 -12Z'/%3E%3Cpath d='M0 39L5 44L12 44L12 51L17 56L12 61L12 68L5 68L0 73L-5 68L-12 68L-12 61L-17 56L-12 51L-12 44L-5 44Z'/%3E%3Cpath d='M56 -17L61 -12L68 -12L68 -5L73 0L68 5L68 12L61 12L56 17L51 12L44 12L44 5L39 0L44 -5L44 -12L51 -12Z'/%3E%3Cpath d='M56 39L61 44L68 44L68 51L73 56L68 61L68 68L61 68L56 73L51 68L44 68L44 61L39 56L44 51L44 44L51 44Z'/%3E%3Cpath d='M28 20.4L30.2 22.6L33.4 22.6L33.4 25.8L35.6 28L33.4 30.2L33.4 33.4L30.2 33.4L28 35.6L25.8 33.4L22.6 33.4L22.6 30.2L20.4 28L22.6 25.8L22.6 22.6L25.8 22.6Z'/%3E%3Cpath d='M28 0V11M28 45V56M0 28H11M45 28H56'/%3E%3C/g%3E%3C/svg%3E");
+    color: var(--hz-ivory);
+    font-family: var(--font, Inter, system-ui, sans-serif);
+}
+.hz-scope [lang="ar"] { font-family: var(--hz-ar); font-weight: 400; unicode-bidi: isolate; }
+.hz-scope button { font-family: inherit; }
+.hz-scope :focus-visible { outline: 2px solid var(--hz-gold); outline-offset: 2px; }
+.hz-star-svg path { fill: currentColor; }
+
+/* the header's button */
+.hifz-btn { display: inline-flex; align-items: center; gap: 6px; }
+.hifz-btn svg { width: 14px; height: 14px; color: #E9C46A; flex-shrink: 0; }
+.hifz-btn .hz-dot-due { width: 7px; height: 7px; border-radius: 50%; background: #E9C46A; box-shadow: 0 0 8px #E9C46A; }
+.hifz-btn .hz-dot-due[hidden] { display: none; }
+
+/* the Dashboard's card */
+.hz-dash {
+    position: relative;
+    flex-shrink: 0;
+    padding: 14px 14px 12px;
+    border-radius: 16px;
+    border: 1px solid var(--hz-line-2);
+    background: var(--hz-pattern) center / 56px, linear-gradient(160deg, #0B3F31, #04211A 70%);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(233, 196, 106, 0.12);
+    overflow: hidden;
+}
+.hz-dash-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.hz-dash-head .hz-ar { font-size: 19px; color: var(--hz-gold); line-height: 1; }
+.hz-dash-head .hz-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-muted); }
+.hz-dash-head button {
+    margin-left: auto; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--hz-line-2);
+    background: rgba(233, 196, 106, 0.1); color: var(--hz-gold); font-size: 11px; font-weight: 600; cursor: pointer;
+}
+.hz-dash-head button:hover { background: rgba(233, 196, 106, 0.2); }
+.hz-dash-today { font: 700 17px var(--hz-head); color: var(--hz-ivory); }
+.hz-dash-span { margin-top: 2px; font-size: 12px; color: var(--hz-text-2); }
+.hz-mini { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 10px 0 8px; }
+.hz-mini.m7 { grid-template-columns: repeat(7, 1fr); }
+.hz-mini i { height: 9px; border-radius: 2px; background: rgba(233, 196, 106, 0.08); outline: 1px solid var(--hz-line); }
+.hz-mini i.s-fresh { background: var(--hz-fresh); outline: none; }
+.hz-mini i.s-steady { background: var(--hz-steady); outline: none; }
+.hz-mini i.s-soon { background: var(--hz-soon); outline: none; }
+.hz-mini i.s-over { background: var(--hz-over); outline: none; }
+.hz-mini i.today { box-shadow: 0 0 0 1.5px var(--hz-ivory); }
+.hz-mini i.weak { background-image: radial-gradient(circle at 70% 30%, var(--hz-weak) 0 2px, transparent 2.5px); }
+.hz-dash-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--hz-text-2); }
+.hz-dash-stats b { color: var(--hz-gold); font-weight: 700; }
+
+/* the view */
+.hz-view {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    overflow-y: auto;
+    background: var(--hz-pattern) center / 56px, radial-gradient(1100px 520px at 50% -10%, rgba(233, 196, 106, 0.16), transparent 70%),
+                linear-gradient(180deg, #062B21, #031914 60%, #02130F);
+    animation: hz-in 0.35s ease-out;
+}
+.hz-view[hidden] { display: none; }
+@keyframes hz-in { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
+.hz-inner { max-width: 1040px; margin: 0 auto; padding: 22px 22px 120px; }
+.hz-head { display: flex; align-items: center; gap: 16px; }
+.hz-mark { width: 54px; height: 54px; color: var(--hz-gold); filter: drop-shadow(0 0 14px rgba(233, 196, 106, 0.45)); }
+.hz-mark svg { width: 100%; height: 100%; }
+.hz-mark .hz-mark-in { fill: #04211A; }
+.hz-titles { flex: 1; min-width: 0; }
+.hz-title { margin: 0; display: flex; align-items: baseline; gap: 12px; font: 700 30px var(--hz-head); color: var(--hz-ivory); letter-spacing: 0.01em; }
+.hz-title [lang="ar"] { font-size: 34px; color: var(--hz-gold); }
+.hz-line { margin: 2px 0 0; font: italic 400 15px var(--hz-head); color: var(--hz-text-2); }
+.hz-x {
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.7);
+    color: var(--hz-ivory); font-size: 16px; cursor: pointer;
+}
+.hz-x:hover { border-color: var(--hz-gold); color: var(--hz-gold); }
+.hz-rule { height: 14px; margin: 16px 0 18px; position: relative;
+    background: linear-gradient(90deg, transparent, var(--hz-line-2) 46%, transparent 46%, transparent 54%, var(--hz-line-2) 54%, transparent) center / 100% 1px no-repeat; }
+.hz-rule::after { content: '۞'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -54%); color: var(--hz-gold); font-size: 15px; line-height: 1; }
+
+.hz-hero { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 16px; }
+.hz-card {
+    position: relative;
+    border-radius: 20px;
+    border: 1px solid var(--hz-line-2);
+    background: linear-gradient(160deg, var(--hz-card-2), var(--hz-card));
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(233, 196, 106, 0.14);
+}
+.hz-today { padding: 22px 24px 20px; overflow: hidden; }
+.hz-today::before {      /* a faint star behind the portion */
+    content: ''; position: absolute; right: -40px; top: -40px; width: 220px; height: 220px; opacity: 0.08;
+    background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill='%23E9C46A' d='M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z'/%3E%3C/svg%3E");
+}
+.hz-k2 { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); }
+.hz-today-n { margin-top: 6px; font: 700 40px/1.05 var(--hz-head); color: var(--hz-ivory); }
+.hz-today-n small { font-size: 18px; color: var(--hz-text-2); font-weight: 400; }
+.hz-today-span { margin-top: 6px; font-size: 15px; color: var(--hz-text-2); }
+.hz-today-span [lang="ar"] { font-size: 19px; color: var(--hz-gold); margin: 0 4px; }
+.hz-today-late { margin-top: 6px; font-size: 12.5px; color: var(--hz-over); font-weight: 600; }
+.hz-today-weak { margin-top: 4px; font-size: 12.5px; color: var(--hz-text-2); }
+.hz-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
+.hz-btn {
+    display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--hz-gold); background: linear-gradient(135deg, #F1D27F, #D6A84C); color: var(--hz-ink);
+    font-size: 14px; font-weight: 700; box-shadow: 0 6px 18px rgba(233, 196, 106, 0.25);
+}
+.hz-btn:hover { filter: brightness(1.06); }
+.hz-btn svg { width: 14px; height: 14px; }
+.hz-btn.ghost { background: rgba(233, 196, 106, 0.08); color: var(--hz-gold); box-shadow: none; border-color: var(--hz-line-2); }
+.hz-log { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hz-log span { font-size: 12px; color: var(--hz-muted); margin-right: 2px; }
+.hz-log button {
+    padding: 8px 13px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.55);
+    color: var(--hz-ivory); font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.hz-log button:hover { border-color: var(--hz-gold); }
+.hz-log button[data-st="strong"] { color: var(--hz-gold); }
+.hz-log button[data-st="weak"] { color: #FFB2A8; }
+.hz-done { display: flex; align-items: center; gap: 10px; margin-top: 10px; font: 700 26px var(--hz-head); color: var(--hz-gold); }
+.hz-done svg { width: 30px; height: 30px; flex-shrink: 0; filter: drop-shadow(0 0 8px rgba(233, 196, 106, 0.5)); }
+.hz-done svg path { fill: currentColor; }
+
+.hz-stats { display: grid; grid-template-rows: repeat(3, 1fr); gap: 12px; }
+.hz-stat { display: flex; align-items: center; gap: 14px; padding: 12px 16px; }
+.hz-stat svg { width: 34px; height: 34px; flex-shrink: 0; color: var(--hz-gold); }
+.hz-stat b { display: block; font: 700 25px/1 var(--hz-head); color: var(--hz-ivory); }
+.hz-stat span { display: block; margin-top: 3px; font-size: 12.5px; color: var(--hz-text-2); }
+.hz-stat small { display: block; margin-top: 1px; font-size: 11px; color: var(--hz-muted); }
+.hz-moon { position: relative; }
+
+.hz-sec { margin-top: 18px; padding: 18px 20px 20px; }
+.hz-sec-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 14px; }
+.hz-sec-head h3 { margin: 0; font: 700 20px var(--hz-head); color: var(--hz-ivory); }
+.hz-sec-head h3 [lang="ar"] { color: var(--hz-gold); font-size: 21px; margin-left: 6px; }
+.hz-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-left: auto; font-size: 11.5px; color: var(--hz-text-2); }
+.hz-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 5px; border-radius: 2px; vertical-align: -1px; }
+.hz-legend i.s-fresh { background: var(--hz-fresh); } .hz-legend i.s-steady { background: var(--hz-steady); }
+.hz-legend i.s-soon { background: var(--hz-soon); } .hz-legend i.s-over { background: var(--hz-over); }
+.hz-legend i.s-never { outline: 1px solid var(--hz-line-2); }
+.hz-legend i.weak { border-radius: 50%; background: var(--hz-weak); }
+.hz-map { display: grid; grid-template-columns: repeat(10, minmax(0, 1fr)); gap: 10px; }
+.hz-map.m7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
+.hz-star {
+    position: relative; aspect-ratio: 1; padding: 0; border: none; background: none; cursor: pointer;
+    color: rgba(233, 196, 106, 0.07); transition: transform 0.15s;
+}
+.hz-star:hover { transform: scale(1.07); }
+.hz-star svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.hz-star svg path { fill: currentColor; stroke: var(--hz-line-2); stroke-width: 2; }
+.hz-star .hz-n { position: relative; display: grid; place-items: center; height: 100%; font: 700 clamp(13px, 1.6vw, 18px) var(--hz-head); color: var(--hz-ivory); }
+.hz-star.s-fresh { color: var(--hz-fresh); } .hz-star.s-steady { color: var(--hz-steady); }
+.hz-star.s-soon { color: var(--hz-soon); } .hz-star.s-over { color: var(--hz-over); }
+.hz-star:is(.s-fresh, .s-steady, .s-soon, .s-over) svg path { stroke: rgba(30, 22, 6, 0.25); }
+.hz-star:is(.s-fresh, .s-steady, .s-soon, .s-over) .hz-n { color: var(--hz-ink); }
+.hz-star .hz-w { position: absolute; right: 6%; top: 6%; width: 22%; height: 22%; border-radius: 50%; background: var(--hz-weak); border: 2px solid #04211A; }
+.hz-star.today svg { filter: drop-shadow(0 0 7px rgba(246, 238, 216, 0.9)); }
+.hz-star.today svg path { stroke: var(--hz-ivory); stroke-width: 4; }
+.hz-star.today::after {
+    content: ''; position: absolute; inset: -6%; border-radius: 50%; border: 1.5px dashed rgba(246, 238, 216, 0.55);
+    animation: hz-turn 18s linear infinite;
+}
+@keyframes hz-turn { to { transform: rotate(360deg); } }
+.hz-star.sel svg path { stroke: var(--hz-ivory); stroke-width: 4; }
+.hz-star.done .hz-n::after { content: '✓'; position: absolute; bottom: 8%; font-size: 0.6em; }
+.hz-tip { margin-top: 14px; min-height: 44px; padding: 12px 16px; border-radius: 14px; border: 1px dashed var(--hz-line-2); color: var(--hz-text-2); font-size: 13.5px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; }
+.hz-tip b { color: var(--hz-ivory); font: 700 16px var(--hz-head); }
+.hz-tip [lang="ar"] { color: var(--hz-gold); font-size: 17px; }
+.hz-tip .hz-tip-acts { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; }
+.hz-tip .hz-btn { padding: 7px 14px; font-size: 12.5px; }
+
+.hz-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
+.hz-list { list-style: none; margin: 0; padding: 0; }
+.hz-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(233, 196, 106, 0.1); font-size: 13.5px; color: var(--hz-text-2); }
+.hz-list li:last-child { border-bottom: none; }
+.hz-list li b { color: var(--hz-ivory); font-weight: 600; }
+.hz-list .hz-pill { margin-left: auto; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(233, 196, 106, 0.12); color: var(--hz-gold); }
+.hz-list .hz-pill.weak { background: rgba(255, 122, 107, 0.16); color: #FFB2A8; }
+.hz-list .hz-pill.strong { background: rgba(233, 196, 106, 0.22); }
+.hz-empty { color: var(--hz-muted); font-size: 13px; }
+.hz-foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: var(--hz-muted); line-height: 1.6; }
+.hz-foot a { color: var(--hz-gold); }
+
+/* the recitation player: a slim bar under the header (at the view's foot while it's open) */
+.hz-player {
+    position: fixed; top: 66px; left: 50%; z-index: 95; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 12px; width: min(640px, calc(100vw - 32px)); padding: 9px 12px 9px 10px;
+    border-radius: 18px; border: 1px solid var(--hz-line-2);
+    background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0C4334, #052A20);
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 30px rgba(233, 196, 106, 0.12);
+}
+.hz-player[hidden] { display: none; }
+body.hifz-open .hz-player { top: auto; bottom: 18px; }
+body:has(.hz-ring:not([hidden])):not(.hifz-open) .hz-player { top: 196px; }     /* under a revision reminder */
+.hz-pl-art { position: relative; width: 42px; height: 42px; flex-shrink: 0; color: var(--hz-gold); }
+.hz-pl-art svg { width: 100%; height: 100%; }
+.hz-player.playing .hz-pl-art svg { animation: hz-turn 24s linear infinite; }
+.hz-pl-info { flex: 1; min-width: 0; }
+.hz-pl-title { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font: 700 15px var(--hz-head); color: var(--hz-ivory); }
+.hz-pl-title [lang="ar"] { font-size: 17px; color: var(--hz-gold); font-weight: 400; }
+.hz-pl-sub { margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--hz-text-2); }
+.hz-pl-sub .rep { color: var(--hz-gold); font-weight: 700; }
+.hz-pl-prog { height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(233, 196, 106, 0.15); overflow: hidden; }
+.hz-pl-prog span { display: block; height: 100%; width: 0; background: var(--hz-gold); transition: width 0.4s; }
+.hz-pl-ctl { display: flex; gap: 4px; }
+.hz-pl-ctl button {
+    width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; border: 1px solid transparent;
+    background: none; color: var(--hz-ivory); cursor: pointer;
+}
+.hz-pl-ctl button:hover { border-color: var(--hz-line-2); color: var(--hz-gold); }
+.hz-pl-ctl button svg { width: 16px; height: 16px; }
+.hz-pl-ctl #rp-play { background: var(--hz-gold); color: var(--hz-ink); }
+.hz-pl-credit { position: absolute; right: 14px; bottom: -17px; font-size: 10px; color: var(--hz-muted); text-decoration: none; text-shadow: 0 1px 2px #000; }
+.hz-pl-credit:hover { color: var(--hz-gold); }
+
+/* the revision reminder: stays until you log it, choose later, or dismiss it */
+.hz-ring {
+    position: fixed; top: 18px; left: 50%; z-index: 99; transform: translateX(-50%);
+    width: min(620px, calc(100vw - 32px)); padding: 16px 18px; border-radius: 20px; border: 1px solid var(--hz-gold);
+    background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0E4A39, #05281F);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 50px rgba(233, 196, 106, 0.28);
+    animation: hz-glow 2.4s ease-in-out 3;
+}
+.hz-ring[hidden] { display: none; }
+@keyframes hz-glow { 50% { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 80px rgba(233, 196, 106, 0.55); } }
+.hz-ring-top { display: flex; align-items: flex-start; gap: 14px; }
+.hz-ring-top svg { width: 40px; height: 40px; flex-shrink: 0; color: var(--hz-gold); }
+.hz-ring-k { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); }
+.hz-ring-text { margin-top: 3px; font: 400 17px/1.4 var(--hz-head); color: var(--hz-ivory); }
+.hz-ring .hz-actions { margin-top: 12px; }
+.hz-ring .hz-later { margin-left: auto; padding: 7px 12px; border: none; background: none; color: var(--hz-muted); font-size: 12.5px; cursor: pointer; }
+.hz-ring .hz-later:hover { color: var(--hz-ivory); }
+
+@media (max-width: 860px) {
+    .hz-hero, .hz-two { grid-template-columns: 1fr; }
+    .hz-stats { grid-template-rows: none; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .hz-stat { flex-direction: column; text-align: center; gap: 6px; }
+    .hz-map { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .hz-pl-credit { display: none; }
+}
+@media (max-width: 520px) {
+    .hz-inner { padding: 16px 14px 120px; }
+    .hz-stats { grid-template-columns: 1fr; }
+    .hz-stat { flex-direction: row; text-align: left; }
+    .hz-map { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+    .hz-today-n { font-size: 32px; }
+    .hz-pl-ctl #rp-rep, .hz-pl-ctl #rp-prev { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .hz-view, .hz-ring, .hz-star.today::after, .hz-player.playing .hz-pl-art svg { animation: none !important; }
+    .hz-star { transition: none; }
+}
 </style>
 </head>
 <body>
@@ -3002,6 +3277,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     </div>
     <button id="panels-btn" class="theme-btn panels-btn" aria-expanded="false" aria-controls="panels"
             title="Today, timers, tasks, skills, agents, memory and providers">▦ Dashboard</button>
+    <button id="hifz-btn" class="theme-btn hifz-btn" type="button" aria-controls="hifz"
+            title="Hifz: today's revision, your whole Quran at a glance, and recitations"><svg viewBox="0 0 100 100" aria-hidden="true"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/></svg>Hifz<span class="hz-dot-due" id="hifz-due-dot" hidden></span></button>
     <div class="theme-pick">
         <button id="theme-btn" class="theme-btn" aria-haspopup="dialog" aria-expanded="false" aria-controls="theme-menu" title="Themes">Glass</button>
         <div id="theme-menu" class="theme-menu" role="dialog" aria-label="Themes" hidden></div>
@@ -3023,6 +3300,14 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
             <div class="panel-title">Today</div>
             <div id="calendar-list"><p class="empty">Loading…</p></div>
             <div id="drive-line" class="cal-note"></div>
+        </div>
+        <div class="hz-scope hz-dash" id="hifz-panel">
+            <div class="hz-dash-head"><span class="hz-ar" lang="ar">حِفْظ</span><span class="hz-k">Hifz</span>
+                <button type="button" id="hifz-open">Open</button></div>
+            <div class="hz-dash-today" id="hz-dash-today">—</div>
+            <div class="hz-dash-span" id="hz-dash-span"></div>
+            <div class="hz-mini" id="hz-mini" aria-hidden="true"></div>
+            <div class="hz-dash-stats" id="hz-dash-stats"></div>
         </div>
         <div class="panel glass" id="timers-panel" hidden>
             <div class="panel-title">Timers</div>
@@ -3203,6 +3488,92 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     <span class="ring-icon">🔑</span>
     <span class="ring-text">This browser doesn't have Javid's key, so the server refuses its requests.
         <small>Open the link the server printed at start (it ends in #key=…), or run <code>python server.py --open</code>. The key is JAVID_WEB_TOKEN in .env.</small></span>
+</div>
+
+<!-- ── Hifz (hifz.py, quran.py): the view, the recitation player, the revision reminder ── -->
+<div id="hifz" class="hz-scope hz-view" role="dialog" aria-modal="true" aria-labelledby="hz-title" hidden>
+    <div class="hz-inner">
+        <div class="hz-head">
+            <div class="hz-mark" aria-hidden="true"><svg viewBox="0 0 100 100"><path class="hz-star-out" fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><path class="hz-mark-in" d="M50 22L59.9 31.1L71.2 28.8L68.9 40.1L78 50L68.9 59.9L71.2 71.2L59.9 68.9L50 78L40.1 68.9L28.8 71.2L31.1 59.9L22 50L31.1 40.1L28.8 28.8L40.1 31.1Z"/><circle cx="50" cy="50" r="9" fill="currentColor"/></svg></div>
+            <div class="hz-titles">
+                <h2 class="hz-title" id="hz-title"><span lang="ar">حِفْظ</span><span>Hifz</span></h2>
+                <p class="hz-line" id="hz-line">Your Quran, kept fresh one portion at a time.</p>
+            </div>
+            <button class="hz-x" id="hz-close" type="button" aria-label="Close the Hifz view">✕</button>
+        </div>
+        <div class="hz-rule" aria-hidden="true"></div>
+
+        <section class="hz-hero">
+            <div class="hz-card hz-today" id="hz-today" aria-live="polite"></div>
+            <div class="hz-stats">
+                <div class="hz-card hz-stat">
+                    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M24 4v4M17 8h14l3 6H14l3-6zM14 14c-3 4-4 9-4 14 0 6 4 10 14 10s14-4 14-10c0-5-1-10-4-14"/><path d="M24 20c-3 3-4 6-4 9a4 4 0 0 0 8 0c0-3-1-6-4-9z" fill="currentColor" fill-opacity="0.35"/><path d="M18 38l-2 6h16l-2-6"/></svg>
+                    <div><b id="hz-streak">0</b><span id="hz-streak-k">days in a row</span><small id="hz-best"></small></div>
+                </div>
+                <div class="hz-card hz-stat">
+                    <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M30 6a18 18 0 1 0 12 30A15 15 0 1 1 30 6z"/><path fill="currentColor" d="M38 12l1.4 3 3.2.4-2.4 2.2.7 3.2-2.9-1.6-2.9 1.6.7-3.2-2.4-2.2 3.2-.4z"/></svg>
+                    <div><b id="hz-ramadan">—</b><span id="hz-ramadan-k">days to Ramadan</span><small id="hz-ramadan-s"></small></div>
+                </div>
+                <div class="hz-card hz-stat">
+                    <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="6" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="13" fill="currentColor"/></svg>
+                    <div><b id="hz-fresh">—</b><span id="hz-fresh-k">fresh</span><small id="hz-fresh-s"></small></div>
+                </div>
+            </div>
+        </section>
+
+        <section class="hz-card hz-sec">
+            <div class="hz-sec-head">
+                <h3 id="hz-map-title">Your Quran</h3>
+                <div class="hz-legend" id="hz-legend"></div>
+            </div>
+            <div class="hz-map" id="hz-map" role="list"></div>
+            <div class="hz-tip" id="hz-tip">Tap a star to see when you last revised it.</div>
+        </section>
+
+        <section class="hz-two">
+            <div class="hz-card hz-sec">
+                <div class="hz-sec-head"><h3 id="hz-due-title">Coming back</h3></div>
+                <ul class="hz-list" id="hz-due"></ul>
+            </div>
+            <div class="hz-card hz-sec">
+                <div class="hz-sec-head"><h3 id="hz-recent-title">Recent</h3>
+                    <button class="hz-btn ghost" id="hz-undo" type="button" style="margin-left:auto">Undo last</button></div>
+                <ul class="hz-list" id="hz-recent"></ul>
+            </div>
+        </section>
+        <p class="hz-foot" id="hz-foot">Recitations from <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>
+            (Quran Foundation), with <a href="https://everyayah.com" target="_blank" rel="noopener">everyayah.com</a> as the backup.
+            The Quran's structure: Tanzil's metadata, checked against Quran.com. Your log stays on this Mac.</p>
+    </div>
+</div>
+
+<div id="recite-bar" class="hz-scope hz-player" role="region" aria-label="Recitation" hidden>
+    <div class="hz-pl-art" aria-hidden="true"><svg viewBox="0 0 100 100"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg></div>
+    <div class="hz-pl-info">
+        <div class="hz-pl-title"><span id="rp-title">—</span><span id="rp-ar" lang="ar"></span></div>
+        <div class="hz-pl-sub"><span id="rp-ayah"></span> · <span id="rp-reciter"></span><span id="rp-rep" class="rep"></span></div>
+        <div class="hz-pl-prog"><span id="rp-prog"></span></div>
+    </div>
+    <div class="hz-pl-ctl">
+        <button id="rp-prev" type="button" aria-label="Previous ayah" title="Previous ayah"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+        <button id="rp-play" type="button" aria-label="Pause" title="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><path id="rp-play-icon" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
+        <button id="rp-next" type="button" aria-label="Next ayah" title="Next ayah"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+        <button id="rp-rep3" type="button" aria-label="Repeat this ayah three times" title="Repeat this ayah 3 times"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
+        <button id="rp-stop" type="button" aria-label="Stop the recitation" title="Stop"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg></button>
+    </div>
+    <a class="hz-pl-credit" id="rp-credit" href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>
+</div>
+
+<div id="hz-ring" class="hz-scope hz-ring" role="alert" hidden>
+    <div class="hz-ring-top">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg>
+        <div><div class="hz-ring-k" id="hz-ring-k">Today's revision</div><div class="hz-ring-text" id="hz-ring-text"></div></div>
+    </div>
+    <div class="hz-actions">
+        <button class="hz-btn" id="hz-ring-listen" type="button"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>Listen</button>
+        <div class="hz-log" id="hz-ring-log"><span>Revised:</span><button type="button" data-st="strong">Strong</button><button type="button" data-st="okay">Okay</button><button type="button" data-st="weak">Weak</button></div>
+        <button class="hz-later" id="hz-ring-later" type="button">Later</button>
+    </div>
 </div>
 
 <div id="theme-editor" class="theme-editor" role="dialog" aria-labelledby="te-title" hidden>
@@ -3549,7 +3920,8 @@ const vitals = (() => {
             renderLat();
         },
         event(kind, text) {     // other steps worth a line
-            const marks = { approval: '⚠', memory: '◈', sources: '⌕', error: '✕', skill: '⚡', agent: '◆', timer: '⏱', watch: '◉', file: '📎' };
+            const marks = { approval: '⚠', memory: '◈', sources: '⌕', error: '✕', skill: '⚡', agent: '◆', timer: '⏱', watch: '◉', file: '📎',
+                            recite: '▶', hifz: '۞' };
             note(marks[kind] || '·', text);
         },
         turnDone(usage, outcome = 'done') {
@@ -4306,16 +4678,19 @@ function tapPlayback(audioEl) {
     try { playTap?.source.disconnect(); } catch {}
     playTap = null;
     if (!hf || !audioEl.captureStream) return;
-    const attach = () => {
-        try {
-            const analyser = hf.ctx.createAnalyser();
-            analyser.fftSize = 1024;
-            const source = hf.ctx.createMediaStreamSource(audioEl.captureStream());
-            source.connect(analyser);   // only to the analyser, not to the speakers
-            playTap = { analyser, source, buf: new Float32Array(analyser.fftSize), startedAt: Date.now() };
-        } catch (e) { console.warn('[barge-in] no playback tap', e); }
-    };
-    audioEl.addEventListener('playing', attach, { once: true });
+    audioEl.addEventListener('playing', () => tapNow(audioEl), { once: true });
+}
+// Attach now (the recitation player calls it as each ayah's file starts playing).
+function tapNow(audioEl) {
+    if (!hf || !audioEl.captureStream) return;
+    try { playTap?.source.disconnect(); } catch {}
+    try {
+        const analyser = hf.ctx.createAnalyser();
+        analyser.fftSize = 1024;
+        const source = hf.ctx.createMediaStreamSource(audioEl.captureStream());
+        source.connect(analyser);   // only to the analyser, not to the speakers
+        playTap = { analyser, source, buf: new Float32Array(analyser.fftSize), startedAt: Date.now() };
+    } catch (e) { console.warn('[barge-in] no playback tap', e); }
 }
 
 function playbackRms() {
@@ -4370,6 +4745,25 @@ function bargeIn(level) {
     setOrb('listening');
 }
 
+// Speech over a recitation: it pauses (not stops), and the speech is captured like a barge-in. The server takes it
+// only if it's a command for the player or starts with "Javid"; anything else (reciting along) and it plays on.
+function bargeRecite(level) {
+    recite.pause('barge');
+    const entry = { at: new Date().toISOString(), ...level, outcome: 'pending', over: 'recitation' };
+    bargeLog.push(entry);
+    console.log('[barge-in] over the recitation', entry);
+    hf.capturing = true;
+    hf.mode = 'followup';
+    hf.frames = hf.barge.pre.slice();
+    hf.voicedSec = hf.barge.run * hf.frameSec;
+    hf.quietSec = 0;
+    hf.bargeEntry = entry;
+    hf.deafUntil = 0;
+    hf.barge.run = 0;
+    hf.barge.pre = [];
+    setOrb('listening');
+}
+
 function logBarge(entry, outcome, transcript) {
     entry.outcome = outcome;
     entry.transcript = transcript || '';
@@ -4379,7 +4773,8 @@ function logBarge(entry, outcome, transcript) {
 
 function onFrame(frame) {
     if (!hf) return;
-    if (!isRecording && handsFree && playing && currentAudio && !hf.capturing) {   // Javid is speaking
+    const reciting = recite.isPlaying() && !(playing && currentAudio);
+    if (!isRecording && handsFree && ((playing && currentAudio) || reciting) && !hf.capturing) {   // Javid speaking, or a recitation
         let sum = 0;
         for (let i = 0; i < frame.length; i++) sum += frame[i] * frame[i];
         const rms = Math.sqrt(sum / frame.length);
@@ -4388,7 +4783,7 @@ function onFrame(frame) {
         if (hf.barge.pre.length * hf.frameSec > VAD.preRollSec) hf.barge.pre.shift();
         hf.deafUntil = Date.now() + VAD.cooldownSec * 1000;   // his speaker tail after he stops
         const since = playTap ? Date.now() - playTap.startedAt : 0;
-        if (bargeStep(hf.barge, rms, playbackRms(), hf.frameSec, hf.noise, since)) bargeIn(hf.barge.last);
+        if (bargeStep(hf.barge, rms, playbackRms(), hf.frameSec, hf.noise, since)) (reciting ? bargeRecite : bargeIn)(hf.barge.last);
         return;
     }
     // (a capture started by barge-in survives the moment the cut-off reply stream takes to close)
@@ -4439,6 +4834,7 @@ function onFrame(frame) {
         resetCapture();
         if (voiced < VAD.minSpeechSec) {
             if (barge) logBarge(barge, 'false', '');   // too short to be speech
+            if (recite.pausedBy() === 'barge') recite.resume();
             setOrb(restingState());
             return;
         }
@@ -4631,6 +5027,7 @@ function maybeIdle() {
     if (streamDone && utterancesLeft <= 0 && !isRecording) {
         traceEnd('done');           // reply shown and fully spoken
         utterancesLeft = 0;
+        if (recite.pausedBy() === 'ring') recite.resume();     // a ring's announcement is over: the recitation goes on
         if (followupPending) {  // Javid just answered: listen without wake word for a bit
             followupPending = false;
             followUntil = Date.now() + FOLLOWUP_MS;
@@ -4651,6 +5048,7 @@ function stopAll() {
     traceEnd('stopped');
     abortCtrl?.abort();
     stopSpeech();
+    recite.pause('user');
     streamDone = true;
     hideTyping();
     followupPending = false;
@@ -4674,7 +5072,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
     }
 
     let bubble = null, reply = '', sources = null, screen = null, skill = null, agent = null, proposals = [], actions = [];
-    let turnOutcome = 'stopped', replyFiles = null;
+    let turnOutcome = 'stopped', replyFiles = null, muted = false;
     if (!quiet) vitals.turnStart(init.body instanceof FormData ? 'voice' : 'typed');
     const ensureBubble = () => {
         if (!bubble) { hideTyping(); bubble = addMsg('javid', ' '); speechMsg = bubble.closest('.message'); }
@@ -4742,6 +5140,11 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                         c.classList.add('done');
                         c.querySelector('.mc-label').textContent = ev.outcome === 'approved' ? '✓ Saved' : '✕ Not saved';
                     });
+                } else if (ev.type === 'recite') {
+                    muted = muted || !!ev.quiet;    // Javid doesn't talk over the recitation he's driving
+                    recite.apply(ev);
+                } else if (ev.type === 'hifz') {
+                    if (ev.open) hifzUI.open(); else hifzUI.refresh();
                 } else if (ev.type === 'lang') {
                     setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
@@ -4751,7 +5154,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     if (handsFree) followupPending = true;
                     ensureBubble().textContent = reply;
                     scrollChat();
-                    feedSpeech(ev.text);
+                    if (!muted) feedSpeech(ev.text);
                 } else if (ev.type === 'error') {
                     showToast(ev.message);
                     vitals.event('error', 'something went wrong');
@@ -4769,7 +5172,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                 }
             }
         }
-        feedSpeech('', true);
+        if (muted) pendingSpeech = ''; else feedSpeech('', true);
     } catch (e) {
         if (e.name !== 'AbortError') showToast('Server error — is it running?');
     } finally {
@@ -4801,10 +5204,15 @@ async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null)
     if (activeChat) fd.append('session', activeChat);
     const sent = mode === 'push' ? takeAttachments() : [];      // a file goes with push-to-talk, never hands-free
     if (sent.length) fd.append('files', sent.map(f => f.id).join(','));
+    const playerState = recite.state();
+    if (playerState) fd.append('recite', JSON.stringify(playerState));
     await streamReply('/talk', { method: 'POST', body: fd }, {
         quiet: mode !== 'push',
         marks,
-        onIgnored: text => { if (barge) logBarge(barge, 'false', text); },
+        onIgnored: text => {
+            if (barge) logBarge(barge, 'false', text);
+            if (recite.pausedBy() === 'barge') recite.resume();     // not for Javid: the recitation plays on
+        },
         onTranscript: text => {
             if (barge) logBarge(barge, text ? 'speech' : 'false', text);
             if (!text) return;
@@ -4824,7 +5232,8 @@ async function submitText(text) {
     await streamReply('/type', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, session: activeChat, files: sent.length ? sent.map(f => f.id) : undefined }),
+        body: JSON.stringify({ text, session: activeChat, files: sent.length ? sent.map(f => f.id) : undefined,
+                               recite: recite.state() || undefined }),
     });
 }
 
@@ -4943,7 +5352,8 @@ const TOOL_LABELS = {
     use_skill: 'Loading skill…', news_headlines: 'Checking the headlines…', exchange_rates: 'Fetching exchange rates…',
     get_weather: 'Checking the weather…', set_timer: 'Setting the timer…', timers: 'Checking timers…',
     calculate: 'Calculating…', market_price: 'Fetching live prices…', delegate: 'Handing it to an agent…',
-    self_check: 'Checking myself…',
+    self_check: 'Checking myself…', hifz: 'Checking your revision…', hifz_log: 'Logging your revision…',
+    quran: 'Getting the recitation…',
 };
 
 function showToolNote(name) {
@@ -6675,7 +7085,7 @@ loadThemes().then(ok => { if (ok && themeEditor.hidden) applyTheme(savedThemeId(
 // so two open tabs don't both announce. Browsers block sound until the page has been clicked once.
 let timerList = [];                 // [{id, kind, label, due (epoch ms), seconds, announce: {en, bn}}]
 const rungTimers = new Set();
-const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲' };   // a watch's alert, a prayer's heads-up, zikir
+const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲', hifz: '📖' };   // a watch's, a prayer's, zikir, revision
 let ringAudio = null;               // WebAudio context for the chime (a sound, not a voice)
 let ringHideTimer = null;
 
@@ -6756,9 +7166,10 @@ async function ringTimer(t) {
     } catch {}
     if (!first) return;             // another tab is announcing it
     const text = t.announce?.[replyLang] || t.announce?.en || 'Mahadi, your timer is done.';
-    showRing(t, text);
-    chime();
-    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, 1000);   // Javid's voice, after the chime
+    if (recite.isPlaying()) recite.pause('ring');      // the announcement first; the recitation goes on after it
+    if (t.kind === 'hifz') { hifzUI.ring(t, text); hifzChime(); }
+    else { showRing(t, text); chime(); }
+    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, t.kind === 'hifz' ? 1700 : 1000);   // after the chime
 }
 
 document.getElementById('ring-dismiss').addEventListener('click', () => {
@@ -6816,6 +7227,432 @@ document.getElementById('watches-list').addEventListener('click', async e => {
 });
 setInterval(refreshWatches, 15000);
 refreshWatches();
+
+// ── Hifz: the revision tracker (hifz.py) and the recitation player (quran.py) ─────────────────────────────────
+// The view and its Dashboard card read GET /hifz; their buttons log (POST /hifz/log), undo (POST /hifz/undo) and
+// play (POST /quran/plan). The player plays Quran.com's ayah files in an <audio> of its own, never /speak: a turn's
+// "recite" event drives it (a plan to play, pause, next, repeat…), and every message carries its state, so "repeat
+// this ayah 3 times" knows which ayah. Javid never talks over it: a reply pauses it (stopAll), a ring pauses it and
+// its announcement resumes it, and hands-free, speech over it pauses it as a barge-in does; the server ignores what
+// isn't a player command or doesn't start with "Javid" (reciting along, the room), and then it carries on.
+const STAR_D = 'M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z';
+let hzFontsAdded = false;
+function hzFonts() {            // Amiri, for the Arabic names: loaded the first time something of Hifz shows
+    if (hzFontsAdded) return;
+    hzFontsAdded = true;
+    document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet',
+        href: 'https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&display=swap' }));
+}
+const hzBn = () => replyLang === 'bn';
+const hzT = (en, bn) => (hzBn() ? bn : en);
+const hzNum = n => (hzBn() ? String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]) : String(n));
+const hzCap = t => t.charAt(0).toUpperCase() + t.slice(1);
+
+const recite = (() => {
+    const $ = id => document.getElementById(id);
+    const audio = new Audio(), ahead = new Audio();
+    for (const a of [audio, ahead]) { a.crossOrigin = 'anonymous'; a.preload = 'auto'; }   // CORS: the barge-in tap reads it
+    let plan = null, i = 0, pass = 1, rep = null, onBackup = false, triedBackup = false, pausedBy = null, gen = 0;
+    const cur = () => plan?.items[i] || null;
+    const urlOf = it => (onBackup ? it.backup : it.url);
+
+    function render() {
+        const bar = $('recite-bar');
+        if (!plan) { bar.hidden = true; return; }
+        hzFonts();
+        bar.hidden = false;
+        const it = cur(), s = plan.surahs[String(it.s)] || {};
+        $('rp-title').textContent = (hzBn() ? s.bn : s.en) || plan.title;
+        $('rp-ar').textContent = s.ar || '';
+        $('rp-ayah').textContent = it.bismillah ? hzT('Bismillah', 'বিসমিল্লাহ')
+            : hzT(`Ayah ${it.a} of ${s.ayahs}`, `আয়াত ${hzNum(it.a)}/${hzNum(s.ayahs)}`);
+        $('rp-reciter').textContent = plan.reciter_name;
+        $('rp-rep').textContent = rep && rep.i === i && rep.left > 1 ? ` · ↻ ${hzNum(rep.left)}`
+            : plan.times > 1 ? hzT(` · round ${pass} of ${plan.times}`, ` · ${hzNum(pass)}/${hzNum(plan.times)} বার`) : '';
+        $('rp-prog').style.width = `${Math.round(100 * (i + 1) / plan.items.length)}%`;
+        const on = !audio.paused;
+        bar.classList.toggle('playing', on);
+        $('rp-play-icon').setAttribute('d', on ? 'M7 5h4v14H7zM13 5h4v14h-4z' : 'M7 4v16l13-8z');
+        $('rp-play').setAttribute('aria-label', on ? 'Pause' : 'Play');
+        $('rp-play').title = on ? 'Pause' : 'Play';
+        $('rp-credit').textContent = `${onBackup ? 'everyayah.com' : 'Quran.com'} · ${plan.reciter_name}`;
+        $('rp-credit').href = onBackup ? 'https://everyayah.com' : `https://quran.com/${it.s}`;
+    }
+    function load(k, start = true) {
+        if (!plan) return;
+        i = Math.max(0, Math.min(k, plan.items.length - 1));
+        triedBackup = false;
+        const g = ++gen, it = cur();
+        audio.src = urlOf(it);
+        if (start) {
+            pausedBy = null;
+            audio.play().catch(() => {
+                if (g !== gen) return;
+                pausedBy = 'blocked';
+                render();
+                showToast(hzT('Click the page once, then ▶, so the recitation can play.', 'তিলাওয়াত শোনাতে পেজে একবার ক্লিক করে ▶ চাপো।'));
+            });
+        }
+        const nx = plan.items[i + 1];
+        if (nx) ahead.src = urlOf(nx);      // the next file, fetched while this one plays
+        render();
+    }
+    audio.addEventListener('playing', () => { if (hf) tapNow(audio); render(); });
+    audio.addEventListener('pause', render);
+    audio.addEventListener('ended', () => {
+        if (!plan) return;
+        if (rep && rep.i === i && rep.left > 1) { rep.left--; audio.currentTime = 0; audio.play().catch(() => {}); render(); return; }
+        if (rep && rep.i === i) rep = null;
+        if (i + 1 < plan.items.length) { load(i + 1); return; }
+        if (pass < plan.times) { pass++; load(0); return; }
+        finish();
+    });
+    audio.addEventListener('error', () => {
+        if (!plan || !audio.getAttribute('src')) return;
+        if (!onBackup && !triedBackup) {    // Quran.com's host failed: the same recording on everyayah.com
+            triedBackup = true;
+            onBackup = true;
+            audio.src = cur().backup;
+            audio.play().catch(() => {});
+            render();
+            return;
+        }
+        const said = hzT("I can't reach Quran.com's recitation right now, nor everyayah.com.",
+                         'এখন Quran.com বা everyayah.com-এর তিলাওয়াত পাওয়া যাচ্ছে না।');
+        stop();
+        showToast(said);
+        speechMsg = null;
+        speakChunk(said, 'say');
+    });
+    function finish() {
+        const title = plan?.title;
+        stop();
+        if (title) showToast(hzT(`✓ ${title}: finished.`, `✓ ${title}: শেষ হলো।`));
+    }
+    function play(cmd) {
+        plan = { ...cmd, times: cmd.times || 1 };
+        pass = 1; rep = null; onBackup = false;
+        load(0);
+        vitals.event('recite', `${cmd.title} · ${cmd.reciter_name}`);
+    }
+    function pause(by = 'user') {
+        if (!plan || audio.paused) return;
+        pausedBy = by;
+        audio.pause();
+    }
+    function resume() {
+        if (!plan) return;
+        pausedBy = null;
+        if (!audio.getAttribute('src')) { load(i); return; }
+        audio.play().catch(() => {});
+    }
+    function stop() {
+        gen++;
+        plan = null; rep = null; pausedBy = null;
+        audio.pause();
+        audio.removeAttribute('src');
+        ahead.removeAttribute('src');
+        render();
+    }
+    function step(d) {
+        if (!plan) return;
+        let k = i + d;
+        while (plan.items[k]?.bismillah) k += d;
+        if (k >= plan.items.length) { finish(); return; }
+        rep = null;
+        load(Math.max(0, k));
+    }
+    const indexOf = ayah => plan ? plan.items.findIndex(x => x.s === cur().s && x.a === ayah) : -1;
+    function repeat(ayah, times) {
+        if (!plan) return;
+        let k = ayah ? indexOf(ayah) : i;
+        if (k < 0) { showToast(hzT(`Ayah ${ayah} isn't in this recitation.`, `আয়াত ${hzNum(ayah)} এই তিলাওয়াতে নেই।`)); return; }
+        if (plan.items[k].bismillah) k++;
+        rep = { i: k, left: Math.max(1, times) };
+        load(k);
+    }
+    function seek(ayah) {
+        const k = indexOf(ayah);
+        if (k < 0) { showToast(hzT(`Ayah ${ayah} isn't in this recitation.`, `আয়াত ${hzNum(ayah)} এই তিলাওয়াতে নেই।`)); return; }
+        rep = null;
+        load(k);
+    }
+    async function reciter(rid) {
+        if (!plan) return;
+        const at = cur().key;
+        try {
+            const r = await fetch('/quran/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ keys: [plan.first, plan.last], reciter: rid }) });
+            if (!r.ok) return;
+            const next = await r.json();
+            plan = { ...next, title: plan.title, times: plan.times };
+            onBackup = false;
+            const k = plan.items.findIndex(x => x.key === at);
+            load(k >= 0 ? k : 0);
+        } catch {}
+    }
+    function apply(cmd) {
+        ({ play, pause: () => pause('user'), resume, stop, next: () => step(1), prev: () => step(-1),
+           repeat: () => repeat(cmd.ayah, cmd.times || 1), seek: () => seek(cmd.ayah),
+           reciter: () => reciter(cmd.reciter) })[cmd.action]?.(cmd);
+    }
+    function state() {
+        if (!plan) return null;
+        const it = cur();
+        return { active: true, playing: !audio.paused, key: it.key, surah: it.s, ayah: it.a, reciter: plan.reciter,
+                 title: plan.title, first: plan.first, last: plan.last };
+    }
+    $('rp-play').addEventListener('click', () => (audio.paused ? resume() : pause('user')));
+    $('rp-next').addEventListener('click', () => step(1));
+    $('rp-prev').addEventListener('click', () => step(-1));
+    $('rp-rep3').addEventListener('click', () => repeat(null, 3));
+    $('rp-stop').addEventListener('click', stop);
+    return { apply, state, pause, resume, stop, render, isPlaying: () => !!plan && !audio.paused,
+             pausedBy: () => pausedBy, audio };
+})();
+
+// A soft rising bell for a revision reminder: not the timers' chime, so it's known for what it is.
+function hifzChime() {
+    try {
+        ringAudio ??= new (window.AudioContext || window.webkitAudioContext)();
+        if (ringAudio.state === 'suspended') ringAudio.resume();
+        const t0 = ringAudio.currentTime + 0.03;
+        [587.33, 739.99, 880, 1174.66].forEach((f, k) => {      // D, F#, A, D: a major arpeggio
+            const o = ringAudio.createOscillator(), g = ringAudio.createGain(), at = t0 + k * 0.22;
+            o.type = 'sine';
+            o.frequency.value = f;
+            g.gain.setValueAtTime(0.0001, at);
+            g.gain.exponentialRampToValueAtTime(0.12, at + 0.03);
+            g.gain.exponentialRampToValueAtTime(0.0001, at + 1.3);
+            o.connect(g).connect(ringAudio.destination);
+            o.start(at);
+            o.stop(at + 1.4);
+        });
+    } catch { /* no audio until the page has been clicked */ }
+}
+
+const hifzUI = (() => {
+    const $ = id => document.getElementById(id);
+    const view = $('hifz');
+    let data = null, sel = null, ringAlert = null;
+    const STATE_WORD = { fresh: ['fresh', 'তাজা'], steady: ['steady', 'ঠিক আছে'], soon: ['due soon', 'শিগগির দরকার'],
+                         over: ['past its cycle', 'চক্র পেরিয়েছে'], never: ['not yet', 'এখনো না'] };
+    const unit = n => (data.unit === 'juz' ? hzT(`Juz ${n}`, `পারা ${hzNum(n)}`) : hzT(`Manzil ${n}`, `মঞ্জিল ${hzNum(n)}`));
+    const ago = d => (d == null ? hzT('not revised yet', 'এখনো রিভাইস হয়নি') : d === 0 ? hzT('revised today', 'আজ রিভাইস')
+        : d === 1 ? hzT('revised yesterday', 'গতকাল রিভাইস') : hzT(`revised ${d} days ago`, `${hzNum(d)} দিন আগে রিভাইস`));
+    const dayName = iso => new Date(iso + 'T12:00').toLocaleDateString(hzBn() ? 'bn-BD' : 'en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+    const starSvg = cls => `<svg viewBox="0 0 100 100" class="${cls || ''}" aria-hidden="true"><path d="${STAR_D}"/></svg>`;
+
+    async function refresh() {
+        try {
+            const r = await fetch('/hifz');
+            if (!r.ok) return;
+            data = await r.json();
+            render();
+        } catch {}
+    }
+    function render() {
+        if (!data) return;
+        $('hifz-due-dot').hidden = !(data.today.length || data.weak_due.length);
+        renderDash();
+        if (!view.hidden) renderView();
+    }
+    function todayLine() {
+        if (!data.started) return [hzT(`Begin: ${unit(1)}`, `শুরু: ${unit(1)}`), ''];
+        if (!data.today.length) return [hzT("Today's revision: done ✓", 'আজকের রিভিশন: শেষ ✓'),
+            data.tomorrow.length ? hzT(`Tomorrow: ${data.tomorrow.map(unit).join(', ')}`, `কাল: ${data.tomorrow.map(unit).join(', ')}`) : ''];
+        const t = data.today[0];
+        return [hzT(`Today: ${unit(t.n)}`, `আজ: ${unit(t.n)}`), hzBn() ? t.span_bn : t.span];
+    }
+    function renderDash() {
+        hzFonts();
+        const [head, span] = todayLine();
+        $('hz-dash-today').textContent = head;
+        $('hz-dash-span').textContent = span;
+        const mini = $('hz-mini');
+        mini.classList.toggle('m7', data.unit === 'manzil');
+        mini.innerHTML = data.units.map(u => `<i class="s-${u.state}${u.today ? ' today' : ''}${u.weak ? ' weak' : ''}"></i>`).join('');
+        const stats = [];
+        if (data.streak) stats.push(hzT(`<b>${data.streak}</b> day${data.streak === 1 ? '' : 's'} in a row`, `টানা <b>${hzNum(data.streak)}</b> দিন`));
+        if (data.ramadan) stats.push(hzT(`<b>${data.ramadan.days}</b> days to Ramadan`, `রমজান <b>${hzNum(data.ramadan.days)}</b> দিন`));
+        stats.push(hzT(`<b>${data.fresh}</b>/${data.count} fresh`, `<b>${hzNum(data.fresh)}</b>/${hzNum(data.count)} তাজা`));
+        $('hz-dash-stats').innerHTML = stats.map(x => `<span>${x}</span>`).join('');      // one flex item each
+    }
+    function logButtons(attrs = '') {
+        return `<div class="hz-log" ${attrs}><span>${hzT('Revised:', 'রিভাইস হলো:')}</span>` +
+            ['strong', 'okay', 'weak'].map(st => `<button type="button" data-st="${st}">${
+                { strong: hzT('Strong', 'পাকা'), okay: hzT('Okay', 'মোটামুটি'), weak: hzT('Weak', 'কাঁচা') }[st]}</button>`).join('') + '</div>';
+    }
+    function listenButton(attrs) {
+        const r = data.reciter === 'alafasy' ? 'Alafasy' : 'Husary';
+        return `<button class="hz-btn" type="button" ${attrs}><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>${hzT('Listen', 'শোনো')} · ${r}</button>`;
+    }
+    function renderView() {
+        $('hz-line').textContent = hzBn() ? data.line_bn : data.line;
+        // today
+        const box = $('hz-today');
+        if (!data.started) {
+            box.innerHTML = `<div class="hz-k2">${hzT('Begin', 'শুরু')}</div><div class="hz-today-n">${esc(unit(1))}</div>
+                <div class="hz-today-span">${esc(hzBn() ? data.units[0].span_bn : data.units[0].span)}</div>
+                <div class="hz-today-weak">${esc(hzT('Or tell Javid where you are: “I’m on juz 12”.', 'অথবা জাভিদকে বলো তুমি কোথায় আছ: “আমি আজ ১২ নম্বর পারায়”।'))}</div>
+                <div class="hz-actions">${listenButton('data-play="1"')}${logButtons('data-unit="1"')}</div>`;
+        } else if (data.today.length) {
+            const t = data.today[0], u = data.units[t.n - 1];
+            const more = data.today.slice(1).map(x => unit(x.n)).join(', ');
+            const weak = data.weak_due.map(w => (hzBn() ? w.label_bn : w.label)).join(', ');
+            box.innerHTML = `<div class="hz-k2">${hzT("Today's revision", 'আজকের রিভিশন')}</div>
+                <div class="hz-today-n">${esc(unit(t.n))}${more ? ` <small>+ ${esc(more)}</small>` : ''}</div>
+                <div class="hz-today-span"><span lang="ar">${esc(u.ar)}</span> ${esc(hzBn() ? t.span_bn : t.span)} · ${hzNum(t.pages)} ${hzT('pages', 'পৃষ্ঠা')}</div>
+                ${t.behind ? `<div class="hz-today-late">${hzT(`${t.behind} day${t.behind === 1 ? '' : 's'} late`, `${hzNum(t.behind)} দিন দেরি`)}</div>` : ''}
+                ${weak ? `<div class="hz-today-weak">${hzT('Back as weak today:', 'কাঁচা হিসেবে আজ ফেরত:')} ${esc(weak)}</div>` : ''}
+                <div class="hz-actions">${listenButton('data-play="today"')}${logButtons('data-today="1"')}</div>`;
+        } else {
+            const tm = data.tomorrow.map(unit).join(', ');
+            box.innerHTML = `<div class="hz-k2">${hzT("Today's revision", 'আজকের রিভিশন')}</div>
+                <div class="hz-done">${starSvg()} ${hzT('Done, MashaAllah', 'শেষ, মাশাআল্লাহ')}</div>
+                <div class="hz-today-span">${data.done_today.map(unit).join(', ')}</div>
+                ${tm ? `<div class="hz-today-weak">${hzT('Tomorrow:', 'কাল:')} ${esc(tm)}</div>` : ''}
+                ${data.tomorrow.length ? `<div class="hz-actions">${listenButton(`data-play="${data.tomorrow[0]}"`)}</div>` : ''}`;
+        }
+        // stats
+        $('hz-streak').textContent = hzNum(data.streak);
+        $('hz-streak-k').textContent = hzT(data.streak === 1 ? 'day in a row' : 'days in a row', 'দিন একটানা');
+        $('hz-best').textContent = data.best > data.streak ? hzT(`best: ${data.best}`, `সেরা: ${hzNum(data.best)}`) : '';
+        if (data.ramadan) {
+            $('hz-ramadan').textContent = hzNum(data.ramadan.days);
+            $('hz-ramadan-k').textContent = hzT('days to Ramadan', 'দিন রমজানের বাকি');
+            $('hz-ramadan-s').textContent = hzT(`about ${dayName(data.ramadan.date)} · ${data.ramadan.rounds} rounds at this pace`,
+                `${dayName(data.ramadan.date)} নাগাদ · এই গতিতে ${hzNum(data.ramadan.rounds)} চক্র`);
+        } else {
+            $('hz-ramadan').textContent = '—';
+            $('hz-ramadan-s').textContent = hzT('the date comes from Aladhan', 'তারিখ আসে Aladhan থেকে');
+        }
+        $('hz-fresh').textContent = `${hzNum(data.fresh)}/${hzNum(data.count)}`;
+        $('hz-fresh-k').textContent = hzT(`${data.unit === 'juz' ? 'juz' : 'manzils'} fresh`, 'তাজা');
+        $('hz-fresh-s').textContent = hzT(`revised within your ${data.cycle}-day cycle`, `${hzNum(data.cycle)} দিনের চক্রের ভেতরে`);
+        // the map
+        $('hz-map-title').innerHTML = `${hzT('Your Quran', 'তোমার কুরআন')} <span lang="ar">القرآن</span>`;
+        $('hz-legend').innerHTML = ['fresh', 'steady', 'soon', 'over', 'never'].map(k =>
+            `<span><i class="s-${k}"></i>${hzT(STATE_WORD[k][0], STATE_WORD[k][1])}</span>`).join('') +
+            `<span><i class="weak"></i>${hzT('weak', 'কাঁচা')}</span>`;
+        const map = $('hz-map');
+        map.classList.toggle('m7', data.unit === 'manzil');
+        map.innerHTML = data.units.map(u => `<button type="button" role="listitem" class="hz-star s-${u.state}${u.today ? ' today' : ''}${u.done_today ? ' done' : ''}${sel === u.n ? ' sel' : ''}" data-n="${u.n}"
+            aria-label="${esc(`${unit(u.n)}: ${ago(u.days)}${u.weak ? ', ' + hzT('weak', 'কাঁচা') : ''}${u.today ? ', ' + hzT("today's portion", 'আজকের অংশ') : ''}`)}">${starSvg()}<span class="hz-n">${hzNum(u.n)}</span>${u.weak ? '<span class="hz-w"></span>' : ''}</button>`).join('');
+        renderTip();
+        // coming back: weak ones, behind, tomorrow
+        const due = [];
+        for (const w of data.weak_due) due.push(`<li><b>${esc(hzCap(hzBn() ? w.label_bn : w.label))}</b> ${hzT(`weak since ${dayName(w.since)}`, `${dayName(w.since)} থেকে কাঁচা`)}<span class="hz-pill weak">${hzT('weak', 'কাঁচা')}</span></li>`);
+        for (const b of data.behind.slice(0, 6)) due.push(`<li><b>${esc(unit(b.n))}</b> ${hzT(`${b.days} day${b.days === 1 ? '' : 's'} behind`, `${hzNum(b.days)} দিন পিছিয়ে`)}<span class="hz-pill">${hzT('behind', 'পিছিয়ে')}</span></li>`);
+        if (data.tomorrow.length) due.push(`<li><b>${esc(data.tomorrow.map(unit).join(', '))}</b> ${hzT('tomorrow', 'কাল')}<span class="hz-pill">${hzT('next', 'পরের')}</span></li>`);
+        $('hz-due').innerHTML = due.join('') || `<li class="hz-empty">${hzT('Nothing waiting. MashaAllah.', 'কিছুই বাকি নেই, মাশাআল্লাহ।')}</li>`;
+        // recent
+        const words = { strong: hzT('strong', 'পাকা'), okay: hzT('okay', 'মোটামুটি'), weak: hzT('weak', 'কাঁচা') };
+        $('hz-recent').innerHTML = data.recent.map(e => `<li><b>${esc(hzCap(hzBn() ? e.label_bn : e.label))}</b> ${esc(dayName(e.date))}<span class="hz-pill ${e.strength}">${words[e.strength]}</span></li>`).join('')
+            || `<li class="hz-empty">${hzT('Nothing logged yet. Tell Javid “I revised juz 5”, or tap Revised above.', 'এখনো কিছু লগ হয়নি। জাভিদকে বলো “আজ ৫ পারা রিভাইস করেছি”, অথবা ওপরে “রিভাইস হলো” চাপো।')}</li>`;
+        $('hz-undo').hidden = !data.recent.length;
+        $('hz-undo').textContent = hzT('Undo last', 'শেষটা বাতিল');
+        $('hz-due-title').textContent = hzT('Coming back', 'যা ফিরে আসছে');
+        $('hz-recent-title').textContent = hzT('Recent', 'সাম্প্রতিক');
+    }
+    function renderTip() {
+        const tip = $('hz-tip');
+        const u = sel && data.units[sel - 1];
+        if (!u) { tip.textContent = hzT('Tap a star to see when you last revised it.', 'কোনটা কবে রিভাইস হয়েছে দেখতে একটা তারায় চাপো।'); return; }
+        const due = u.weak_back ? hzT(`back ${dayName(u.weak_back)}, as weak`, `কাঁচা হিসেবে ফিরবে ${dayName(u.weak_back)}`)
+            : u.behind ? hzT(`${u.behind} day${u.behind === 1 ? '' : 's'} behind`, `${hzNum(u.behind)} দিন পিছিয়ে`)
+            : u.days == null ? '' : hzT(`due ${dayName(u.due)}`, `আবার ${dayName(u.due)}`);
+        tip.innerHTML = `<b>${esc(unit(u.n))}</b><span lang="ar">${esc(u.ar)}</span><span>${esc(hzBn() ? u.span_bn : u.span)}</span>
+            <span>${esc(ago(u.days))}${due ? ' · ' + esc(due) : ''}</span>
+            <span class="hz-tip-acts">${listenButton(`data-play="${u.n}"`)}${logButtons(`data-unit="${u.n}"`)}</span>`;
+    }
+    function open() {
+        hzFonts();
+        view.hidden = false;
+        document.body.classList.add('hifz-open');
+        setPanels(false);
+        render();
+        refresh();
+        $('hz-close').focus();
+    }
+    function close() {
+        view.hidden = true;
+        document.body.classList.remove('hifz-open');
+        $('hifz-btn').focus();
+    }
+    async function log(body) {
+        try {
+            const r = await fetch('/hifz/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) { showToast(out.detail || 'Not logged.'); return; }
+            data = out.status;
+            render();
+            showToast(out.said);
+            vitals.event('hifz', out.said.split('. ')[0]);
+            if (!recite.isPlaying()) { speechMsg = null; speakChunk(out.said, 'say'); }
+        } catch { showToast('Not logged: is the server running?'); }
+    }
+    async function listen(what) {
+        const body = what === 'today' ? { today: true } : { portions: [{ kind: data.unit, n: Number(what) }] };
+        try {
+            const r = await fetch('/quran/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!r.ok) { showToast((await r.json().catch(() => ({}))).detail || 'Nothing to play.'); return; }
+            stopSpeech();
+            recite.apply(await r.json());
+        } catch {}
+    }
+    function ring(t, text) {
+        hzFonts();
+        ringAlert = t;
+        const kind = t.extra?.hifz?.kind;
+        $('hz-ring-k').textContent = kind === 'last' ? hzT('Last call for today', 'আজকের শেষ ডাক')
+            : kind === 'nudge' ? hzT('Still waiting today', 'আজ এখনো বাকি') : hzT("Today's revision", 'আজকের রিভিশন');
+        $('hz-ring-text').textContent = text;
+        $('hz-ring').hidden = false;
+    }
+    // clicks
+    view.addEventListener('click', e => {
+        const play = e.target.closest('[data-play]');
+        if (play) { listen(play.dataset.play === 'today' ? 'today' : play.dataset.play); return; }
+        const st = e.target.closest('.hz-log button[data-st]');
+        if (st) {
+            const box = st.closest('.hz-log');
+            if (box.dataset.today) log({ today: true, strength: st.dataset.st });
+            else if (box.dataset.unit) log({ portions: [{ kind: data.unit, n: Number(box.dataset.unit) }], strength: st.dataset.st });
+            return;
+        }
+        const star = e.target.closest('.hz-star');
+        if (star) { sel = Number(star.dataset.n) === sel ? null : Number(star.dataset.n); renderView(); }
+    });
+    $('hz-close').addEventListener('click', close);
+    $('hifz-btn').addEventListener('click', () => (view.hidden ? open() : close()));
+    $('hifz-open').addEventListener('click', open);
+    $('hz-undo').addEventListener('click', async () => {
+        try {
+            const r = await fetch('/hifz/undo', { method: 'POST' });
+            const out = await r.json();
+            data = out.status;
+            render();
+            showToast(out.undone ? hzT('Undone.', 'বাতিল করা হলো।') : hzT('Nothing from the last 24 hours to undo.', 'গত ২৪ ঘণ্টায় বাতিল করার মতো কিছু নেই।'));
+        } catch {}
+    });
+    $('hz-ring-listen').addEventListener('click', () => listen('today'));
+    $('hz-ring-later').addEventListener('click', () => { $('hz-ring').hidden = true; });
+    $('hz-ring-log').addEventListener('click', e => {
+        const st = e.target.closest('button[data-st]');
+        if (!st) return;
+        $('hz-ring').hidden = true;
+        log(ringAlert ? { alert: ringAlert.id, strength: st.dataset.st } : { today: true, strength: st.dataset.st });
+    });
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape' || view.hidden) return;
+        e.stopImmediatePropagation();      // closing the view doesn't stop Javid or the recitation
+        close();
+    }, true);
+    setInterval(refresh, 60000);
+    refresh();
+    return { refresh, open, close, ring };
+})();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────
 (async () => {

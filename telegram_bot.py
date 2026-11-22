@@ -51,6 +51,7 @@ import httpx
 
 import approvals
 import documents
+import hifz
 import javid
 import memory_store
 import prayers
@@ -80,10 +81,13 @@ COMMANDS = [("help", "What I can do here"), ("new", "Start a new Telegram chat")
             ("watches", "What I'm watching for you"), ("check", "Self-check: what works and what doesn't"),
             ("prayers", "Today's prayer times and the next prayer"),
             ("reminders", "Prayer and zikir reminders coming up"),
+            ("hifz", "Your Quran revision: today's portion, what's behind, your streak"),
             ("lock", "Turn off remote control until you unlock it on the Mac")]
 # What each kind of pushed item starts with: a watch's alert, prayers.py's heads-up and prayer-time message, the
-# morning brief, a zikir reminder; a timer or reminder otherwise.
-ICONS = {"alert": "🔔", "prayer": "🕌", "prayer_start": "🕌", "brief": "🌅", "devotion": "🤲"}
+# morning brief, a zikir reminder, hifz.py's revision reminder; a timer or reminder otherwise.
+ICONS = {"alert": "🔔", "prayer": "🕌", "prayer_start": "🕌", "brief": "🌅", "devotion": "🤲", "hifz": "📖"}
+HIFZ_BUTTONS = (("s", "✓ Strong"), ("o", "✓ Okay"), ("w", "✓ Weak"))     # a revision reminder logs it in one tap
+HIFZ_STRENGTH = {"s": "strong", "o": "okay", "w": "weak"}
 
 # Every Bot API URL carries the token, and httpx logs request URLs at INFO: keep its loggers at WARNING whatever
 # else configures logging.
@@ -627,6 +631,12 @@ def _command(chat_id: int, text: str) -> None:
         send(chat_id, prayers.telegram_times(javid.get_language()))
     elif name == "reminders":
         send(chat_id, prayers.telegram_schedule(javid.get_language()))
+    elif name == "hifz":
+        lang = javid.get_language()
+        spoken, screen = _drain(hifz.answer({"action": "status"}, lang, via="telegram"))
+        due, _ = _drain(hifz.answer({"action": "due"}, lang, via="telegram"))
+        send(chat_id, "📖 " + due + "\n\n" + spoken.replace(" The full map is in the Hifz view.", "")
+             .replace(" পুরো ছবি হিফজ প্যানেলে।", "") + (f"\n\n{screen}" if screen else ""))
     else:
         send(chat_id, f"I don't know /{name}.\n\n{_help()}")
 
@@ -759,6 +769,13 @@ def _button(query: dict) -> None:
         return
     kind, _, rest = (query.get("data") or "").partition(":")
     choice, _, aid = rest.partition(":")
+    if kind == "hz" and choice in HIFZ_STRENGTH:     # a revision reminder's button: log what it named, once
+        with javid.hold_turn():
+            note = "✓ " + hifz.log_from_alert(aid, HIFZ_STRENGTH[choice], via="telegram")
+        _answer(query, note)
+        if msg.get("message_id"):
+            _edit(chat_id, msg["message_id"], f"{msg.get('text', '')}\n\n{note}")
+        return
     where = _asked.get(aid)
     if kind != "act":
         note = "Expired or already handled. Nothing was done."
@@ -796,8 +813,10 @@ def push_due() -> None:
     for t in timers.take_due_for("telegram"):
         late = timers._now() - t["due"] > 120 and not t.get("until")     # one with an end is never sent stale
         text = t["announce"].get(lang) or t["announce"]["en"]
+        buttons = ([[{"text": label, "callback_data": f"hz:{k}:{t['id']}"} for k, label in HIFZ_BUTTONS]]
+                   if t["kind"] == "hifz" and (t.get("extra") or {}).get("hifz") else None)
         send(state["chat"], f"{ICONS.get(t['kind'], '⏰')} {text}" +
-             (f" (missed: it was due {timers._when(t['due'])})" if late else ""))
+             (f" (missed: it was due {timers._when(t['due'])})" if late else ""), buttons)
 
 
 # ---------- the loops ----------

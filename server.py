@@ -25,9 +25,11 @@ import documents
 import calendar_tools
 import drive_tools
 import edge_pool
+import hifz
 import memory_store
 import prayers
 import providers
+import quran
 import selfcheck
 import skills
 import telegram_bot
@@ -87,6 +89,7 @@ async def lifespan(app: FastAPI):
     telegram_bot.start()    # only with TELEGRAM_BOT_TOKEN in .env
     watches.start()         # price, news and rain watches: checked in code, alerts ring like timers
     threading.Thread(target=prayers.prefetch, daemon=True).start()   # this month's prayer times, before a question
+    threading.Thread(target=prayers.ramadan_start, daemon=True).start()   # Ramadan's date (hifz.py counts down to it)
     if prayers.keep_awake():    # on power, no idle sleep while the server runs: Fajr's reminders go out
         print("[prayers] keeping the Mac awake while the server runs on power (keep_awake in config/prayers.yaml)")
     documents.prune()       # uploads older than KEEP_DAYS go
@@ -136,6 +139,7 @@ class ChatBody(BaseModel):
     text: str
     session: str | None = None    # the chat this message belongs to (the page's open chat)
     files: list[str] | None = None    # ids of uploads (POST /upload) sent with the message
+    recite: dict | None = None    # the page's recitation player as it is (quran.py: "next ayah", "pause")
 
 
 def _use_session(sid: str | None) -> None:
@@ -164,7 +168,8 @@ def _event(**data) -> str:
     return json.dumps(data) + "\n"
 
 
-async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool = True, files: list | None = None):
+async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool = True, files: list | None = None,
+                        player: dict | None = None):
     """Javid's reply as newline-delimited JSON events, in the page's chat, one turn at a time. yes_ok: a plain yes
     may approve the previous message's Approve card (typed, or push-to-talk; never hands-free). The turn runs in
     its own thread, which holds the turn lock and hands events over a queue: when the page hangs up (Stop), the
@@ -185,7 +190,7 @@ async def _reply_stream(user_text: str, session: str | None = None, yes_ok: bool
             with hold_turn():
                 if session and session != active_session():
                     open_session(session)
-                turn = think_stream(user_text, yes_ok=yes_ok, files=files)
+                turn = think_stream(user_text, yes_ok=yes_ok, files=files, player=player)
                 try:
                     for event in turn:
                         hand_over(event)
@@ -237,6 +242,10 @@ def _reply_event(kind: str, value) -> str | None:
                       expires_in=approvals.APPROVE_SEC)
     if kind == "approval_done":     # a typed yes/no decided it
         return _event(type="approval_done", id=value["id"], outcome=value["outcome"], text=value["text"])
+    if kind == "recite":            # the recitation player's command (quran.py): play a plan, pause, next, repeat…
+        return _event(type="recite", **value)
+    if kind == "hifz":              # the tracker changed (refresh the Hifz panel) or asked to open the Hifz view
+        return _event(type="hifz", **value)
     return None
 
 
@@ -312,14 +321,27 @@ def greeting():
     return {"text": startup_greeting()}
 
 
+def _player(raw: str | None) -> dict | None:
+    """The page's recitation player, as /talk's form field sends it (JSON)."""
+    try:
+        player = json.loads(raw) if raw else None
+    except ValueError:
+        return None
+    return player if isinstance(player, dict) else None
+
+
 @app.post("/talk")
 def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str | None = Form(None),
-         files: str | None = Form(None)):
+         files: str | None = Form(None), recite: str | None = Form(None)):
     """
     mode = "push"     push-to-talk: always answer
            "wake"     hands-free, idle: only answer if it starts with "Javid"
            "followup" hands-free, right after Javid spoke: no wake word needed
+    recite: the page's recitation player (JSON). While one is open, a hands-free clip without the wake word is taken
+    only when it's a command for the player ("next ayah", "pause"): reciting along, or talk in the room, is ignored
+    and the page carries on the recitation.
     """
+    player = _player(recite)
     _use_session(session)
     trace = tracing.start("voice", mode)
     if mode == "push":
@@ -356,6 +378,10 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
                 print(f"[hands-free] ignored: {transcript!r}")
                 selfcheck.note_clip(mode, "noise" if is_noise(transcript) else "ignored", transcript)
                 return _ndjson(ignored())
+            if player and player.get("active") and not quran.request(transcript, player):
+                print(f"[hands-free] ignored during a recitation: {transcript!r}")
+                selfcheck.note_clip(mode, "ignored", transcript)
+                return _ndjson(ignored())
             request = transcript  # follow-up: no wake word needed
         elif not request or is_noise(request):
             # Just "Hey Javid" — acknowledge and open a follow-up window.
@@ -391,7 +417,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
             yield _event(type="done", tasks=_tasks_json(), memory=_memory_json(), lang=get_language())
             return
         sent = [f for f in (files or "").split(",") if f] if mode == "push" else None   # uploads go with push-to-talk
-        async for line in _reply_stream(request, session, yes_ok=(mode == "push"), files=sent):   # hands-free: tap only
+        async for line in _reply_stream(request, session, yes_ok=(mode == "push"), files=sent,    # hands-free: tap only
+                                        player=player):
             yield line
 
     return _ndjson(_traced(trace, events()))
@@ -401,7 +428,8 @@ def talk(audio: UploadFile = File(...), mode: str = Form("push"), session: str |
 def type_message(body: ChatBody):
     _use_session(body.session)
     edge_pool.want()
-    return _ndjson(_traced(tracing.start("text", "type", body.text), _reply_stream(body.text, body.session, files=body.files)))
+    return _ndjson(_traced(tracing.start("text", "type", body.text),
+                           _reply_stream(body.text, body.session, files=body.files, player=body.recite)))
 
 
 # ---------- uploads: documents and pictures Javid reads (documents.py) ----------
@@ -653,6 +681,87 @@ def watches_cancel(wid: str, request: Request):
     if not watches.cancel(wid):
         raise HTTPException(404, "No such watch")
     return {"ok": True}
+
+
+# The hifz tracker (hifz.py): the Hifz panel's and view's data; a log or an undo from their buttons, and from a
+# revision reminder's banner (its alert id: it logs exactly what the reminder named, once).
+@app.get("/hifz")
+def hifz_status():
+    return hifz.status_json()
+
+
+class HifzLogBody(BaseModel):
+    strength: str = "okay"
+    alert: str | None = None             # a reminder's id: log what it named
+    portions: list[dict] | None = None   # [{kind: "juz"|"manzil", n}] or [{kind: "surah", n, a1?, a2?}]
+    today: bool = False                  # today's portion, whatever it is
+
+
+@app.post("/hifz/log")
+def hifz_log(body: HifzLogBody, request: Request):
+    _local_page_only(request)
+    if body.strength not in hifz.STRENGTHS:
+        raise HTTPException(400, "strength is strong, okay or weak")
+    if body.alert:
+        return {"said": hifz.log_from_alert(body.alert, body.strength, via="page"), "status": hifz.status_json()}
+    found = []
+    for p in body.portions or []:
+        kind, n = p.get("kind"), p.get("n")
+        if kind in ("juz", "manzil") and isinstance(n, int) and (unit := quran.unit_portion(kind, n)):
+            found.append(unit)
+        elif kind == "surah" and isinstance(n, int) and 1 <= n <= 114:
+            got = quran._surah_portion(n, p.get("a1"), p.get("a2"))
+            if got["kind"] == "surah":
+                found.append(got)
+    if body.today:
+        found = hifz.today_portions()
+    if not found:
+        raise HTTPException(400, "Nothing to log: name a juz, a manzil or a surah.")
+    before = hifz._state()
+    entries = hifz.log(found, body.strength, via="page")
+    return {"said": hifz.logged_said(entries, before, "en"), "status": hifz.status_json()}
+
+
+@app.post("/hifz/undo")
+def hifz_undo(request: Request):
+    _local_page_only(request)
+    gone = hifz.undo_last()
+    return {"undone": len(gone), "status": hifz.status_json()}
+
+
+class QuranPlanBody(BaseModel):
+    portions: list[dict] | None = None   # as for /hifz/log
+    today: bool = False
+    keys: list[str] | None = None        # ["12:53", "14:52"]: that stretch (the player switching reciters)
+    reciter: str | None = None
+
+
+@app.post("/quran/plan")
+def quran_plan(body: QuranPlanBody):
+    """The player's files for a portion (the Hifz view's ▶ buttons): Quran.com's ayah files, in order."""
+    found = hifz.today_portions() if body.today else []
+    if body.keys and len(body.keys) == 2:
+        try:
+            lo, hi = (quran.index(*map(int, k.split(":"))) for k in body.keys)
+        except (ValueError, TypeError):
+            raise HTTPException(400, "keys are two ayahs like 67:1")
+        if lo > hi:
+            raise HTTPException(400, "keys are in order")
+        found.append({"kind": "range", "ranges": [(lo, hi)]})
+    for p in body.portions or []:
+        kind, n = p.get("kind"), p.get("n")
+        if kind in ("juz", "manzil") and isinstance(n, int) and (unit := quran.unit_portion(kind, n)):
+            found.append(unit)
+        elif kind == "surah" and isinstance(n, int) and 1 <= n <= 114:
+            got = quran._surah_portion(n, p.get("a1"), p.get("a2"))
+            if got["kind"] == "surah":
+                found.append(got)
+    if not found:
+        raise HTTPException(400, "Nothing to play.")
+    title = quran.cap(quran.join([quran.portion_label(p) if p["kind"] != "range" else quran.span_text(*p["ranges"][0])
+                                  for p in found]))
+    return {"action": "play", **quran.plan([r for p in found for r in p["ranges"]],
+                                           body.reciter or hifz.config()["reciter"], title)}
 
 
 @app.get("/skills")

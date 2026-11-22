@@ -22,6 +22,7 @@ import time
 import uuid
 
 import gnews
+import hifz
 import markets
 import prayers
 import tracing
@@ -569,6 +570,10 @@ def _loop() -> None:
             prayers.tick()          # prayer and zikir reminders, the morning brief: raised as alerts like a watch's
         except Exception as e:
             print(f"[prayers] {type(e).__name__}: {str(e)[:120]}")
+        try:
+            hifz.tick()             # today's revision after Fajr, and the nudges while it isn't logged
+        except Exception as e:
+            print(f"[hifz] {type(e).__name__}: {str(e)[:120]}")
 
 
 def start() -> None:

@@ -38,6 +38,7 @@ import contextlib
 import copy
 import shutil
 import functools
+import glob
 import io
 import itertools
 import json
@@ -66,11 +67,13 @@ import documents  # noqa: E402
 import drive_tools  # noqa: E402
 import edge_pool  # noqa: E402
 import gnews  # noqa: E402
+import hifz  # noqa: E402
 import javid  # noqa: E402
 import markets  # noqa: E402
 import memory_store  # noqa: E402
 import prayers  # noqa: E402
 import providers  # noqa: E402
+import quran  # noqa: E402
 import rates  # noqa: E402
 import search  # noqa: E402
 import selfcheck  # noqa: E402
@@ -378,6 +381,11 @@ class FakeAladhan:
             if self.months_down:
                 raise OSError("the fake Aladhan's month calendar is down")
             return self.month(int(m[1]), int(m[2]))
+        if (m := re.search(r"/hToG/01-09-(\d{4})$", url)):          # 1 Ramadan (Aladhan's documented answer)
+            g = {"1448": "08-02-2027", "1449": "28-01-2028"}.get(m[1])
+            if not g:
+                raise OSError(f"the fake Aladhan has no Ramadan {m[1]}")
+            return {"code": 200, "status": "OK", "data": {"gregorian": {"date": g}, "hijri": {"date": f"01-09-{m[1]}"}}}
         if (m := re.search(r"/timingsByCity/(\d{2})-(\d{2})-(\d{4})\?", url)):
             wanted = f"{m[1]}-{m[2]}-{m[3]}"
             day = next(x for x in self.month(int(m[3]), int(m[2]))["data"] if x["date"]["gregorian"]["date"] == wanted)
@@ -424,18 +432,89 @@ def prayer_fresh(fake=None):
 
 @contextlib.contextmanager
 def prayer_clock(when: datetime):
-    """prayers' and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
+    """prayers', hifz's and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
     now = [when.timestamp()]
-    saved = prayers._time, timers._now
-    prayers._time = timers._now = lambda: now[0]
+    saved = prayers._time, timers._now, hifz._time
+    prayers._time = timers._now = hifz._time = lambda: now[0]
     try:
         yield types.SimpleNamespace(at=lambda dt: now.__setitem__(0, dt.timestamp()), now=lambda: now[0])
     finally:
-        prayers._time, timers._now = saved
+        prayers._time, timers._now, hifz._time = saved
 
 
 def _dhaka(*args) -> datetime:
     return datetime(*args, tzinfo=DHAKA)
+
+
+# ---------- the hifz tracker (hifz.py) and the Quran's structure and audio (quran.py), 2026-11-22 ----------
+hifz.CONFIG_FILE = os.path.join(SCRATCH, "hifz.yaml")          # the suite's settings, never Mahadi's
+hifz.LOG_FILE = os.path.join(SCRATCH, "hifz_log.jsonl")         # never his revision log
+hifz.STATE_FILE = os.path.join(SCRATCH, "hifz_state.json")
+HIFZ_SETTINGS = {"unit": "juz", "daily": 1, "weak_days": 2, "reciter": "husary", "start": 1, "brief": True,
+                 "ramadan": True, "reminders": {"page": True, "telegram": True,
+                                                "morning": {"after": "Fajr", "minutes": 25},
+                                                "nudges": [{"after": "Asr", "minutes": 45},
+                                                           {"after": "Isha", "minutes": 45}]}}
+
+
+def hifz_settings(**changes) -> dict:
+    cfg = {**copy.deepcopy(HIFZ_SETTINGS), **changes}
+    with open(hifz.CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True)
+    hifz.reload()
+    return cfg
+
+
+def hifz_fresh() -> None:
+    """No revision log, nothing raised, no backup copy."""
+    for f in (hifz.LOG_FILE, hifz.STATE_FILE):
+        with contextlib.suppress(OSError):
+            os.remove(f)
+    for f in glob.glob(hifz.LOG_FILE + ".bak-*"):
+        os.remove(f)
+
+
+class FakeQuranCom:
+    """Quran.com's public API (api.quran.com/api/v4) without the network, for `quran.check`: made-up answers in its
+    documented format, built from quran_meta.json itself (none of Quran.com's data is in this repository: its terms
+    count that as redistribution). wrong: {"ayahs": (surah, count)} or {"juz": n} or {"husary": url} to differ."""
+
+    def __init__(self, wrong=None):
+        self.wrong, self.urls = wrong or {}, []
+
+    def get(self, url):
+        self.urls.append(url)
+        if url.endswith("/chapters"):
+            out = []
+            for s in quran.SURAHS:
+                lo, hi = quran.surah_range(s["n"])
+                count = self.wrong["ayahs"][1] if self.wrong.get("ayahs", (0,))[0] == s["n"] else s["ayahs"]
+                out.append({"id": s["n"], "name_arabic": s["ar"], "name_simple": s["en"], "verses_count": count,
+                            "pages": [quran.page_of(lo), quran.page_of(hi)]})
+            return {"chapters": out}
+        if url.endswith("/juzs"):
+            juzs = []
+            for n in range(1, 31):
+                lo, hi = quran.unit_range("juz", n)
+                if self.wrong.get("juz") == n:
+                    hi -= 1
+                (s1, a1), (s2, a2) = quran.verse(lo), quran.verse(hi)
+                mapping = {}
+                for s in range(s1, s2 + 1):
+                    first = a1 if s == s1 else 1
+                    last = a2 if s == s2 else quran.surah(s)["ayahs"]
+                    mapping[str(s)] = f"{first}-{last}"
+                juzs.append({"juz_number": n, "verse_mapping": mapping})
+            return {"juzs": juzs + juzs}        # Quran.com lists each juz twice (two mushaf layouts)
+        if (m := re.search(r"/verses/by_manzil/(\d)\?", url)):
+            lo, hi = quran.unit_range("manzil", int(m[1]))
+            return {"verses": [{"verse_key": quran.key(lo)}], "pagination": {"total_records": hi - lo + 1}}
+        if (m := re.search(r"/recitations/(\d+)/by_chapter/67", url)):
+            if m[1] == "6":
+                return {"audio_files": [{"verse_key": "67:1", "url": self.wrong.get(
+                    "husary", "//mirrors.quranicaudio.com/everyayah/Husary_64kbps/067001.mp3")}]}
+            return {"audio_files": [{"verse_key": "67:1", "url": "Alafasy/mp3/067001.mp3"}]}
+        raise OSError(f"the fake Quran.com has no {url}")
 
 # ---------- files (documents.py, 2026-11-16): the sample files, a fake Tesseract, no vision model unless a case says ----------
 FILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "files")
@@ -4429,6 +4508,614 @@ def file_sent_ok(r):
     return None
 
 
+def hifz_parse():
+    """Every way Mahadi logs a revision, in English, Bangla and Banglish (para for juz, strength words, yesterday), and
+    what must not log: a plan, a reminder, a no, a question, a bare prayer name, other words in the message."""
+    problems = []
+    logs = [
+        ("I revised juz 5", [("juz", 5)], ["okay"], 0), ("did para 12", [("juz", 12)], ["okay"], 0),
+        ("revised Surah Kahf", [("surah", 18)], ["okay"], 0), ("finished manzil 3", [("manzil", 3)], ["okay"], 0),
+        ("revised juz 7, weak", [("juz", 7)], ["weak"], 0), ("aaj 5 para revise korechi", [("juz", 5)], ["okay"], 0),
+        ("আজ ৫ পারা রিভাইস করেছি", [("juz", 5)], ["okay"], 0), ("৭ নম্বর পারা দিলাম, কাঁচা", [("juz", 7)], ["weak"], 0),
+        ("গতকাল সূরা কাহফ শেষ করলাম", [("surah", 18)], ["okay"], -1),
+        ("kal 3 para revise korlam, paka", [("juz", 3)], ["strong"], -1),
+        ("Yesterday I revised juz 4, strong", [("juz", 4)], ["strong"], -1),
+        ("revised juz 5 weak and juz 6 strong", [("juz", 5), ("juz", 6)], ["weak", "strong"], 0),
+        ("did juz 5 to 7", [("juz", 5), ("juz", 6), ("juz", 7)], ["okay"] * 3, 0),
+        ("revised amma para", [("juz", 30)], ["okay"], 0), ("আমপারা রিভিশন দিলাম", [("juz", 30)], ["okay"], 0),
+        ("I revised Surah Yaseen", [("surah", 36)], ["okay"], 0), ("I revised Surah Al-Asr", [("surah", 103)], ["okay"], 0),
+        ("revised surah mulk ayah 1 to 15, with mistakes", [("surah", 67)], ["weak"], 0),
+        ("juz 9 done, alhamdulillah", [("juz", 9)], ["okay"], 0),
+    ]
+    for text, want, st, day in logs:
+        r = hifz.request(text)
+        got = [(p["kind"], p["n"]) for p in r["portions"]] if r and r["action"] == "log" else r
+        if got != want or r["strengths"] != st or r["day"] != day:
+            problems.append(f"{text!r}: {r}")
+    mulk = hifz.request("revised surah mulk ayah 1 to 15, with mistakes")["portions"][0]
+    if (mulk.get("a1"), mulk.get("a2")) != (1, 15):
+        problems.append(f"Al-Mulk 1 to 15: {mulk}")
+    for text in ("I need to revise juz 5", "remind me to revise juz 5", "I didn't revise juz 5",
+                 "I'll revise juz 5 tomorrow", "did I revise juz 5?", "revised fajr", "আমি ৫ পারা রিভাইস করব",
+                 "kal 5 para korbo", "I revised my essay", "I did the dishes and juz 5", "I prayed Asr",
+                 "play Surah Mulk", "juz 5"):
+        if (r := hifz.request(text)) and r["action"] == "log":
+            problems.append(f"{text!r} was logged: {r}")
+    for text, act in (("what's due today?", "due"), ("What should I revise today?", "due"),
+                      ("আজ কোন পারা রিভাইস করব?", "due"), ("aaj ki revise korbo", "due"), ("what's behind?", "behind"),
+                      ("am I behind?", "behind"), ("When did I last revise Yasin?", "last"),
+                      ("কবে শেষ সূরা ইয়াসিন রিভাইস করেছি?", "last"), ("How much did I revise this week?", "week"),
+                      ("এই সপ্তাহে কত রিভাইস করেছি?", "week"), ("show my hifz status", "status"),
+                      ("হিফজের অবস্থা দেখাও", "status"), ("what's my streak?", "status"), ("I'm on juz 12 today", "start"),
+                      ("undo my last revision", "undo"), ("reset my hifz history", "reset"),
+                      ("delete the juz 5 log", "delete"), ("delete my last revision log", "delete")):
+        if not (r := hifz.request(text)) or r["action"] != act:
+            problems.append(f"{text!r}: {r and r['action']}, not {act}")
+    if hifz.request("undo that"):
+        problems.append("a bare 'undo that' was taken with no log just before it")
+    if (hifz.request("undo that", {"tools": ["hifz_log"]}) or {}).get("action") != "undo":
+        problems.append("'undo that' right after a log wasn't an undo")
+    if quran.request("when is Asr") or hifz.request("when is Asr") or not prayers.request("when is Asr"):
+        problems.append("'when is Asr' isn't the prayers'")
+    return {"problems": problems}
+
+
+def hifz_logging():
+    """A log answered in code: no model request, the hifz_log tool and a refresh for the page, owner-only, one entry
+    a portion with its day and strength; a weak one's return day; today's revision done; "undo that" takes back the
+    last message whole, "undo my last revision" within 24 hours only; Bangla."""
+    problems = []
+    with prayer_clock(_dhaka(2026, 11, 23, 7, 0)) as clock:
+        reply, events = _turn("I revised juz 1")
+        if reply != "Logged juz 1. That's today's revision done, MashaAllah. Tomorrow: juz 2.":
+            problems.append(f"juz 1: {reply!r}")
+        if any(k == "llm" for k, _ in events) or ("tool", "hifz_log") not in events or \
+                ("hifz", {"refresh": True}) not in events:
+            problems.append(f"juz 1's events: {[k for k, _ in events]}")
+        reply, _ = _turn("revised juz 7, weak")
+        if reply != "Logged juz 7, weak. It comes back on Wednesday for another go.":
+            problems.append(f"juz 7: {reply!r}")
+        reply, _ = _turn("revised juz 5 weak and juz 6 strong")
+        if reply != "Logged juz 5, weak and juz 6, strong. It comes back on Wednesday for another go.":
+            problems.append(f"juz 5 and 6: {reply!r}")
+        entries = hifz._read()
+        got = [(e["portion"], e["date"], e["strength"], e["via"], e["ranges"]) for e in entries]
+        want = [({"kind": "juz", "n": 1}, "2026-11-23", "okay", "page", [[0, 147]]),
+                ({"kind": "juz", "n": 7}, "2026-11-23", "weak", "page", [list(quran.unit_range("juz", 7))]),
+                ({"kind": "juz", "n": 5}, "2026-11-23", "weak", "page", [list(quran.unit_range("juz", 5))]),
+                ({"kind": "juz", "n": 6}, "2026-11-23", "strong", "page", [list(quran.unit_range("juz", 6))])]
+        if got != want:
+            problems.append(f"the log: {got}")
+        if oct(os.stat(hifz.LOG_FILE).st_mode & 0o777) != "0o600":
+            problems.append(f"the log is {oct(os.stat(hifz.LOG_FILE).st_mode & 0o777)}")
+        reply, _ = _turn("undo that")
+        if reply != "Undone: juz 5 (weak) and juz 6 (strong)." or len(hifz._read()) != 2:
+            problems.append(f"undo: {reply!r}, {len(hifz._read())} left")
+        reply, _ = _turn("What's the weather like today?", [call("get_weather"), "Sunny."])
+        reply, events = _turn("undo that", ["Undo what? I can't undo the weather."])
+        if len(hifz._read()) != 2:
+            problems.append("'undo that' after another reply took a log back")
+        javid.set_language("bn")
+        reply, _ = _turn("আজ ২ পারা রিভাইস করেছি")
+        if reply != "লগ করা হলো: পারা ২।":
+            problems.append(f"Bangla: {reply!r}")
+        javid.set_language("en")
+        clock.at(_dhaka(2026, 11, 24, 7, 30))           # 24.5 hours later
+        reply, _ = _turn("undo my last revision")
+        if reply != "There's nothing from the last 24 hours to undo." or len(hifz._read()) != 3:
+            problems.append(f"undo after a day: {reply!r}")
+        reply, _ = _turn("I revised today's juz")
+        if reply != "Logged juz 3. That's today's revision done, MashaAllah: day 2 in a row. Tomorrow: juz 4.":
+            problems.append(f"today's juz: {reply!r}")
+    return {"problems": problems}
+
+
+def hifz_questions():
+    """What's due, what's behind, when he last revised something, the week's amount and the status: in code from the
+    log (no model, offline, each well under 1.5 s), in English and Bangla, with the weak one and the backlog."""
+    problems = []
+    with prayer_clock(_dhaka(2026, 11, 20, 7, 0)) as clock:
+        for day in range(20, 23):                     # juz 1-3 on 20-22 November (juz 2 weak), then three days off
+            clock.at(_dhaka(2026, 11, day, 7, 0))
+            hifz.log([quran.unit_portion("juz", day - 19)], "weak" if day == 21 else "okay")
+        clock.at(_dhaka(2026, 11, 22, 9, 0))
+        hifz.log([quran._surah_portion(36)], "okay")      # Ya-Sin, outside the rotation
+        clock.at(_dhaka(2026, 11, 25, 8, 0))
+        asked = [
+            ("en", "What's due today?", "Today's revision: juz 4, Al Imran 93 to An-Nisa 23 (2 days late). Back as "
+                                        "weak: Juz 2. Also behind: juz 5."),
+            ("en", "What's behind?", "2 behind: juz 4 by 2 days and juz 5 by 1 day. 2 a day for a few days brings you "
+                                     "back to your 30-day cycle. Weak and past their day: juz 2."),
+            ("en", "When did I last revise Yasin?", "You last revised Surah Ya-Sin on Sunday."),
+            ("en", "When did I last revise juz 2?", "You last revised juz 2 on Saturday, weak."),
+            ("en", "How much did I revise this week?",
+             "In the last 7 days: juz 1, 2 and 3 and Surah Ya-Sin, about 3.3 juz in all (67 pages), on 3 of 7 days. "
+             "1 was marked weak."),
+            ("en", "Show my hifz status", "Today: juz 4; 3 of 30 juz revised in the last 30 days; 2 behind; 1 weak. "
+                                          "The full map is in the Hifz view."),
+            ("bn", "আজ কোন পারা রিভাইস করব?", "আজকের রিভিশন: পারা ৪, আলে ইমরান ৯৩ থেকে আন-নিসা ২৩ (২ দিন দেরি)। কাঁচা "
+                                              "হিসেবে ফেরত: পারা ২। আরও পিছিয়ে: পারা ৫।"),
+            ("bn", "এই সপ্তাহে কত রিভাইস করেছি?", "গত ৭ দিনে: পারা ১, ২ আর ৩ আর সূরা ইয়াসিন, মোট প্রায় ৩.৩ পারা (৬৭ "
+                                                "পৃষ্ঠা), ৭ দিনের ৩ দিনে। ১টি কাঁচা হিসেবে লগ।"),
+        ]
+        for lang, q, want in asked:
+            javid.set_language(lang)
+            t = time.perf_counter()
+            reply, events = _turn(q)
+            took = time.perf_counter() - t
+            if reply != want:
+                problems.append(f"{q!r}: {reply!r}")
+            if any(k == "llm" for k, _ in events) or ("tool", "hifz") not in events:
+                problems.append(f"{q!r}: not answered in code")
+            if took >= 1.5:
+                problems.append(f"{q!r} took {took:.2f} s")
+        javid.set_language("en")
+        _, events = _turn("Show my hifz status")
+        screen = next((v for k, v in events if k == "screen"), "")
+        if screen != "Hifz · juz · 30-day cycle:\n- Fresh: 1–3\n- Not yet: 4–30\n- Weak: 2\n- Today: 4" or \
+                ("hifz", {"open": True}) not in events:
+            problems.append(f"the status screen: {screen!r}")
+    return {"problems": problems}
+
+
+def hifz_month():
+    """A simulated month: a juz a day from 23 November with three days off and a weak juz that comes back; each
+    day's portion follows the rotation, a skipped day shows as behind, the weak one returns two days later until it's
+    revised again; on day 31 the 30-day view (GET /hifz) has every juz's state, days, backlog and the streak."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client, plan = [], TestClient(server.app), []
+    skip, weak = {5, 6, 12}, {3: 7}
+    with prayer_clock(_dhaka(2026, 11, 23, 7, 0)) as clock:
+        for day in range(1, 32):
+            clock.at(_dhaka(2026, 11, 23, 7, 0) + timedelta(days=day - 1))
+            s = hifz._state()
+            plan.append(([u["n"] for u in s["today_units"]], [(u["n"], u["behind"]) for u in s["behind"]],
+                         [w["label"] for w in s["weak_due"]], s["streak"]))
+            if day not in skip:
+                for u in s["today_units"]:
+                    hifz.log([quran.unit_portion("juz", u["n"])])
+                for w in s["weak_due"]:
+                    hifz.log([quran.unit_portion("juz", w["entry"]["portion"]["n"])], "strong")
+                if day in weak:
+                    hifz.log([quran.unit_portion("juz", weak[day])], "weak")
+        clock.at(_dhaka(2026, 12, 24, 8, 0))
+        view = client.get("/hifz", headers=KEYED).json()
+    want = {1: ([1], [], [], 0), 2: ([2], [], [], 1), 5: ([5], [], ["juz 7"], 4), 6: ([5], [(5, 1)], ["juz 7"], 0),
+            7: ([5], [(5, 2), (6, 1)], ["juz 7"], 0), 8: ([6], [(6, 2)], [], 1), 9: ([8], [(8, 1)], [], 2),
+            13: ([11], [(11, 2), (12, 1)], [], 0), 31: ([29], [(29, 2), (30, 1)], [], 18)}
+    for day, expect in want.items():
+        if plan[day - 1] != expect:
+            problems.append(f"day {day}: {plan[day - 1]}, not {expect}")
+    states = {u["n"]: (u["state"], u["days"], u["behind"], u["weak"]) for u in view["units"]}
+    expect = {1: ("over", 31, 1, False), 2: ("soon", 30, 0, False), 5: ("soon", 25, 0, False),
+              7: ("soon", 25, 0, False), 11: ("steady", 19, 0, False), 20: ("fresh", 10, 0, False),
+              29: ("fresh", 1, 0, False), 30: ("never", None, 2, False)}
+    for n, st in expect.items():
+        if states[n] != st:
+            problems.append(f"the view's juz {n}: {states[n]}, not {st}")
+    if (view["streak"], view["best"], view["fresh"], [t["n"] for t in view["today"]], view["behind"]) != \
+            (19, 19, 27, [30], [{"n": 30, "days": 2}, {"n": 1, "days": 1}]):
+        problems.append(f"the view: streak {view['streak']}, best {view['best']}, fresh {view['fresh']}, today "
+                        f"{view['today']}, behind {view['behind']}")
+    if sum(1 for u in view["units"] if u["state"] != "never") != 29 or len(view["units"]) != 30:
+        problems.append(f"{len(view['units'])} units")
+    return {"problems": problems}
+
+
+def hifz_delete():
+    """Deleting logs waits for an Approve card: "delete the juz 5 log" deletes nothing until the card is approved,
+    then exactly those entries; "reset my hifz history" too (a typed yes, a copy kept); on Telegram, a button."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    with prayer_clock(_dhaka(2026, 11, 23, 7, 0)) as clock:
+        hifz.log([quran.unit_portion("juz", 5)])
+        clock.at(_dhaka(2026, 11, 24, 7, 0))
+        hifz.log([quran.unit_portion("juz", 5)], "weak")
+        hifz.log([quran.unit_portion("juz", 6)])
+        reply, events = _turn("Delete the juz 5 log")
+        cards = [v for k, v in events if k == "approval"]
+        if len(hifz._read()) != 3 or len(cards) != 1 or cards[0]["tool"] != "hifz_delete" or \
+                cards[0]["text"] != "Delete revision log: juz 5 (today)":
+            problems.append(f"delete: {reply!r}, {cards}, {len(hifz._read())} logs")
+        if reply != "That waits for your Approve: tap it on the card below, or say yes as your next message.":
+            problems.append(f"delete said {reply!r}")
+        done = client.post(f"/approvals/{cards[0]['id']}/approve", headers=PAGE).json() if cards else {}
+        left = [(e["portion"]["n"], e["date"]) for e in hifz._read()]
+        if left != [(5, "2026-11-23"), (6, "2026-11-24")]:
+            problems.append(f"after Approve: {left} ({done})")
+        reply, events = _turn("Reset my hifz history")
+        cards = [v for k, v in events if k == "approval"]
+        if not cards or cards[0]["text"] != "Delete your whole revision history: 2 logs since 2026-11-23":
+            problems.append(f"reset: {cards}")
+        reply, _ = _turn("Yes")
+        if hifz._read() or not reply.startswith("Deleted your revision history (2 logs). A copy is kept in "):
+            problems.append(f"reset with a typed yes: {reply!r}, {len(hifz._read())} left")
+        copies = glob.glob(hifz.LOG_FILE + ".bak-*")
+        if len(copies) != 1 or oct(os.stat(copies[0]).st_mode & 0o777) != "0o600":
+            problems.append(f"the copy: {copies}")
+        hifz.log([quran.unit_portion("juz", 7)])
+        with telegram_world() as fake:
+            telegram_bot.handle_update(tg_message(OWNER, "delete my last revision log"))
+            card = [c for c in fake.cards() if "Delete revision log" in c[1]]
+            if len(hifz._read()) != 1 or not card:
+                problems.append(f"Telegram: {fake.texts(OWNER)}")
+            else:
+                telegram_bot.handle_update(tg_press(OWNER, card[0][2], card[0][0]))
+                if hifz._read():
+                    problems.append("Telegram's Approve didn't delete it")
+    return {"problems": problems}
+
+
+def hifz_reminders():
+    """The morning reminder after Fajr names today's exact portion (with the streak and the days to Ramadan), rings
+    on the page with its own buttons and goes to Telegram with three; a button there logs it, once; the nudges after
+    Asr and Isha go only while today's portion isn't logged; the brief has the revision line."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayers.ramadan_start()                        # 1 Ramadan 1448 from the fake Aladhan: 9 February here
+
+    def due(d, key):        # when hifz plans a reminder that day (Fajr 5:00 on the 24th + 25 minutes = 5:25)
+        return next(i["due"] for i in hifz.planned(d) if i["key"].endswith(key))
+    with prayer_clock(_dhaka(2026, 11, 22, 7, 0)) as clock:
+        hifz.log([quran.unit_portion("juz", 12)])
+        clock.at(_dhaka(2026, 11, 23, 7, 0))
+        hifz.log([quran.unit_portion("juz", 13)])
+        morning = due(date(2026, 11, 24), "morning")
+        if morning != _dhaka(2026, 11, 24, 5, 25):
+            problems.append(f"the morning reminder is due {morning}")
+        clock.at(morning - timedelta(seconds=15))
+        raised = hifz.tick()
+        want = ("Mahadi, today's revision: juz 14, Al-Hijr 1 to An-Nahl 128. It's day 2 in a row, keep it going. "
+                "77 days to Ramadan.")
+        if [(a["kind"], a["label"], a["announce"]["en"]) for a in raised] != \
+                [("hifz", "Today's revision: juz 14", want)]:
+            problems.append(f"the morning reminder: {[(a['kind'], a['label'], a['announce']['en']) for a in raised]}")
+        elif raised[0]["extra"]["hifz"] != {"date": "2026-11-24", "portions": [{"kind": "juz", "n": 14}],
+                                            "kind": "morning"}:
+            problems.append(f"its portions: {raised[0]['extra']}")
+        if not raised or raised[0]["announce"]["bn"] != ("মাহাদি, আজকের রিভিশন: পারা ১৪, আল-হিজর ১ থেকে আন-নাহল ১২৮। "
+                                                         "টানা ২ দিন, চালিয়ে যাও। রমজানের আর ৭৭ দিন বাকি।"):
+            problems.append(f"in Bangla: {raised and raised[0]['announce']['bn']!r}")
+        if hifz.tick():
+            problems.append("raised twice")
+        clock.at(morning + timedelta(seconds=5))
+        page = client.get("/timers", headers=PAGE).json()
+        if [(t["kind"], t.get("extra", {}).get("hifz", {}).get("portions")) for t in page] != \
+                [("hifz", [{"kind": "juz", "n": 14}])]:
+            problems.append(f"the page lists {page}")
+        with telegram_world() as fake:
+            telegram_bot.push_due()
+            sent = [p for _, p in fake.sent if p["text"].startswith("📖")]
+            buttons = [[b["callback_data"] for b in row] for p in sent for row in p.get("reply_markup", {}).get("inline_keyboard", [])]
+            if len(sent) != 1 or [b.split(":")[1] for b in (buttons or [[]])[0]] != ["s", "o", "w"]:
+                problems.append(f"Telegram: {sent}, {buttons}")
+            else:
+                mid = fake.sent[-1][0]
+                telegram_bot.handle_update(tg_press(OWNER, buttons[0][1], mid))
+                telegram_bot.handle_update(tg_press(OWNER, buttons[0][2], mid))
+                logged = [(e["portion"]["n"], e["strength"], e["via"]) for e in hifz._read()][2:]
+                if logged != [(14, "okay", "telegram")] or not fake.answers()[-1].startswith("✓ Already logged"):
+                    problems.append(f"the buttons logged {logged}: {fake.answers()}")
+        clock.at(due(date(2026, 11, 24), "nudge:0") - timedelta(seconds=15))     # Asr + 45: today's is logged
+        if hifz.tick():
+            problems.append("a nudge after today's revision was logged")
+        clock.at(due(date(2026, 11, 25), "nudge:0") - timedelta(seconds=15))     # the next day, not logged: the nudge
+        nudge = hifz.tick()
+        if [a["announce"]["en"] for a in nudge] != ["Mahadi, juz 15 is still waiting today. Twenty quiet minutes now "
+                                                    "keeps your streak alive: day 3 in a row."]:
+            problems.append(f"the nudge: {[a['announce']['en'] for a in nudge]}")
+        clock.at(due(date(2026, 11, 25), "nudge:1") - timedelta(seconds=15))     # Isha + 45: the last call
+        last = hifz.tick()
+        if [a["announce"]["en"] for a in last] != ["Last call for today: juz 15. Even part of it now keeps the chain "
+                                                   "unbroken."]:
+            problems.append(f"the last call: {[a['announce']['en'] for a in last]}")
+        line = hifz.brief_line(date(2026, 11, 25), "en")
+        if line != "📖 Revision today: juz 15 (Al-Isra 1 to Al-Kahf 74) · day 3 in a row · 76 days to Ramadan":
+            problems.append(f"the brief's line: {line!r}")
+        brief = prayers.brief(date(2026, 11, 25))["en"]
+        if line not in brief:
+            problems.append("the brief lacks the revision line")
+    return {"problems": problems}
+
+
+def hifz_telegram():
+    """On Telegram, a revision is logged in code from the message (no Approve: it's his own log), /hifz shows today's
+    portion and the status, and the model's hifz tool on a mixed message waits for a button like any write."""
+    problems = []
+    with prayer_clock(_dhaka(2026, 11, 23, 7, 0)), telegram_world() as fake:
+        telegram_bot.handle_update(tg_message(OWNER, "aaj 1 para revise korechi"))
+        logged = [(e["portion"]["n"], e["via"]) for e in hifz._read()]
+        if logged != [(1, "telegram")] or not fake.texts(OWNER) or not fake.texts(OWNER)[-1].startswith("Logged juz 1."):
+            problems.append(f"a log on Telegram: {logged}, {fake.texts(OWNER)[-1:]}")
+        telegram_bot.handle_update(tg_message(OWNER, "/hifz"))
+        out = fake.texts(OWNER)[-1]
+        for part in ("📖 Today's revision is done, MashaAllah. Tomorrow: juz 2.", "Today: done; 1 of 30 juz revised",
+                     "Hifz · juz · 30-day cycle:"):
+            if part not in out:
+                problems.append(f"/hifz lacks {part!r}: {out!r}")
+        if "hifz" not in {c for c, _ in telegram_bot.COMMANDS}:
+            problems.append("/hifz isn't a registered command")
+    return {"problems": problems}
+
+
+def hifz_routes():
+    """GET /hifz needs the key; POST /hifz/log and /hifz/undo need the page's Origin too; a log from the view's
+    buttons, a reminder's alert, today's portion; /quran/plan gives Quran.com's files for a juz, a stretch, today's."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    with prayer_clock(_dhaka(2026, 11, 23, 7, 0)):
+        if client.get("/hifz", headers={"host": "localhost:8000"}).status_code != 401:
+            problems.append("GET /hifz without the key")
+        if client.post("/hifz/log", headers=KEYED, json={"portions": [{"kind": "juz", "n": 1}]}).status_code != 403:
+            problems.append("POST /hifz/log without the page's Origin")
+        out = client.post("/hifz/log", headers=PAGE, json={"portions": [{"kind": "juz", "n": 1}], "strength": "strong"}).json()
+        if out.get("said") != "Logged juz 1, strong. That's today's revision done, MashaAllah. Tomorrow: juz 2." or \
+                out["status"]["done_today"] != [1]:
+            problems.append(f"a log from the view: {out}")
+        if client.post("/hifz/log", headers=PAGE, json={"portions": [{"kind": "juz", "n": 31}]}).status_code != 400:
+            problems.append("juz 31 was logged")
+        if client.post("/hifz/log", headers=PAGE, json={"today": True, "strength": "great"}).status_code != 400:
+            problems.append("a strength that isn't one")
+        out = client.post("/hifz/undo", headers=PAGE).json()
+        if out["undone"] != 1 or hifz._read():
+            problems.append(f"undo: {out}")
+        plan = client.post("/quran/plan", headers=KEYED, json={"portions": [{"kind": "juz", "n": 30}]}).json()
+        items = plan.get("items", [])
+        if plan.get("title") != "Juz 30" or items[0]["key"] != "78:0" or items[0]["url"] != \
+                "https://mirrors.quranicaudio.com/everyayah/Husary_64kbps/001001.mp3" or items[1]["key"] != "78:1" or \
+                len([i for i in items if not i.get("bismillah")]) != 564:
+            problems.append(f"juz 30's plan: {plan.get('title')}, {items[:2]}, {len(items)}")
+        plan = client.post("/quran/plan", headers=KEYED, json={"keys": ["67:10", "67:12"], "reciter": "alafasy"}).json()
+        if [i["url"] for i in plan.get("items", [])] != [f"https://verses.quran.com/Alafasy/mp3/0670{n}.mp3" for n in (10, 11, 12)]:
+            problems.append(f"a stretch with Alafasy: {plan.get('items')}")
+        if plan.get("items") and plan["items"][0]["backup"] != "https://everyayah.com/data/Alafasy_128kbps/067010.mp3":
+            problems.append(f"the backup: {plan['items'][0]['backup']}")
+        today = client.post("/quran/plan", headers=KEYED, json={"today": True}).json()
+        if today.get("title") != "Juz 1" or today["items"][0]["key"] != "1:1":
+            problems.append(f"today's plan: {today.get('title')}, {today.get('items', [{}])[0]}")
+    return {"problems": problems}
+
+
+def hifz_config():
+    """Settings: the shipped file checks out; a manzil rotation of 7; a file with a mistake keeps the last good
+    settings and says why (printed once); bad values are each named."""
+    problems = []
+    import yaml as _yaml
+    shipped = os.path.join(os.path.dirname(os.path.abspath(hifz.__file__)), "config", "hifz.yaml")
+    cfg, bad = hifz._validate(_yaml.safe_load(open(shipped, encoding="utf-8")))
+    if bad or (cfg["unit"], cfg["daily"], cfg["weak_days"], cfg["reciter"]) != ("juz", 1, 2, "husary"):
+        problems.append(f"the shipped file: {bad}, {cfg}")
+    hifz_settings(unit="manzil")
+    with prayer_clock(_dhaka(2026, 11, 23, 7, 0)):
+        s = hifz._state()
+        if (s["count"], s["cycle"], [u["n"] for u in s["today_units"]]) != (7, 7, [1]):
+            problems.append(f"a manzil rotation: {s['count']}, {s['cycle']}, {s['today_units']}")
+        reply, _ = _turn("finished manzil 1")
+        if reply != "Logged manzil 1. That's today's revision done, MashaAllah. Tomorrow: manzil 2.":
+            problems.append(f"manzil 1: {reply!r}")
+    with open(hifz.CONFIG_FILE, "w") as f:
+        f.write("unit: juz\ndaily: 0\nreciter: sudais\nreminders:\n  morning: {after: Lunch}\n")
+    hifz._cfg["checked"] = 0.0
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        kept = hifz.config()
+    if kept["unit"] != "manzil" or "isn't used" not in out.getvalue():
+        problems.append(f"a broken file: {kept['unit']}, {out.getvalue()!r}")
+    named = hifz.problems()
+    for word in ("daily:", "reciter:", "reminders:"):
+        if not any(p.startswith(word) for p in named):
+            problems.append(f"{word} isn't named: {named}")
+    hifz_settings()
+    return {"problems": problems}
+
+
+def quran_player():
+    """"play Surah Mulk, Husary" is a recitation in code: Quran.com's files in order (the Bismillah first, the backup
+    beside each), the reply shown and not spoken; with Alafasy, three times, from an ayah; and the controls, with the
+    page's player: pause, next, repeat this ayah three times, from ayah 10, a reciter; one beyond what's playing
+    plays it; nothing playing says so; a bad ayah number is said."""
+    problems = []
+    reply, events = _turn("Play Surah Mulk, Husary")
+    cmd = next((v for k, v in events if k == "recite"), {})
+    items = cmd.get("items", [])
+    if reply != "▶ Surah Al-Mulk · Mahmoud Khalil Al-Husary" or not cmd.get("quiet") or any(k == "llm" for k, _ in events):
+        problems.append(f"play: {reply!r}, quiet {cmd.get('quiet')}")
+    if [i["key"] for i in items[:3]] != ["67:0", "67:1", "67:2"] or len(items) != 31 or \
+            items[1]["url"] != "https://mirrors.quranicaudio.com/everyayah/Husary_64kbps/067001.mp3" or \
+            items[1]["backup"] != "https://everyayah.com/data/Husary_128kbps/067001.mp3" or not items[0].get("bismillah"):
+        problems.append(f"the plan: {items[:2]}, {len(items)}")
+    if cmd.get("credit") != "Quran.com (Quran Foundation)" or cmd.get("surahs", {}).get("67", {}).get("ar") != "الملك":
+        problems.append(f"credit and names: {cmd.get('credit')}, {cmd.get('surahs')}")
+    _, events = _turn("recite surah ikhlas 3 times with mishary")
+    cmd = next((v for k, v in events if k == "recite"), {})
+    if (cmd.get("reciter"), cmd.get("times"), len(cmd.get("items", []))) != ("alafasy", 3, 5):
+        problems.append(f"Al-Ikhlas three times: {cmd.get('reciter')}, {cmd.get('times')}, {len(cmd.get('items', []))}")
+    _, events = _turn("সূরা ইয়াসিন ১০ নম্বর আয়াত থেকে শোনাও")
+    cmd = next((v for k, v in events if k == "recite"), {})
+    if (cmd.get("first"), cmd.get("last")) != ("36:10", "36:83"):
+        problems.append(f"Ya-Sin from 10, in Bangla: {cmd.get('first')}, {cmd.get('last')}")
+    player = {"active": True, "playing": True, "key": "67:5", "surah": 67, "ayah": 5, "reciter": "husary",
+              "first": "67:1", "last": "67:30"}
+    for said, want in (("pause", {"action": "pause"}), ("next ayah", {"action": "next"}),
+                       ("repeat this ayah 3 times", {"action": "repeat", "ayah": None, "times": 3}),
+                       ("repeat ayah 5 three times", {"action": "repeat", "ayah": 5, "times": 3}),
+                       ("play from ayah 10", {"action": "seek", "ayah": 10}), ("থামো", {"action": "pause"}),
+                       ("পরের আয়াত", {"action": "next"}), ("switch to alafasy", {"action": "reciter", "reciter": "alafasy"}),
+                       ("continue", {"action": "resume"}), ("stop", {"action": "stop"})):
+        reply, events = _turn(said, player=player)
+        cmd = next((v for k, v in events if k == "recite"), None)
+        if not cmd or {k: cmd.get(k) for k in want} != want or not cmd.get("quiet") or any(k == "llm" for k, _ in events):
+            problems.append(f"{said!r}: {cmd} ({reply!r})")
+    _, events = _turn("repeat ayah 3 twice", player={**player, "first": "67:10", "key": "67:12", "ayah": 12})
+    cmd = next((v for k, v in events if k == "recite"), {})
+    if (cmd.get("action"), cmd.get("first"), cmd.get("last"), cmd.get("times")) != ("play", "67:3", "67:3", 2):
+        problems.append(f"an ayah before what's playing: {cmd}")
+    reply, _ = _turn("go to ayah 40", player=player)
+    if reply != "Al-Mulk has 30 ayahs.":
+        problems.append(f"ayah 40 of Al-Mulk: {reply!r}")
+    reply, _ = _turn("stop the recitation")
+    if reply != "Nothing is playing. Say “play Surah Al-Mulk” to start one.":
+        problems.append(f"stop with nothing playing: {reply!r}")
+    reply, _ = _turn("play surah baqarah ayah 300")
+    if reply != "Al-Baqarah has 286 ayahs.":
+        problems.append(f"ayah 300: {reply!r}")
+    if quran.request("next ayah") or quran.request("pause"):
+        problems.append("a bare 'next ayah' or 'pause' was taken with nothing playing")
+    return {"problems": problems}
+
+
+def quran_talk_gate():
+    """Hands-free while a recitation plays: a clip without "Javid" is taken only when it's a command for the player;
+    reciting along (or talk in the room) is ignored, so the page plays on. Push-to-talk answers as always."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    player = json.dumps({"active": True, "playing": False, "key": "67:5", "surah": 67, "ayah": 5, "reciter": "husary",
+                         "first": "67:1", "last": "67:30"})
+    heard = {}
+    saved = server.transcribe_turn
+    server.transcribe_turn = lambda audio, name, bias_name=True: heard["text"]
+    try:
+        def talk(text, mode, recite=player):
+            heard["text"] = text
+            r = client.post("/talk", headers=PAGE, files={"audio": ("a.wav", b"RIFF fake", "audio/wav")},
+                            data={"mode": mode, **({"recite": recite} if recite else {})})
+            return [json.loads(line) for line in r.text.splitlines() if line.strip()]
+        lines = talk("Tabarakalladhi biyadihil mulk", "followup")
+        if [l["type"] for l in lines] != ["ignored"]:
+            problems.append(f"reciting along: {[l['type'] for l in lines]}")
+        lines = talk("next ayah", "followup")
+        if not any(l["type"] == "recite" and l.get("action") == "next" for l in lines):
+            problems.append(f"'next ayah' hands-free: {[l['type'] for l in lines]}")
+        _script.append("Why did the scarecrow win an award? He was outstanding in his field.")
+        lines = talk("Tell me a joke", "followup", recite=None)       # no recitation open: a follow-up as always
+        if [l["type"] for l in lines][:2] == ["ignored"]:
+            problems.append("a follow-up with no recitation was ignored")
+    finally:
+        server.transcribe_turn = saved
+    return {"problems": problems}
+
+
+def quran_text_asks():
+    """Asking for the Quran's words, a translation, a meaning or a verse number is answered in code: no model, the
+    Quran.com link, an offer to play it; the structure (how many ayahs, which juz, where a juz starts) from the
+    metadata; Arabic script never reaches edge-tts."""
+    problems = []
+    for q, link in (("Recite Ayatul Kursi", "https://quran.com"), ("What does Surah Mulk say?", "https://quran.com/67"),
+                    ("Translate ayah 2:255", "https://quran.com/2/255"),
+                    ("What's the meaning of Surah Ikhlas?", "https://quran.com/112"),
+                    ("Give me a verse about patience", "https://quran.com"),
+                    ("সূরা ফাতিহার অনুবাদ বলো", "https://quran.com/1")):
+        reply, events = _turn(q)
+        links = [s["url"] for k, v in events if k == "sources" for s in v]
+        if any(k == "llm" for k, _ in events) or links != [link] or "Quran.com" not in reply:
+            problems.append(f"{q!r}: {reply!r}, {links}")
+    for q, want in (("How many ayahs are in Surah Mulk?", "Al-Mulk has 30 ayahs. It's in juz 29."),
+                    ("Which juz is Surah Kahf in?", "Al-Kahf runs across juz 15 and 16: juz 16 begins at Al-Kahf 75."),
+                    ("Where does juz 13 start?", "Juz 13 runs from Yusuf 53 to Ibrahim 52."),
+                    ("How many surahs are in the Quran?", "The Quran has 114 surahs and 6,236 ayahs (in Hafs's count), "
+                                                          "in 30 juz and 7 manzils."),
+                    ("সূরা মুলকে কয়টি আয়াত?", "সূরা আল-মুলক-এ ৩০টি আয়াত, পারা ২৯-এ।")):
+        javid.set_language("bn" if re.search("[ঀ-৿]", q) else "en")
+        reply, events = _turn(q)
+        if reply != want or any(k == "llm" for k, _ in events):
+            problems.append(f"{q!r}: {reply!r}")
+    javid.set_language("en")
+    TTS_CALLS.clear()
+    javid._tts_cache.clear()          # a short sentence said before would come from the cache, not edge-tts
+    saved = javid.edge_tts.Communicate
+    javid.edge_tts.Communicate = FakeCommunicate
+    try:
+        javid.synthesize("Say بِسْمِ ٱللَّٰهِ before you begin.", "en", backup=False)
+    finally:
+        javid.edge_tts.Communicate = saved
+    if TTS_CALLS != [("Say before you begin.", javid.EDGE_VOICE)]:
+        problems.append(f"edge-tts was given {TTS_CALLS}")
+    return {"problems": problems}
+
+
+def quran_metadata():
+    """quran_meta.json: 114 surahs and 6,236 ayahs; the 30 juz and 7 manzils (the classic ones) cover the Quran in
+    order; 604 pages; every name, in English and Bangla, maps to one surah; `python quran.py --check` passes against
+    Quran.com's format and catches a wrong ayah count, a moved juz boundary and a reciter's moved files."""
+    problems = []
+    if (len(quran.SURAHS), quran.TOTAL, sum(s["ayahs"] for s in quran.SURAHS)) != (114, 6236, 6236):
+        problems.append("the counts")
+    for kind, n in (("juz", 30), ("manzil", 7)):
+        rs = quran.UNITS[kind]
+        if len(rs) != n or rs[0][0] != 0 or rs[-1][1] != quran.TOTAL - 1 or \
+                any(b + 1 != c for (_, b), (c, _) in zip(rs, rs[1:])):
+            problems.append(f"the {kind} boundaries")
+    starts = [quran.key(lo) for lo, _ in quran.UNITS["manzil"]]
+    if starts != ["1:1", "5:1", "10:1", "17:1", "26:1", "37:1", "50:1"]:
+        problems.append(f"the manzils start at {starts}")
+    if quran.page_of(quran.TOTAL - 1) != 604 or round(quran.pages([quran.unit_range("juz", 1)])) != 21:
+        problems.append("the pages")
+    for s in quran.SURAHS:
+        for w in [s["en"], *s["aka"]]:
+            found = quran.find_name(quran.tokens(w))
+            if not found or found[0] != s["n"]:
+                problems.append(f"{w!r} finds {found}, not surah {s['n']}")
+        for w in [s["bn"], *s["aka_bn"]]:
+            found = quran.find_name(quran.tokens(w))
+            if not found or found[0] != s["n"]:
+                problems.append(f"{w!r} finds {found}, not surah {s['n']}")
+    ok, report = quran.check(FakeQuranCom().get)
+    if not ok:
+        problems.append(f"the check against Quran.com's format: {report}")
+    for wrong, word in (({"ayahs": (67, 31)}, "surah 67: 30 ayahs here, 31 on Quran.com"), ({"juz": 13}, "juz 13:"),
+                        ({"husary": "//elsewhere.example/067001.mp3"}, "husary: Quran.com lists")):
+        ok, report = quran.check(FakeQuranCom(wrong).get)
+        if ok or not any(word in line for line in report):
+            problems.append(f"the check missed {wrong}: {report}")
+    if not META_CHECKED():
+        problems.append("quran_meta.json doesn't record its check against Quran.com")
+    return {"problems": problems}
+
+
+def META_CHECKED():
+    return isinstance(quran.META.get("checked"), dict) and quran.META["checked"].get("against") == "api.quran.com/api/v4"
+
+
+def ramadan_answers():
+    """"When is Ramadan?" in code: Aladhan's 1 Ramadan moved by hijri_adjust (9 February 2027 here), the days left,
+    in Bangla too; Aladhan down with nothing saved says so; the Hifz view counts down from the saved date."""
+    problems = []
+    with prayer_clock(_dhaka(2026, 11, 22, 9, 0)):
+        for lang, q, want in (("en", "When is Ramadan?", "Ramadan should begin on Tuesday, 9 February, in 79 days, "
+                                                         "depending on the moon sighting."),
+                              ("bn", "রমজান কবে?", "রমজান শুরু হতে পারে মঙ্গলবার, ৯ ফেব্রুয়ারি, আর ৭৯ দিন পর; চাঁদ "
+                                                  "দেখার ওপর নির্ভর করে।")):
+            javid.set_language(lang)
+            reply, events = _turn(q)
+            if reply != want or any(k == "llm" for k, _ in events):
+                problems.append(f"{q!r}: {reply!r}")
+        javid.set_language("en")
+        if (hifz.ramadan() or {}).get("days") != 79:
+            problems.append(f"the tracker's countdown: {hifz.ramadan()}")
+    prayer_fresh(FakeAladhan(down=True))
+    with prayer_clock(_dhaka(2026, 11, 22, 9, 0)):
+        reply, _ = _turn("When is Ramadan?")
+        if reply != "I can't work out Ramadan's date right now: Aladhan isn't answering." or hifz.ramadan():
+            problems.append(f"Aladhan down: {reply!r}")
+    return {"problems": problems}
+
+
+def reply_is(text):
+    return lambda r: None if _plain(r.last) == text else f"reply should be {text!r}, not {_plain(r.last)!r}"
+
+
+@check_kind("effect")
+def hifz_has(n):
+    """The revision log has juz n (the model logged it through the hifz tool)."""
+    return lambda r: None if any(e["portion"] == {"kind": "juz", "n": n} for e in hifz._read()) else \
+        f"juz {n} isn't in the log: {[e['portion'] for e in hifz._read()]}"
+
+
 def file_not_sent(r):
     if r.extra.get("sent"):
         return f"sent to {[x['model'] for x in r.extra['sent']]}"
@@ -5658,6 +6345,54 @@ CASES += [
     Case("prayer: /prayers and /reminders on Telegram", [], [drive_ok], drive=prayer_telegram, script=[]),
     Case("prayer: keep_awake asks macOS not to idle to sleep while the server runs, only when the settings say so",
          [], [drive_ok], drive=prayer_keep_awake, script=[]),
+    Case("hifz: 'I revised juz 5', 'did para 12', 'aaj 5 para revise korechi' and 16 more parse; plans and questions don't log",
+         [], [drive_ok], drive=hifz_parse, script=[]),
+    Case("hifz: a log in code: owner-only, its day and strength, today's done, a weak one's day back, undo within 24 h",
+         [], [drive_ok], drive=hifz_logging, script=["Sunny.", "Undo what? I can't undo the weather."]),
+    Case("hifz: what's due, what's behind, when he last revised Ya-Sin, the week, the status: in code, well under 1.5 s",
+         [], [drive_ok], drive=hifz_questions, script=[]),
+    Case("hifz: a simulated month with days off and a weak juz: each day's portion, the backlog, and day 31's 30-day view",
+         [], [drive_ok], drive=hifz_month, script=[]),
+    Case("hifz: deleting a log or the whole history waits for Approve (a card, a typed yes, Telegram's button)",
+         [], [drive_ok], drive=hifz_delete, script=[]),
+    Case("hifz: the reminder after Fajr names today's portion, logs from its buttons once; nudges only while not done",
+         [], [drive_ok], drive=hifz_reminders, script=[]),
+    Case("hifz: on Telegram a revision logs in code, and /hifz shows today's portion and the status",
+         [], [drive_ok], drive=hifz_telegram, script=[]),
+    Case("hifz: the routes: /hifz needs the key, logging and undo the page's Origin; /quran/plan's files",
+         [], [drive_ok], drive=hifz_routes, script=[]),
+    Case("hifz: settings: the shipped file, a manzil rotation, a broken file keeps the last good ones",
+         [], [drive_ok], drive=hifz_config, script=[]),
+    Case("hifz: with something else asked, the model gets hifz and logs through it",
+         ["I revised juz 5, and set a timer for 10 minutes."], [called("hifz"), called("set_timer"), hifz_has(5)],
+         script=[call("hifz", request="I revised juz 5"), call("set_timer", duration="10 minutes"),
+                 "Logged juz 5, and your 10-minute timer is set."]),
+    Case("hifz: a revision turn goes only to a provider cleared for personal data; with none, nothing is sent",
+         ["I revised juz 5, and set a timer for 10 minutes."], [file_not_sent], client_script=["Logged."],
+         chain=["gemini:gemini-3-flash-preview"], registry={"gemini": {"personal_ok": False}}),
+    Case("quran: 'play Surah Mulk, Husary' is Quran.com's files in order, shown not spoken; the controls with the player",
+         [], [drive_ok], drive=quran_player, script=[]),
+    Case("quran: hands-free during a recitation, only a player command or 'Javid' is taken; reciting along isn't",
+         [], [drive_ok], drive=quran_talk_gate, script=[]),
+    Case("quran: a request for verses, a translation or a verse number is answered in code with Quran.com's link",
+         [], [drive_ok], drive=quran_text_asks, script=[]),
+    Case("quran: a model reply quoting or numbering a verse is rewritten",
+         ["Tell me about the virtues of Surah Mulk."], [reply_has("Quran.com"), model_requests(2)],
+         script=["Surah Al-Mulk (67:1) begins, \"Blessed is He in whose hand is dominion.\"",
+                 "Many recite Surah Al-Mulk every night; you can read it on Quran.com, or say “play Surah Al-Mulk”."]),
+    Case("quran: a rewrite that still numbers a verse loses that sentence; Arabic never stays",
+         ["What should I know about Surah Al-Mulk?"], [reply_is("It's often recited at night."), model_requests(2)],
+         script=["In 67:2, Allah says He created death and life. It's often recited at night.",
+                 "Allah says in ayah 2 that He created death and life (67:2). It's often recited at night."]),
+    Case("quran: ayah numbers the hifz tool gave are kept in the model's reply",
+         ["What's due today in my revision, and tell me a fun fact?"],
+         [called("hifz"), reply_has("Al-Baqarah 141"), model_requests(2)],
+         script=[call("hifz", request="what's due today?"),
+                 "Today's revision is juz 1, Al-Fatihah 1 to Al-Baqarah 141. Fun fact: honey never spoils."]),
+    Case("quran: quran_meta.json is whole and in order, every name finds its surah, the check against Quran.com works",
+         [], [drive_ok], drive=quran_metadata, script=[]),
+    Case("prayer: 'when is Ramadan?' in code from Aladhan, moved for Bangladesh; Aladhan down says so",
+         [], [drive_ok], drive=ramadan_answers, script=[]),
     Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
          [], [drive_ok], drive=file_routes, script=[]),
     Case("file: the file's text goes only to a provider cleared for personal data, as data with its pages",
@@ -5669,7 +6404,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 230, len(CASES)
+assert len(CASES) == 249, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -5742,6 +6477,8 @@ def run_case(case: Case) -> Result:
     prayer_settings()       # the suite's prayer settings, no saved months, nothing raised, the fake Aladhan
     prayer_fresh()
     SPAWNED.clear()
+    hifz_settings()         # the suite's hifz settings and an empty revision log
+    hifz_fresh()
     for f in (timers.TIMERS_FILE, watches.WATCHES_FILE):
         if os.path.exists(f):
             os.remove(f)

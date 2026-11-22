@@ -705,9 +705,23 @@ ASK = re.compile(rf"(?:{_ANY_PRAYER}).*?(?:{_WHEN.pattern})|(?:{_WHEN.pattern}).
 WORDS = re.compile(rf"{_ANY_PRAYER}|{_GENERIC}|{_HIJRI.pattern}", re.I)    # TOOL_GROUPS: these send prayer_times
 
 
+_RAMADAN = re.compile(_alt(r"ramadan|ramadhan|ramzan|ramazan|ramdan|romjan|romzan|the fasting month",
+                           "রমজান|রমযান|রমজানের|রোজার মাস"), re.I)
+_RAMADAN_ASK = re.compile(_alt(r"when|how many|how long|days?|what date|starts?|begins?|kobe|koto|left|until|till|soon",
+                               "কবে|কত দিন|কতদিন|শুরু|বাকি"), re.I)
+_RAMADAN_FILLER = set("""ramadan ramadhan ramzan ramazan ramdan romjan romzan the fasting month when how many long days day
+what date start starts begin begins kobe koto din shuru left until till is are will be does do it this year next soon
+there in to of hijri expected roughly approximately likely tell me please javid hey""".split()) | set(
+    "রমজান রমজানের রমযান রোজার মাস কবে কত দিন কতদিন শুরু বাকি হবে আর এ বছর আসবে থেকে".split())
+
+
 def request(text: str) -> dict | None:
-    """{"action", "prayer", "day"} for a message that is only a prayer-time question; None leaves it to the model."""
+    """{"action", "prayer", "day"} for a message that is only a prayer-time question (or when Ramadan begins); None
+    leaves it to the model."""
     t = " ".join((text or "").lower().replace("’", "'").split()).strip(" ?!.।,")
+    if t and _RAMADAN.search(t) and _RAMADAN_ASK.search(t) and not _ELSE.search(t) and \
+            not [w for w in re.findall(r"[a-z']+|[\u0980-\u09ff]+", t) if w not in _RAMADAN_FILLER]:
+        return {"action": "ramadan", "prayer": None, "day": ""}
     if not t or len(t.split()) > 14 or _ELSE.search(t) or _NOT_TIME.search(t) or _leftover(t):
         return None
     day = (m[0] if (m := _DAY.search(t)) else "")
@@ -758,6 +772,8 @@ def _answer(req: dict, lang: str) -> tuple[str, str]:
     today, act = now.date(), req["action"]
     if act == "reminders":
         return _reminders_said(cfg, now, lang), ""
+    if act == "ramadan":
+        return _ramadan_said(today, lang), ""
     d = _day_of(req.get("day", ""), today)
     if act == "hijri":
         h = hijri(d)
@@ -1172,6 +1188,55 @@ def tick(now: float | None = None) -> list[dict]:
     return raised
 
 
+# ---------- Ramadan ----------
+def ramadan_start(fetch: bool = True) -> date | None:
+    """The day Ramadan begins here: the coming one (or the one under way), Aladhan's 1 Ramadan moved by hijri_adjust
+    for the local moon sighting. Saved in data/prayers_state.json; fetch=False never asks Aladhan (a reminder, the
+    panel: offline, they just leave it out)."""
+    cfg = config()
+    today = datetime.fromtimestamp(_time(), _zone()).date()
+    with _state_lock:
+        saved = _load_state().get("ramadan")
+    if isinstance(saved, dict) and saved.get("aladhan"):
+        start = date.fromisoformat(saved["aladhan"]) - timedelta(days=cfg["hijri_adjust"])
+        if start + timedelta(days=29) >= today:
+            return start
+    if not fetch:
+        return None
+    dd = times_for(today + timedelta(days=cfg["hijri_adjust"]))
+    if not dd or not dd.get("hijri"):
+        return None
+    year = dd["hijri"]["year"] + (1 if dd["hijri"]["month"] > 9 else 0)
+    try:
+        got = _data(_get_json(f"{API}/hToG/01-09-{year}", FETCH_SEC), dict)
+        aladhan = datetime.strptime(got["gregorian"]["date"], "%d-%m-%Y").date()
+    except Exception as e:
+        print(f"[prayers] couldn't get 1 Ramadan {year} from Aladhan: {type(e).__name__}: {str(e)[:80]}")
+        return None
+    with _state_lock:
+        s = _load_state()
+        s["ramadan"] = {"year": year, "aladhan": aladhan.isoformat(), "checked": round(time.time())}
+        _save_state(s)
+    return aladhan - timedelta(days=cfg["hijri_adjust"])
+
+
+def _ramadan_said(today: date, lang: str) -> str:
+    start = ramadan_start()
+    if not start:
+        return ("এখন রমজানের তারিখ বের করতে পারছি না: Aladhan সাড়া দিচ্ছে না।" if lang == "bn" else
+                "I can't work out Ramadan's date right now: Aladhan isn't answering.")
+    days = (start - today).days
+    if days < 0:
+        n = -days + 1
+        return (f"এখন রমজান চলছে: আজ {_bn(n)} রমজান।" if lang == "bn" else f"It's Ramadan: today is day {n}.")
+    if days == 0:
+        return "আজ রমজানের প্রথম দিন, রমজান মোবারক।" if lang == "bn" else "Ramadan begins today. Ramadan Mubarak."
+    if lang == "bn":
+        return (f"রমজান শুরু হতে পারে {_date_text(start, 'bn')}, আর {_bn(days)} দিন পর; চাঁদ দেখার ওপর নির্ভর করে।")
+    return (f"Ramadan should begin on {_date_text(start, 'en')}, in {days} day{'s' if days != 1 else ''}, depending "
+            f"on the moon sighting.")
+
+
 # ---------- the morning brief ----------
 def brief(d: date) -> dict:
     """Day d's morning brief in both languages: the date and the Hijri date, the prayer times, the weather, the
@@ -1189,12 +1254,24 @@ def brief(d: date) -> dict:
         else:
             times = "নামাজের সময় এখন পাওয়া যাচ্ছে না।" if lang == "bn" else "Prayer times: unavailable right now."
         lines = [head, f"🕌 {times}", f"🌤 {weather_line[lang]}", f"📅 {cal[lang]}", f"✅ {tasks[lang]}"]
+        if (revision := _hifz_line(d, lang)):
+            lines.append(revision)
         if dd and cfg["morning_adhkar"][lang]:
             lines.append(f"🤲 {_fill(cfg['morning_adhkar'][lang], d, lang, cfg)}")
         if dd and _friday(dd) and cfg["friday"][lang]:
             lines.append(f"📖 {_fill(cfg['friday'][lang], d, lang, cfg)}")
         out[lang] = "\n".join(lines)
     return out
+
+
+def _hifz_line(d: date, lang: str) -> str:
+    """hifz.py's line: today's revision, the streak, the days to Ramadan (built there, from his log)."""
+    try:
+        import hifz
+        return hifz.brief_line(d, lang)
+    except Exception as e:      # the brief still goes out without it
+        print(f"[prayers] the brief's revision line: {type(e).__name__}: {str(e)[:80]}")
+        return ""
 
 
 def _deg_bn(x) -> str:

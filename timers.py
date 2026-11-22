@@ -22,9 +22,9 @@ MAX_SECONDS = 7 * 24 * 3600
 MAX_ACTIVE = 20
 KEEP_FIRED_SEC = 3600       # a rung timer stays in the file this long (so a second tab doesn't ring it again)
 MISSED_SEC = 12 * 3600      # one that came due while no page was open still rings if it's this recent
-# Raised by prayers.py (heads-ups, prayer-time messages, the brief, zikir): not Mahadi's timers, so the timers tool
-# doesn't list or cancel them and they don't count against MAX_ACTIVE.
-PRAYER_KINDS = ("prayer", "prayer_start", "brief", "devotion")
+# Raised by prayers.py (heads-ups, prayer-time messages, the brief, zikir) and hifz.py (today's revision): not
+# Mahadi's timers, so the timers tool doesn't list or cancel them and they don't count against MAX_ACTIVE.
+SCHEDULED_KINDS = ("prayer", "prayer_start", "brief", "devotion", "hifz")
 _now = time.time            # the clock (regression.py moves it with prayers._time)
 
 _lock = threading.Lock()
@@ -69,8 +69,8 @@ def _pending(items: list[dict]) -> list[dict]:
 
 
 def _mine(items: list[dict]) -> list[dict]:
-    """Mahadi's own timers and reminders (and a watch's alert), not what prayers.py raised."""
-    return [t for t in items if t["kind"] not in PRAYER_KINDS]
+    """Mahadi's own timers and reminders (and a watch's alert), not what prayers.py or hifz.py raised."""
+    return [t for t in items if t["kind"] not in SCHEDULED_KINDS]
 
 
 def _over(t: dict, now: float) -> bool:
@@ -276,11 +276,12 @@ def timers_tool(action: str = "list", which: str = "") -> str:
 
 
 def add_alert(label: str, announce: dict, kind: str = "alert", due: float | None = None, until: float | None = None,
-              channels: list[str] | None = None) -> dict:
+              channels: list[str] | None = None, extra: dict | None = None) -> dict:
     """An alert: the page rings it like a timer and says the announcement in Javid's voice, Telegram and the CLI get
     it too. A watch's (watches.py: a price crossed its level, a story came out) is due now. prayers.py's comes due at
     its minute, ends at `until` (never rung or sent after it) and may be for some channels only (`channels`: "page",
-    "cli", "telegram"; None = all)."""
+    "cli", "telegram"; None = all). extra: what the page and Telegram need besides the words (hifz.py: the portions
+    a reminder names, for its "log it" buttons)."""
     now = _now()
     with _lock:
         items = _prune(_load(), now)
@@ -290,6 +291,8 @@ def add_alert(label: str, announce: dict, kind: str = "alert", due: float | None
             item["until"] = until
         if channels is not None:
             item["channels"] = list(channels)
+        if extra:
+            item["extra"] = extra
         items.append(item)
         _save(items)
     return item
@@ -301,8 +304,14 @@ def active_json() -> list[dict]:
     with _lock:
         items = _prune(_load(), now)
     return [{"id": t["id"], "kind": t["kind"], "label": t["label"], "due": int(t["due"] * 1000),
-             "seconds": t["seconds"], "announce": t["announce"]} for t in _pending(items)
-            if _for(t, "page") and not _over(t, now)]
+             "seconds": t["seconds"], "announce": t["announce"], **({"extra": t["extra"]} if t.get("extra") else {})}
+            for t in _pending(items) if _for(t, "page") and not _over(t, now)]
+
+
+def get(tid: str) -> dict | None:
+    """One item as it is in timers.json (hifz.py's reminder buttons read the portions it named)."""
+    with _lock:
+        return next((dict(t) for t in _load() if t["id"] == tid), None)
 
 
 def mark_fired(tid: str) -> bool:

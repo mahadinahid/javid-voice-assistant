@@ -1,0 +1,24 @@
+# The hifz revision tracker (hifz.py; 2026-11-22). Javid reads this file again when it changes: no restart. A file that
+# doesn't check out isn't used: Javid keeps the last good settings and prints what's wrong. Your revision log itself
+# is data/hifz_log.jsonl (owner-only, never in git).
+
+unit: juz             # juz (30) or manzil (the classic 7: Al-Fatiha–An-Nisa, Al-Ma'idah–At-Tawbah, Yunus–An-Nahl,
+                      # Al-Isra–Al-Furqan, Ash-Shu'ara–Ya-Sin, As-Saffat–Al-Hujurat, Qaf–An-Nas)
+daily: 1              # how many a day: 1 juz = a 30-day cycle, 2 = 15 days, 3 = 10 days; 1 manzil = a week
+weak_days: 2          # a portion you log as weak comes back this many days later, until you log it again
+start: 1              # where the rotation begins before anything is logged (or say "I'm on juz 12")
+reciter: husary       # husary (Mahmoud Khalil Al-Husary) or alafasy (Mishary Rashid Alafasy), from Quran.com
+brief: true           # a "revision today" line in the morning brief on Telegram
+ramadan: true         # count down to Ramadan (its date from Aladhan, moved by hijri_adjust in prayers.yaml)
+
+reminders:            # on the page (its own chime, a banner with buttons, Javid's voice) and on Telegram (buttons too)
+  page: true
+  telegram: true
+  morning:            # today's exact portion, your streak and the days to Ramadan
+    after: Fajr       # after: Fajr, Sunrise, Dhuhr, Asr, Maghrib or Isha with minutes:, or at: "05:30"; off to stop it
+    minutes: 25
+  nudges:             # only while today's portion isn't logged yet; the last one is the day's last call
+    - after: Asr
+      minutes: 45
+    - after: Isha
+      minutes: 45

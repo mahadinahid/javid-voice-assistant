@@ -1,0 +1,76 @@
+# Prayer times, reminders and the morning brief (prayers.py; 2026-11-22). The times come from Aladhan
+# (api.aladhan.com, no key), a month at a time. Javid reads this file again when it changes: no restart. A file
+# that doesn't check out isn't used: Javid keeps the last good settings and prints what's wrong.
+# This file is in git: put a city here, never a home address.
+
+city: Dhaka
+country: Bangladesh
+method: 1             # Aladhan's calculation method. 1 = University of Islamic Sciences, Karachi. Others: 2 ISNA,
+                      # 3 Muslim World League, 4 Umm al-Qura (Makkah), 5 Egyptian, 8 Gulf, 9 Kuwait, 10 Qatar,
+                      # 11 Singapore, 13 Turkey (Diyanet), 15 Moonsighting Committee, 16 Dubai
+school: 1             # Asr: 1 = Hanafi (the later Asr), 0 = Shafi'i, Maliki and Hanbali
+tune: {}              # minutes added to a time to match your mosque, e.g. {Fajr: 2, Maghrib: 3}
+hijri_adjust: -1      # days added to Aladhan's Hijri date. Bangladesh dates its months by its own moon sighting:
+                      # Jumada al-Akhirah 1448 began here on 12 November 2026, a day after Aladhan's calendar.
+                      # Check it when a month begins.
+
+heads_up:             # rings on the page (chime, banner, Javid's voice) and comes to Telegram before each prayer
+  minutes: 10         # 0 turns them off
+  prayers: [Fajr, Dhuhr, Asr, Maghrib, Isha]
+
+at_start:             # a Telegram message when a prayer begins
+  telegram: true
+  tasbih: true        # adds the tasbih line below
+  prayers: [Fajr, Dhuhr, Asr, Maghrib, Isha]
+tasbih:
+  en: "After the prayer: SubhanAllah 33, Alhamdulillah 33, Allahu Akbar 34."
+  bn: "নামাজের পর: সুবহানাল্লাহ ৩৩ বার, আলহামদুলিল্লাহ ৩৩ বার, আল্লাহু আকবার ৩৪ বার।"
+
+jumuah: ""            # your mosque's Jumu'ah time on Fridays, e.g. "13:15"; empty = Dhuhr's time
+
+brief:                # the morning brief on Telegram: the date, prayer times, weather, calendar and tasks
+  telegram: true
+  after_fajr_minutes: 20
+morning_adhkar:       # a line in the brief; {sunrise} is today's sunrise
+  en: "Morning adhkar before sunrise ({sunrise}): Ayat al-Kursi; Al-Ikhlas, Al-Falaq and An-Nas three times; SubhanAllahi wa bihamdihi 100 times."
+  bn: "সকালের জিকির, সূর্যোদয়ের ({sunrise}) আগে: আয়াতুল কুরসি; সূরা ইখলাস, ফালাক ও নাস তিনবার করে; সুবহানাল্লাহি ওয়া বিহামদিহি ১০০ বার।"
+friday:               # a line in Friday's brief; {jumuah} is Jumu'ah's time
+  en: "It's Jumu'ah ({jumuah}): Surah Al-Kahf, ghusl, and more salawat on the Prophet ﷺ."
+  bn: "আজ জুমা ({jumuah}): সূরা কাহফ, গোসল, আর নবীজির (সা.) ওপর বেশি বেশি দরুদ।"
+
+keep_awake: true      # while the server runs and the Mac is on power, it doesn't idle to sleep (caffeinate), so
+                      # Fajr's messages go out. Closing the lid still sleeps it. Read when the server starts.
+
+# Zikir and other reminders, on Telegram. Each has a name, a time (after: or before: one of the times below, with
+# minutes:, or at: "HH:MM"), days (Mon Tue Wed Thu Fri Sat Sun; left out = every day) and its text in English and
+# Bangla. The times: Fajr, Sunrise, Dhuhr, Asr, Maghrib, Isha, Imsak, Sunset, Midnight, Firstthird, Lastthird (the
+# night's last third). In a text, {fajr}, {maghrib}... are that day's times and {fajr_tomorrow}... the next day's.
+# page: true also rings it on the page; enabled: false keeps it here, switched off.
+reminders:
+  - name: Evening adhkar
+    after: Asr
+    minutes: 30
+    text:
+      en: "Evening adhkar before Maghrib ({maghrib}): Ayat al-Kursi; Al-Ikhlas, Al-Falaq and An-Nas three times; SubhanAllahi wa bihamdihi 100 times."
+      bn: "সন্ধ্যার জিকির, মাগরিবের ({maghrib}) আগে: আয়াতুল কুরসি; সূরা ইখলাস, ফালাক ও নাস তিনবার করে; সুবহানাল্লাহি ওয়া বিহামদিহি ১০০ বার।"
+  - name: Monday fast
+    days: [Sun]
+    after: Isha
+    minutes: 30
+    text:
+      en: "Tomorrow is Monday, a Sunnah fast. Sehri ends by Fajr ({fajr_tomorrow})."
+      bn: "কাল সোমবার, সুন্নত রোজার দিন। সেহরি শেষ করতে হবে ফজরের ({fajr_tomorrow}) আগে।"
+  - name: Thursday fast
+    days: [Wed]
+    after: Isha
+    minutes: 30
+    text:
+      en: "Tomorrow is Thursday, a Sunnah fast. Sehri ends by Fajr ({fajr_tomorrow})."
+      bn: "কাল বৃহস্পতিবার, সুন্নত রোজার দিন। সেহরি শেষ করতে হবে ফজরের ({fajr_tomorrow}) আগে।"
+  - name: Tahajjud
+    enabled: false
+    after: Lastthird
+    minutes: 0
+    text:
+      en: "The last third of the night has begun, a good time for Tahajjud. Fajr is at {fajr}."
+      bn: "রাতের শেষ তৃতীয়াংশ শুরু হয়েছে, তাহাজ্জুদের ভালো সময়। ফজর {fajr}।"

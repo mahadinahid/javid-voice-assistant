@@ -135,11 +135,12 @@ _SPOKEN = {
               "দুটো আলাদা সাইটে পেলে।"},
     "sources": {
         "en": "Weather comes from Open-Meteo, live prices from Binance and Yahoo Finance, exchange rates from the "
-              "European Central Bank and ExchangeRate-API, and holidays from Google's public holiday calendar. News "
-              "comes from Google News, and other web answers from a Tavily web search, with the source and date.",
+              "European Central Bank and ExchangeRate-API, holidays from Google's public holiday calendar, and "
+              "prayer times and the Hijri date from Aladhan, with the calculation method and Asr school in my settings. "
+              "News comes from Google News, and other web answers from a Tavily web search, with the source and date.",
         "bn": "আবহাওয়া আসে Open-Meteo থেকে, দাম Binance আর Yahoo Finance থেকে, এক্সচেঞ্জ রেট ইউরোপিয়ান সেন্ট্রাল "
-              "ব্যাংক আর ExchangeRate-API থেকে, আর ছুটির দিন Google-এর ছুটির ক্যালেন্ডার থেকে। খবর আসে Google News "
-              "থেকে, আর অন্য ওয়েবের উত্তর Tavily সার্চ থেকে, উৎস আর তারিখসহ।"},
+              "ব্যাংক আর ExchangeRate-API থেকে, ছুটির দিন Google-এর ছুটির ক্যালেন্ডার থেকে, আর নামাজের সময় ও হিজরি "
+              "তারিখ Aladhan থেকে। খবর আসে Google News থেকে, আর অন্য ওয়েবের উত্তর Tavily সার্চ থেকে, উৎস আর তারিখসহ।"},
     "memory": {
         "en": "I only remember what you approve: I propose a line, and it's saved to a file on your Mac once you "
               "say yes, never passwords, keys or ID numbers. Our chats stay on your Mac too. Your calendar, tasks, "
@@ -164,14 +165,16 @@ _SPOKEN = {
     "capabilities": {
         "en": "I keep your tasks and calendar, set timers and reminders, check the weather, live prices and "
               "exchange rates, do sums, read the news and search the web, read the PDFs, Word files and pictures you "
-              "give me, and remember what you approve. I can also "
+              "give me, and remember what you approve. I tell you the prayer times and the Hijri date, ring before "
+              "each prayer, and send zikir reminders and a morning brief to Telegram. I can also "
               "watch a price, the news about something or the rain and tell you when it happens, check myself "
               "when something seems wrong, and save a report or a brief to your Google Drive when you say so. For "
               "bigger jobs I have {agents} agents; I can't send email or messages, "
               "make calls or buy anything.",
         "bn": "আমি তোমার কাজের তালিকা আর ক্যালেন্ডার রাখি, টাইমার দিই, আবহাওয়া, দাম আর এক্সচেঞ্জ রেট দেখি, হিসাব করি, "
               "খবর পড়ি আর ওয়েবে খুঁজি, তোমার দেওয়া পিডিএফ, ওয়ার্ড ফাইল আর ছবি পড়ি, আর তুমি যা অনুমতি দাও তা মনে "
-              "রাখি। কোনো দাম, কোনো বিষয়ের খবর বা বৃষ্টির দিকে "
+              "রাখি। নামাজের সময় আর হিজরি তারিখ বলি, প্রতি ওয়াক্তের আগে জানাই, আর টেলিগ্রামে জিকিরের রিমাইন্ডার ও "
+              "সকালের ব্রিফ পাঠাই। কোনো দাম, কোনো বিষয়ের খবর বা বৃষ্টির দিকে "
               "নজর রেখে সময়মতো জানাতে পারি, কিছু ঠিকমতো না চললে নিজেকে পরীক্ষা করতে পারি, আর তুমি বললে রিপোর্ট বা ব্রিফ "
               "তোমার Google Drive-এ সেভ করতে পারি। বড় কাজের জন্য {agents} "
               "এজেন্ট আছে; ইমেইল বা মেসেজ পাঠানো, কল করা বা কেনাকাটা পারি না।"},
@@ -227,6 +230,7 @@ _CAPABILITIES_SCREEN = """What Javid can do:
 - Tasks: add, list, complete, delete (asks first)
 - Google Calendar: events, free time, add, move and delete (both ask first)
 - Timers and reminders
+- Prayer times and the Hijri date (Aladhan), a ring before each prayer, zikir reminders and a morning brief on Telegram
 - Weather, live crypto and stock prices, exchange rates
 - Sums and unit conversions
 - News from Google News, web search, public holidays

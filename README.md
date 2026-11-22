@@ -21,6 +21,13 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
   writes a cited report.
 - **It keeps watch.** "Tell me when bitcoin goes above 90,000", "let me know when there's news about the IVAC
   holiday", "tell me when it starts raining": checked in the background, announced like a timer.
+- **Prayer times, every day.** "When's Maghrib?", "how long until Asr?", "what's the Hijri date?" are answered at
+  once from Aladhan's times for your city (no key), in English or Bangla. Javid rings 10 minutes before each prayer on
+  the page and on Telegram, messages Telegram when each one begins (with the tasbih), sends a morning brief after
+  Fajr (prayer times, weather, calendar, tasks, the morning adhkar) and zikir reminders (the evening adhkar, the
+  Monday and Thursday fasts; Tahajjud if you switch it on). The city, calculation method, Asr school, minutes, texts
+  and reminders are in [`config/prayers.yaml`](config/prayers.yaml). It all comes from the server on your Mac, so
+  the Mac has to be awake: while it's on power Javid keeps it from idling to sleep, but closing the lid still sleeps it.
 - **It remembers, with your say-so.** Nothing goes into its memory until you approve it, and secrets are refused.
   Past chats are searchable.
 - **On your phone.** A Telegram bot, paired by scanning a QR code. Anything that changes your data waits for an
@@ -115,7 +122,8 @@ rest, all kept out of git. The server listens on `127.0.0.1` only, and every req
 (which only your browser has), come under this machine's own address, and, when a browser sends an Origin, come
 from Javid's own page: another website, a DNS-rebinding page or another program on the Mac gets a refusal and nothing
 else. What does leave the machine: each voice clip goes to Groq for transcription, each spoken
-reply to Microsoft's edge-tts, and your requests to the language model and search providers that are on. Calendar,
+reply to Microsoft's edge-tts, your city and prayer settings to Aladhan, and your requests to the language model and
+search providers that are on. Calendar,
 tasks, memory, chats and the files you give it go only to providers with `personal_ok: true`; a file's text is
 treated as data, so nothing written in a file can change your tasks, calendar or memory without your Approve.
 
@@ -124,7 +132,7 @@ treated as data, so nothing written in a file can change your tasks, calendar or
 ## Testing
 
 ```bash
-python regression.py                         # 156 scripted checks: no network, no API tokens
+python regression.py                         # 166 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -148,6 +156,7 @@ Telegram and Drive, so it never touches your data or spends a credit. Run it bef
 | `memory_store.py` | Memory with approval, and the past-chat search |
 | `skills/`, `agents/` (`skills.py`, `agents.py`) | The morning-brief and news-digest skills; the research and planner agents |
 | `watches.py` | Alerts on prices, news and rain |
+| `prayers.py`, `config/prayers.yaml`, `fixtures/prayers/` | Prayer times (Aladhan), prayer and zikir reminders, the Hijri date and the morning brief; its settings; the recorded months its tests use |
 | `telegram_bot.py`, `telegram.html` | The Telegram bot and its setup page |
 | `approvals.py` | Approve cards: a delete or a move waits for a tap or your yes (every write, on Telegram) |
 | `documents.py`, `fixtures/files/` | Reading PDFs, Word and text files and pictures (parsed locally; Tesseract, then a vision model only for pictures without text), and the sample files its tests use |

@@ -30,8 +30,9 @@ never runs at the same time as a web turn, and the web's open chat is reopened a
 transcribed like /talk and also gets a voice-note reply in the locked voice: javid.synthesize, sentence groups
 by voice as the page speaks them, converted to OGG/Opus by ffmpeg (an MP3 audio file if ffmpeg is missing; if
 edge-tts is down, the backup voice as on the page, else the text says the voice is unavailable). A skill's or agent's screen
-part and the source links follow as their own messages. Timers and reminders are pushed when they come due.
-Commands: /help, /new, /tasks, /timers, /lang, /voice, /status, /lock.
+part and the source links follow as their own messages. Timers and reminders are pushed when they come due, and so
+are prayers.py's prayer and zikir reminders and the morning brief.
+Commands: /help, /new, /tasks, /timers, /lang, /voice, /status, /watches, /check, /prayers, /reminders, /lock.
 """
 import contextlib
 import json
@@ -52,6 +53,7 @@ import approvals
 import documents
 import javid
 import memory_store
+import prayers
 import providers
 import selfcheck
 import timers
@@ -76,7 +78,12 @@ COMMANDS = [("help", "What I can do here"), ("new", "Start a new Telegram chat")
             ("timers", "Running timers and reminders"), ("lang", "Reply language: /lang en or /lang bn"),
             ("voice", "Voice replies: only to voice messages, or always"), ("status", "Model, language, tasks"),
             ("watches", "What I'm watching for you"), ("check", "Self-check: what works and what doesn't"),
+            ("prayers", "Today's prayer times and the next prayer"),
+            ("reminders", "Prayer and zikir reminders coming up"),
             ("lock", "Turn off remote control until you unlock it on the Mac")]
+# What each kind of pushed item starts with: a watch's alert, prayers.py's heads-up and prayer-time message, the
+# morning brief, a zikir reminder; a timer or reminder otherwise.
+ICONS = {"alert": "🔔", "prayer": "🕌", "prayer_start": "🕌", "brief": "🌅", "devotion": "🤲"}
 
 # Every Bot API URL carries the token, and httpx logs request URLs at INFO: keep its loggers at WARNING whatever
 # else configures logging.
@@ -616,6 +623,10 @@ def _command(chat_id: int, text: str) -> None:
     elif name == "check":
         spoken, screen = _drain(selfcheck.diagnose("", javid.get_language()))
         send(chat_id, spoken.replace(" The full report is on your screen.", "") + (f"\n\n{screen}" if screen else ""))
+    elif name == "prayers":
+        send(chat_id, prayers.telegram_times(javid.get_language()))
+    elif name == "reminders":
+        send(chat_id, prayers.telegram_schedule(javid.get_language()))
     else:
         send(chat_id, f"I don't know /{name}.\n\n{_help()}")
 
@@ -783,10 +794,10 @@ def push_due() -> None:
         return
     lang = javid.get_language()
     for t in timers.take_due_for("telegram"):
-        late = time.time() - t["due"]
+        late = timers._now() - t["due"] > 120 and not t.get("until")     # one with an end is never sent stale
         text = t["announce"].get(lang) or t["announce"]["en"]
-        icon = "🔔" if t["kind"] == "alert" else "⏰"     # an alert is a watch that fired (watches.py)
-        send(state["chat"], f"{icon} {text}" + (f" (missed: it was due {timers._when(t['due'])})" if late > 120 else ""))
+        send(state["chat"], f"{ICONS.get(t['kind'], '⏰')} {text}" +
+             (f" (missed: it was due {timers._when(t['due'])})" if late else ""))
 
 
 # ---------- the loops ----------

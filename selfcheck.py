@@ -357,6 +357,8 @@ _TOOL_SOURCES = {
     "exchange_rates": ("the European Central Bank's reference rates and ExchangeRate-API",
                        "ইউরোপিয়ান সেন্ট্রাল ব্যাংক আর ExchangeRate-API-এর রেট"),
     "get_weather": ("the Open-Meteo forecast", "Open-Meteo-র আবহাওয়ার পূর্বাভাস"),
+    "prayer_times": ("Aladhan's prayer times, with the method and Asr school in config/prayers.yaml",
+                     "Aladhan-এর নামাজের সময়সূচি"),
     "list_events": ("your Google Calendar", "তোমার Google Calendar"), "find_free_time": ("your Google Calendar", "তোমার Google Calendar"),
     "add_event": ("your Google Calendar", "তোমার Google Calendar"), "move_event": ("your Google Calendar", "তোমার Google Calendar"),
     "delete_event": ("your Google Calendar", "তোমার Google Calendar"),

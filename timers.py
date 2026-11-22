@@ -22,6 +22,10 @@ MAX_SECONDS = 7 * 24 * 3600
 MAX_ACTIVE = 20
 KEEP_FIRED_SEC = 3600       # a rung timer stays in the file this long (so a second tab doesn't ring it again)
 MISSED_SEC = 12 * 3600      # one that came due while no page was open still rings if it's this recent
+# Raised by prayers.py (heads-ups, prayer-time messages, the brief, zikir): not Mahadi's timers, so the timers tool
+# doesn't list or cancel them and they don't count against MAX_ACTIVE.
+PRAYER_KINDS = ("prayer", "prayer_start", "brief", "devotion")
+_now = time.time            # the clock (regression.py moves it with prayers._time)
 
 _lock = threading.Lock()
 _BN_DIGITS = str.maketrans("০১২৩৪৫৬৭৮৯", "0123456789")
@@ -47,19 +51,35 @@ def _load() -> list[dict]:
 
 
 def _save(items: list[dict]) -> None:
-    tmp = TIMERS_FILE + ".tmp"
-    with open(tmp, "w") as f:
+    tmp = TIMERS_FILE + ".tmp"      # owner-only: a reminder's words, and the brief's calendar and tasks
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
         json.dump(items, f, ensure_ascii=False, indent=1)
     os.replace(tmp, TIMERS_FILE)
 
 
 def _prune(items: list[dict], now: float) -> list[dict]:
-    return [t for t in items if (t.get("fired") and now - t["fired"] < KEEP_FIRED_SEC)
-            or (not t.get("fired") and now - t["due"] < MISSED_SEC)]
+    return [t for t in items if not (t.get("until") and now >= t["until"] + KEEP_FIRED_SEC)
+            and ((t.get("fired") and now - t["fired"] < KEEP_FIRED_SEC)
+                 or (not t.get("fired") and now - t["due"] < MISSED_SEC))]
 
 
 def _pending(items: list[dict]) -> list[dict]:
     return sorted((t for t in items if not t.get("fired")), key=lambda t: t["due"])
+
+
+def _mine(items: list[dict]) -> list[dict]:
+    """Mahadi's own timers and reminders (and a watch's alert), not what prayers.py raised."""
+    return [t for t in items if t["kind"] not in PRAYER_KINDS]
+
+
+def _over(t: dict, now: float) -> bool:
+    """An alert whose time is over (a prayer's heads-up once the prayer began): never rung or sent."""
+    return t.get("until") is not None and now >= t["until"]
+
+
+def _for(t: dict, channel: str) -> bool:
+    return t.get("channels") is None or channel in t["channels"]
 
 
 # ---------- parsing ----------
@@ -187,7 +207,7 @@ def _describe(t: dict, now: float) -> str:
 # ---------- tools ----------
 def set_timer(duration: str = "", at: str = "", day: str = "", label: str = "") -> str:
     label = " ".join((label or "").split())[:80].strip(" .")
-    now = time.time()
+    now = _now()
     try:
         if duration and not at:
             secs = parse_duration(str(duration))
@@ -208,13 +228,13 @@ def set_timer(duration: str = "", at: str = "", day: str = "", label: str = "") 
                 "or a time like '7:30 pm'.")
     with _lock:
         items = _prune(_load(), now)
-        if len(_pending(items)) >= MAX_ACTIVE:
+        if len(_mine(_pending(items))) >= MAX_ACTIVE:
             return f"There are already {MAX_ACTIVE} timers and reminders running; cancel one first."
         item = {"id": uuid.uuid4().hex[:10], "kind": kind, "label": label, "due": due, "seconds": secs,
                 "created": now, "fired": None, "announce": _announce(kind, label, secs)}
         items.append(item)
         _save(items)
-        running = len(_pending(items))
+        running = len(_mine(_pending(items)))
     if kind == "timer":
         what = f"{label} timer" if label else "timer"
         return (f"Timer set: {what} for {_human(secs)}. It rings at {_clock(datetime.fromtimestamp(due))}. "
@@ -223,10 +243,10 @@ def set_timer(duration: str = "", at: str = "", day: str = "", label: str = "") 
 
 
 def timers_tool(action: str = "list", which: str = "") -> str:
-    now = time.time()
+    now = _now()
     with _lock:
         items = _prune(_load(), now)
-        pending = _pending(items)
+        pending = _mine(_pending(items))
         if action != "cancel":
             if not pending:
                 return "No timers or reminders running."
@@ -255,14 +275,21 @@ def timers_tool(action: str = "list", which: str = "") -> str:
     return f"Cancelled {', '.join(_describe(t, now).split(',')[0] for t in hits)}. {left} still running."
 
 
-def add_alert(label: str, announce: dict) -> dict:
-    """An alert due now (watches.py: a price crossed its level, a story came out): the page rings it like a timer
-    and says the announcement in Javid's voice, Telegram and the CLI get it too."""
-    now = time.time()
+def add_alert(label: str, announce: dict, kind: str = "alert", due: float | None = None, until: float | None = None,
+              channels: list[str] | None = None) -> dict:
+    """An alert: the page rings it like a timer and says the announcement in Javid's voice, Telegram and the CLI get
+    it too. A watch's (watches.py: a price crossed its level, a story came out) is due now. prayers.py's comes due at
+    its minute, ends at `until` (never rung or sent after it) and may be for some channels only (`channels`: "page",
+    "cli", "telegram"; None = all)."""
+    now = _now()
     with _lock:
         items = _prune(_load(), now)
-        item = {"id": uuid.uuid4().hex[:10], "kind": "alert", "label": " ".join(label.split())[:80], "due": now,
-                "seconds": 0, "created": now, "fired": None, "announce": announce}
+        item = {"id": uuid.uuid4().hex[:10], "kind": kind, "label": " ".join(label.split())[:80],
+                "due": now if due is None else due, "seconds": 0, "created": now, "fired": None, "announce": announce}
+        if until is not None:
+            item["until"] = until
+        if channels is not None:
+            item["channels"] = list(channels)
         items.append(item)
         _save(items)
     return item
@@ -270,11 +297,12 @@ def add_alert(label: str, announce: dict) -> dict:
 
 # ---------- page and CLI ----------
 def active_json() -> list[dict]:
-    now = time.time()
+    now = _now()
     with _lock:
         items = _prune(_load(), now)
     return [{"id": t["id"], "kind": t["kind"], "label": t["label"], "due": int(t["due"] * 1000),
-             "seconds": t["seconds"], "announce": t["announce"]} for t in _pending(items)]
+             "seconds": t["seconds"], "announce": t["announce"]} for t in _pending(items)
+            if _for(t, "page") and not _over(t, now)]
 
 
 def mark_fired(tid: str) -> bool:
@@ -283,7 +311,7 @@ def mark_fired(tid: str) -> bool:
         items = _load()
         for t in items:
             if t["id"] == tid and not t.get("fired"):
-                t["fired"] = time.time()
+                t["fired"] = _now()
                 _save(items)
                 return True
     return False
@@ -301,10 +329,10 @@ def cancel(tid: str) -> bool:
 
 def take_due() -> list[dict]:
     """Timers due now, marked rung (the CLI's ring thread)."""
-    now = time.time()
+    now = _now()
     with _lock:
         items = _prune(_load(), now)
-        due = [t for t in items if not t.get("fired") and t["due"] <= now]
+        due = [t for t in items if not t.get("fired") and t["due"] <= now and _for(t, "cli") and not _over(t, now)]
         for t in due:
             t["fired"] = now
         if due:
@@ -316,11 +344,11 @@ def take_due_for(channel: str, baseline: bool = False) -> list[dict]:
     """Timers due now that haven't been sent to `channel` (Telegram) yet, marked sent there; the page's and the
     CLI's ringing (`fired`) is separate. baseline=True (the channel starting up) marks the ones that already rang
     without returning them, so old timers aren't re-sent; one that came due unrung is still sent."""
-    now = time.time()
+    now = _now()
     with _lock:
         items = _prune(_load(), now)
-        due = [t for t in items if t["due"] <= now and channel not in t.get("sent", [])
-               and (t.get("fired") or not baseline)]
+        due = [t for t in items if t["due"] <= now and channel not in t.get("sent", []) and _for(t, channel)
+               and not _over(t, now) and (t.get("fired") or not baseline)]
         for t in due:
             t.setdefault("sent", []).append(channel)
         if due:

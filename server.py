@@ -26,6 +26,7 @@ import calendar_tools
 import drive_tools
 import edge_pool
 import memory_store
+import prayers
 import providers
 import selfcheck
 import skills
@@ -85,6 +86,9 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_check_models, daemon=True).start()
     telegram_bot.start()    # only with TELEGRAM_BOT_TOKEN in .env
     watches.start()         # price, news and rain watches: checked in code, alerts ring like timers
+    threading.Thread(target=prayers.prefetch, daemon=True).start()   # this month's prayer times, before a question
+    if prayers.keep_awake():    # on power, no idle sleep while the server runs: Fajr's reminders go out
+        print("[prayers] keeping the Mac awake while the server runs on power (keep_awake in config/prayers.yaml)")
     documents.prune()       # uploads older than KEEP_DAYS go
     yield
     watches.stop()

@@ -6675,6 +6675,7 @@ loadThemes().then(ok => { if (ok && themeEditor.hidden) applyTheme(savedThemeId(
 // so two open tabs don't both announce. Browsers block sound until the page has been clicked once.
 let timerList = [];                 // [{id, kind, label, due (epoch ms), seconds, announce: {en, bn}}]
 const rungTimers = new Set();
+const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲' };   // a watch's alert, a prayer's heads-up, zikir
 let ringAudio = null;               // WebAudio context for the chime (a sound, not a voice)
 let ringHideTimer = null;
 
@@ -6739,6 +6740,7 @@ function showRing(t, text) {
     const late = Date.now() - t.due > 120000;
     const when = new Date(t.due).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
     document.getElementById('ring-text').innerHTML = `${esc(text)}${late ? `<small>Missed at ${esc(when)}</small>` : ''}`;
+    document.querySelector('#ring .ring-icon').textContent = RING_ICONS[t.kind] || '⏰';
     document.getElementById('ring').hidden = false;
     clearTimeout(ringHideTimer);
     ringHideTimer = setTimeout(() => { document.getElementById('ring').hidden = true; }, 120000);

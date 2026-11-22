@@ -55,6 +55,7 @@ import traceback
 import types
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import yaml
 
@@ -68,6 +69,7 @@ import gnews  # noqa: E402
 import javid  # noqa: E402
 import markets  # noqa: E402
 import memory_store  # noqa: E402
+import prayers  # noqa: E402
 import providers  # noqa: E402
 import rates  # noqa: E402
 import search  # noqa: E402
@@ -328,6 +330,112 @@ drive_tools.TOKEN_FILE = os.path.join(SCRATCH, "token_drive.json")
 drive_tools.STATE_FILE = os.path.join(SCRATCH, "drive.json")
 drive_tools.CALENDAR_TOKEN_FILE = os.path.join(SCRATCH, "token.json")
 documents.UPLOAD_DIR = os.path.join(SCRATCH, "uploads")            # files the file: cases send stay in scratch
+
+
+# ---------- prayer times (prayers.py, 2026-11-22): Aladhan's recorded months, the suite's own settings ----------
+PRAYER_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "prayers")
+DHAKA = ZoneInfo("Asia/Dhaka")
+prayers.CONFIG_FILE = os.path.join(SCRATCH, "prayers.yaml")      # the suite's settings, never Mahadi's edits
+prayers.CACHE_FILE = os.path.join(SCRATCH, "prayer_times.json")
+prayers.STATE_FILE = os.path.join(SCRATCH, "prayers_state.json")
+prayers.BACKGROUND = False      # months are fetched in line, so a case sees every request
+prayers.RETRY_SEC = 0           # and a case that takes Aladhan down and up again isn't kept waiting
+SPAWNED = []                    # what keep_awake would have started: never a real caffeinate
+prayers._spawn = SPAWNED.append
+PRAYER_SETTINGS = {             # the shipped defaults (config/prayers.yaml), with shorter texts
+    "city": "Dhaka", "country": "Bangladesh", "method": 1, "school": 1, "hijri_adjust": -1, "jumuah": "",
+    "heads_up": {"minutes": 10, "prayers": ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]},
+    "at_start": {"telegram": True, "tasbih": True, "prayers": ["Fajr", "Dhuhr", "Asr", "Maghrib", "Isha"]},
+    "brief": {"telegram": True, "after_fajr_minutes": 20}, "keep_awake": True,
+    "reminders": [
+        {"name": "Evening adhkar", "after": "Asr", "minutes": 30,
+         "text": {"en": "Evening adhkar before Maghrib ({maghrib}).", "bn": "সন্ধ্যার জিকির, মাগরিবের ({maghrib}) আগে।"}},
+        {"name": "Monday fast", "days": ["Sun"], "after": "Isha", "minutes": 30,
+         "text": {"en": "Tomorrow is Monday, a Sunnah fast. Sehri ends by Fajr ({fajr_tomorrow}).",
+                  "bn": "কাল সোমবার, সুন্নত রোজার দিন। সেহরি শেষ ফজরের ({fajr_tomorrow}) আগে।"}},
+        {"name": "Thursday fast", "days": ["Wed"], "after": "Isha", "minutes": 30,
+         "text": {"en": "Tomorrow is Thursday, a Sunnah fast. Sehri ends by Fajr ({fajr_tomorrow}).",
+                  "bn": "কাল বৃহস্পতিবার, সুন্নত রোজার দিন। সেহরি শেষ ফজরের ({fajr_tomorrow}) আগে।"}},
+        {"name": "Tahajjud", "enabled": False, "after": "Lastthird", "minutes": 0,
+         "text": {"en": "The night's last third has begun. Fajr is at {fajr}."}},
+    ],
+}
+
+
+class FakeAladhan:
+    """Aladhan without the network: a month from the recorded fixtures (Dhaka, method 1, school 1: November and
+    December 2026; any other month is November's days, relabelled), a day from its month. down: every request
+    fails; months_down: only the month calendar does. Every URL asked for is kept."""
+
+    def __init__(self, down=False, months_down=False):
+        self.urls, self.down, self.months_down = [], down, months_down
+
+    def get(self, url, timeout=None):
+        self.urls.append(url)
+        if self.down:
+            raise OSError("the fake Aladhan is down")
+        if (m := re.search(r"/calendarByCity/(\d{4})/(\d{1,2})\?", url)):
+            if self.months_down:
+                raise OSError("the fake Aladhan's month calendar is down")
+            return self.month(int(m[1]), int(m[2]))
+        if (m := re.search(r"/timingsByCity/(\d{2})-(\d{2})-(\d{4})\?", url)):
+            wanted = f"{m[1]}-{m[2]}-{m[3]}"
+            day = next(x for x in self.month(int(m[3]), int(m[2]))["data"] if x["date"]["gregorian"]["date"] == wanted)
+            return {"code": 200, "status": "OK", "data": {**day, "timings": {k: v[:5] for k, v in day["timings"].items()}}}
+        raise OSError(f"the fake Aladhan has no {url}")
+
+    @staticmethod
+    def month(y, m):
+        path = os.path.join(PRAYER_FIXTURES, f"aladhan_{y}_{m:02d}.json")
+        if os.path.exists(path):
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        with open(os.path.join(PRAYER_FIXTURES, "aladhan_2026_11.json"), encoding="utf-8") as f:
+            base = json.load(f)
+        n = (date(y + m // 12, m % 12 + 1, 1) - date(y, m, 1)).days
+        days = [copy.deepcopy(base["data"][min(i, len(base["data"]) - 1)]) for i in range(n)]
+        for i, d in enumerate(days):
+            d["date"]["gregorian"]["date"] = f"{i + 1:02d}-{m:02d}-{y}"
+        return {**base, "data": days}
+
+
+prayers._get_json = FakeAladhan().get       # from the start: nothing in the suite reaches Aladhan
+
+
+def prayer_settings(**changes) -> dict:
+    """The suite's prayer settings (the shipped defaults) with changes, written to scratch and read on the next call."""
+    cfg = {**copy.deepcopy(PRAYER_SETTINGS), **changes}
+    with open(prayers.CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True)
+    prayers.reload()
+    return cfg
+
+
+def prayer_fresh(fake=None):
+    """A fresh start: no saved months, nothing raised, no timers, a fake Aladhan (returned)."""
+    fake = fake or FakeAladhan()
+    prayers._get_json = fake.get
+    prayers.forget()
+    for f in (prayers.CACHE_FILE, prayers.STATE_FILE, timers.TIMERS_FILE):
+        with contextlib.suppress(OSError):
+            os.remove(f)
+    return fake
+
+
+@contextlib.contextmanager
+def prayer_clock(when: datetime):
+    """prayers' and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
+    now = [when.timestamp()]
+    saved = prayers._time, timers._now
+    prayers._time = timers._now = lambda: now[0]
+    try:
+        yield types.SimpleNamespace(at=lambda dt: now.__setitem__(0, dt.timestamp()), now=lambda: now[0])
+    finally:
+        prayers._time, timers._now = saved
+
+
+def _dhaka(*args) -> datetime:
+    return datetime(*args, tzinfo=DHAKA)
 
 # ---------- files (documents.py, 2026-11-16): the sample files, a fake Tesseract, no vision model unless a case says ----------
 FILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "files")
@@ -3899,6 +4007,384 @@ def spoken_prices():
     return {"problems": problems}
 
 
+def prayer_answers():
+    """The prayer questions Mahadi asks, answered in code from Aladhan's month (the recorded November and December): no
+    model request, each in well under 1.5 s, in English and Bangla, with the day's times on screen."""
+    problems = []
+    asked = [
+        ((2026, 11, 21, 14, 0), "en", "When's Maghrib?", "Maghrib is at 5:11 PM today, in 3 hours and 11 minutes."),
+        ((2026, 11, 22, 14, 0), "en", "What time is Fajr tomorrow?", "Fajr tomorrow is at 4:59 AM."),
+        ((2026, 11, 21, 14, 0), "en", "How long until Asr?", "Asr is in 1 hour and 36 minutes, at 3:36 PM."),
+        ((2026, 11, 21, 17, 30), "en", "When's Maghrib?", "Maghrib began at 5:11 PM and lasts until Isha, at 6:30 PM."),
+        ((2026, 11, 21, 20, 0), "en", "What's the next prayer?",
+         "Next is Fajr at 4:58 AM tomorrow, in 8 hours and 58 minutes."),
+        ((2026, 11, 21, 14, 0), "en", "When is iftar?", "Iftar is at Maghrib, 5:11 PM today, in 3 hours and 11 minutes."),
+        ((2026, 11, 21, 16, 0), "en", "Has Asr started?", "Yes: Asr began at 3:36 PM, and Maghrib is at 5:11 PM."),
+        ((2026, 11, 21, 14, 0), "en", "When does Fajr end?", "Fajr lasts until sunrise, at 6:17 AM tomorrow."),
+        ((2026, 11, 21, 14, 0), "en", "What's the Hijri date today?", "Today is 10 Jumada al-Akhirah 1448 AH."),
+        ((2026, 11, 21, 14, 0), "en", "prayer times today",
+         "Today in Dhaka: Fajr at 4:58 AM, Dhuhr at 11:44 AM, Asr at 3:36 PM, Maghrib at 5:11 PM and Isha at 6:30 PM. "
+         "Next is Asr, in 1 hour and 36 minutes."),
+        ((2026, 11, 27, 9, 0), "en", "When is Jumu'ah?",
+         "Jumu'ah is at Dhuhr's time, 11:46 AM today, in 2 hours and 46 minutes."),
+        ((2026, 11, 30, 23, 0), "en", "When is Fajr tomorrow?", "Fajr tomorrow is at 5:04 AM."),     # December's month
+        ((2026, 11, 21, 14, 0), "bn", "মাগরিব কখন?", "আজ মাগরিব সন্ধ্যা ৫টা ১১ মিনিটে, আর ৩ ঘণ্টা ১১ মিনিট পর।"),
+        ((2026, 11, 21, 14, 0), "bn", "পরের নামাজ কখন?", "পরের নামাজ আসর, বিকেল ৩টা ৩৬ মিনিটে, আর ১ ঘণ্টা ৩৬ মিনিট পর।"),
+        ((2026, 11, 21, 14, 0), "bn", "আজ আরবি তারিখ কত?", "আজ ১০ জমাদিউস সানি ১৪৪৮ হিজরি।"),
+    ]
+    for when, lang, q, want in asked:
+        javid.set_language(lang)
+        with prayer_clock(_dhaka(*when)):
+            t = time.perf_counter()
+            reply, events = _turn(q)
+            took = time.perf_counter() - t
+        if reply != want:
+            problems.append(f"{q!r} at {when[3]:02d}:{when[4]:02d}: {reply!r}")
+        if any(k == "llm" for k, _ in events) or ("tool", "prayer_times") not in events:
+            problems.append(f"{q!r}: not answered in code ({[k for k, _ in events]})")
+        if took >= 1.5:
+            problems.append(f"{q!r} took {took:.2f} s")
+    javid.set_language("en")
+    with prayer_clock(_dhaka(2026, 11, 21, 14, 0)):
+        _, events = _turn("prayer times today")
+        screen = next((v for k, v in events if k == "screen"), "")
+        reply, _ = _turn("Remind me before Maghrib")
+    for line in ("Prayer times · Dhaka, Saturday, 21 November:", "- Asr  3:36 PM · next", "- Isha  6:30 PM",
+                 "10 Jumada al-Akhirah 1448 AH · Aladhan: University of Islamic Sciences, Karachi; Hanafi Asr"):
+        if line not in screen:
+            problems.append(f"the screen lacks {line!r}: {screen!r}")
+    if reply != ("Prayer reminders are on: I ring 10 minutes before each prayer on the page and on Telegram, and "
+                 "Telegram gets a message when each one begins. The next is at 3:26 PM, for Asr."):
+        problems.append(f"reminders: {reply!r}")
+    return {"problems": problems}
+
+
+def prayer_reminders():
+    """The heads-up before each prayer: raised once at its minute (both languages, every channel, ending when the
+    prayer begins); not again on the next tick or after a restart; with the minutes left when Javid starts late; never
+    once the prayer began; none for a prayer left out of the settings; Jumu'ah at the mosque's time on a Friday. The
+    page lists it until the prayer and never lists the Telegram-only message that follows."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+
+    def page():
+        return [t["label"] for t in client.get("/timers", headers=PAGE).json()]
+    prayer_fresh()
+    with prayer_clock(_dhaka(2026, 11, 21, 17, 0, 45)) as clock:     # Maghrib is at 17:11, so its heads-up at 17:01
+        raised = prayers.tick()
+        want = {"en": "Mahadi, Maghrib is in 10 minutes, at 5:11 PM.", "bn": "মাহাদি, ১০ মিনিট পর মাগরিব, সন্ধ্যা ৫টা ১১ মিনিটে।"}
+        if [(a["kind"], a["label"], a["announce"]) for a in raised] != [("prayer", "Maghrib in 10 minutes", want)]:
+            problems.append(f"raised at 17:00:45: {[(a['kind'], a['label'], a['announce']) for a in raised]}")
+        elif (raised[0]["due"], raised[0]["until"], raised[0].get("channels")) != \
+                (_dhaka(2026, 11, 21, 17, 1).timestamp(), _dhaka(2026, 11, 21, 17, 11).timestamp(), None):
+            problems.append(f"due, until, channels: {raised[0]}")
+        clock.at(_dhaka(2026, 11, 21, 17, 1, 5))
+        if page() != ["Maghrib in 10 minutes"]:
+            problems.append(f"the page lists {page()} at 17:01")
+        again = prayers.tick()
+        prayers.forget()
+        prayers.reload()                                          # a restart
+        again += prayers.tick()
+        if again:
+            problems.append(f"raised again: {[a['label'] for a in again]}")
+        clock.at(_dhaka(2026, 11, 21, 17, 11))
+        started = prayers.tick()
+        if [(a["kind"], a.get("channels")) for a in started] != [("prayer_start", ["telegram"])]:
+            problems.append(f"at 17:11: {[(a['kind'], a.get('channels')) for a in started]}")
+        if page():
+            problems.append(f"once Maghrib began the page lists {page()}")
+    prayer_fresh()                                                # Telegram locked through Maghrib's start: nothing
+    with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 21, 17, 1)) as clock:     # stale is sent on unlock
+        telegram_bot._update_state(locked=True)
+        prayers.tick()
+        telegram_bot.push_due()
+        clock.at(_dhaka(2026, 11, 21, 17, 30))
+        telegram_bot._update_state(locked=False)
+        telegram_bot.push_due()
+        if fake.texts(OWNER):
+            problems.append(f"sent after the prayer began: {fake.texts(OWNER)}")
+    prayer_fresh()                                                # Javid starts 4 minutes before Maghrib
+    with prayer_clock(_dhaka(2026, 11, 21, 17, 7)) as clock:
+        late = [a for a in prayers.tick() if a["kind"] == "prayer"]
+        if [(a["announce"]["en"], a["due"]) for a in late] != [("Mahadi, Maghrib is in 4 minutes, at 5:11 PM.", clock.now())]:
+            problems.append(f"a late start: {[(a['announce']['en'], a['due']) for a in late]}")
+    prayer_fresh()                                                # ... or once it began: no heads-up
+    with prayer_clock(_dhaka(2026, 11, 21, 17, 12)):
+        if [a for a in prayers.tick() if a["kind"] == "prayer"]:
+            problems.append("a heads-up after Maghrib began")
+    prayer_fresh()
+    prayer_settings(heads_up={"minutes": 10, "prayers": ["Fajr", "Dhuhr", "Maghrib", "Isha"]})
+    with prayer_clock(_dhaka(2026, 11, 21, 15, 26)):
+        if [a for a in prayers.tick() if a["kind"] == "prayer"]:
+            problems.append("a heads-up for Asr, which the settings leave out")
+    prayer_fresh()
+    prayer_settings(jumuah="13:15")
+    with prayer_clock(_dhaka(2026, 11, 27, 13, 5)):             # a Friday
+        jumuah = [a["announce"]["en"] for a in prayers.tick() if a["kind"] == "prayer"]
+        if jumuah != ["Mahadi, Jumu'ah is in 10 minutes, at 1:15 PM."]:
+            problems.append(f"Friday: {jumuah}")
+    prayer_settings()
+    return {"problems": problems}
+
+
+def prayer_day():
+    """A whole Sunday on the default settings, a minute at a time: Telegram gets exactly the heads-ups, the prayer-time
+    messages with the tasbih, the brief after Fajr, the evening adhkar and Monday's fast, each once and at its minute;
+    the page rings only the five heads-ups. Tahajjud stays off until it's switched on; a Wednesday has Thursday's fast."""
+    problems = []
+    prayer_fresh()
+    sent, rang, start = [], [], _dhaka(2026, 11, 22, 0, 0)
+    with telegram_world() as fake, prayer_clock(start) as clock:
+        for minute in range(24 * 60):
+            clock.at(start + timedelta(minutes=minute))
+            prayers.tick()
+            hhmm = (start + timedelta(minutes=minute)).strftime("%H:%M")
+            for t in timers.active_json():
+                if t["due"] / 1000 <= clock.now() and timers.mark_fired(t["id"]):
+                    rang.append((hhmm, t["label"]))
+            before = len(fake.texts(OWNER))
+            telegram_bot.push_due()
+            sent += [(hhmm, t.split("\n")[0]) for t in fake.texts(OWNER)[before:]]
+    tasbih = "After the prayer: SubhanAllah 33, Alhamdulillah 33, Allahu Akbar 34."
+    want = [("04:48", "🕌 Mahadi, Fajr is in 10 minutes, at 4:58 AM."),
+            ("04:58", f"🕌 It's Fajr time (4:58 AM). {tasbih}"),
+            ("05:18", "🌅 Good morning, Mahadi. Sunday, 22 November · 11 Jumada al-Akhirah 1448 AH"),
+            ("11:34", "🕌 Mahadi, Dhuhr is in 10 minutes, at 11:44 AM."),
+            ("11:44", f"🕌 It's Dhuhr time (11:44 AM). {tasbih}"),
+            ("15:26", "🕌 Mahadi, Asr is in 10 minutes, at 3:36 PM."),
+            ("15:36", f"🕌 It's Asr time (3:36 PM). {tasbih}"),
+            ("16:06", "🤲 Evening adhkar before Maghrib (5:11 PM)."),
+            ("17:01", "🕌 Mahadi, Maghrib is in 10 minutes, at 5:11 PM."),
+            ("17:11", f"🕌 It's Maghrib time (5:11 PM). {tasbih}"),
+            ("18:20", "🕌 Mahadi, Isha is in 10 minutes, at 6:30 PM."),
+            ("18:30", f"🕌 It's Isha time (6:30 PM). {tasbih}"),
+            ("19:00", "🤲 Tomorrow is Monday, a Sunnah fast. Sehri ends by Fajr (4:59 AM).")]
+    if sent != want:
+        problems.append(f"Telegram got {len(sent)}: " + "; ".join(f"{h} {t[:60]}" for h, t in sent))
+    if rang != [("04:48", "Fajr in 10 minutes"), ("11:34", "Dhuhr in 10 minutes"), ("15:26", "Asr in 10 minutes"),
+                ("17:01", "Maghrib in 10 minutes"), ("18:20", "Isha in 10 minutes")]:
+        problems.append(f"the page rang {rang}")
+    settings = copy.deepcopy(PRAYER_SETTINGS)
+    settings["reminders"][3]["enabled"] = True
+    prayer_settings(reminders=settings["reminders"])
+    prayer_fresh()
+    night = prayers._at(prayers.times_for(date(2026, 11, 22)), "Lastthird")          # Sunday's night, on Monday
+    with prayer_clock(night):
+        texts = [a["announce"]["en"] for a in prayers.tick() if a["kind"] == "devotion"]
+        if texts != ["The night's last third has begun. Fajr is at 4:59 AM."]:
+            problems.append(f"Tahajjud switched on, at {night:%H:%M}: {texts}")
+    prayer_settings()
+    prayer_fresh()
+    wednesday = prayers._at(prayers.times_for(date(2026, 11, 25)), "Isha") + timedelta(minutes=30)
+    with prayer_clock(wednesday):
+        texts = [a["label"] for a in prayers.tick() if a["kind"] == "devotion"]
+        if texts != ["Thursday fast"]:
+            problems.append(f"Wednesday evening: {texts}")
+    return {"problems": problems}
+
+
+def prayer_brief():
+    """The morning brief, built in code (no model request): 20 minutes after Fajr, on Telegram only (never the page),
+    once, in the reply language: the date and the Hijri date, the six times, the weather, the calendar (or why it can't
+    be read), the open tasks and the morning adhkar. Held while Telegram is locked; sent on a late start until Dhuhr."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    saved = javid._create, ct._service, ct.status, ct.TOKEN_FILE
+
+    def no_model(*args, **kwargs):
+        problems.append("a model request")
+        raise RuntimeError("the brief asked a model")
+    svc = FakeService([timed("dent", "Dentist appointment", date(2026, 11, 22), 10)], HOLIDAYS)
+    javid._create, ct._service, ct.status = no_model, (lambda: svc), (lambda: "connected")
+
+    def briefs(fake):
+        return [t for t in fake.texts(OWNER) if t.startswith("🌅")]
+    try:
+        prayer_fresh()
+        with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 18)):
+            made = [a for a in prayers.tick() if a["kind"] == "brief"]
+            telegram_bot.push_due()
+            if client.get("/timers", headers=PAGE).json():
+                problems.append("the page lists the brief")
+            if len(made) != 1 or len(briefs(fake)) != 1:
+                problems.append(f"{len(made)} briefs raised, {len(briefs(fake))} sent")
+            text = (briefs(fake) or [""])[0]
+            for part in ("🌅 Good morning, Mahadi. Sunday, 22 November · 11 Jumada al-Akhirah 1448 AH\n",
+                         "🕌 Dhaka: Fajr 4:58 AM · Sunrise 6:17 AM · Dhuhr 11:44 AM · Asr 3:36 PM · Maghrib 5:11 PM · "
+                         "Isha 6:30 PM\n", "🌤 Weather: ", "📅 Calendar: 10:00 AM Dentist appointment.\n",
+                         "✅ Tasks: 3 open: Call mom; Send report; Water plants.\n",
+                         "🤲 Morning adhkar before sunrise (6:17 AM): Ayat al-Kursi;"):
+                if part not in text:
+                    problems.append(f"the brief lacks {part.strip()!r}: {text!r}")
+            again = [a for a in prayers.tick() if a["kind"] == "brief"]
+            telegram_bot.push_due()
+            if again or len(briefs(fake)) != 1:
+                problems.append("the brief went twice")
+        prayer_fresh()
+        with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 18)) as clock:
+            telegram_bot._update_state(locked=True)
+            prayers.tick()
+            telegram_bot.push_due()
+            held = briefs(fake)
+            telegram_bot._update_state(locked=False)
+            clock.at(_dhaka(2026, 11, 22, 6, 0))
+            telegram_bot.push_due()
+            if held or len(briefs(fake)) != 1:
+                problems.append(f"locked: {len(held)} sent; unlocked: {len(briefs(fake))}")
+        prayer_fresh()
+        token = os.path.join(SCRATCH, "calendar_token.json")
+        open(token, "w").close()
+        ct.TOKEN_FILE, ct.status = token, (lambda: "needs_auth")
+        javid.set_language("bn")
+        with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 18)):
+            prayers.tick()
+            telegram_bot.push_due()
+            text = (briefs(fake) or [""])[0]
+        javid.set_language("en")
+        for part in ("🌅 শুভ সকাল, মাহাদি। রবিবার, ২২ নভেম্বর · ১১ জমাদিউস সানি ১৪৪৮ হিজরি\n", "🕌 ঢাকা: ফজর ভোর ৪:৫৮ · ",
+                     "📅 ক্যালেন্ডার: পড়তে পারিনি, Google-এর সাইন-ইনের মেয়াদ শেষ।", "✅ কাজ: ৩টি বাকি: ", "🤲 সকালের জিকির"):
+            if part not in text:
+                problems.append(f"the Bangla brief lacks {part.strip()!r}: {text!r}")
+        ct.status = lambda: "connected"
+        prayer_fresh()
+        with prayer_clock(_dhaka(2026, 11, 22, 7, 0)):           # the Mac woke at 7:00
+            woke = [a["kind"] for a in prayers.tick()]
+            if woke != ["brief"]:
+                problems.append(f"woken at 7:00: {woke}")
+        prayer_fresh()
+        with prayer_clock(_dhaka(2026, 11, 22, 12, 0)):
+            if any(a["kind"] == "brief" for a in prayers.tick()):
+                problems.append("a brief after Dhuhr")
+    finally:
+        javid._create, ct._service, ct.status, ct.TOKEN_FILE = saved
+        javid.set_language("en")
+    return {"problems": problems}
+
+
+def prayer_config():
+    """The settings: what reaches Aladhan (city, country, method, Asr school, offsets), a city change fetching again, a
+    broken file keeping the last good settings and saying why, bad values refused, the shipped file checking out."""
+    problems = []
+    fake = prayer_fresh()
+    with prayer_clock(_dhaka(2026, 11, 21, 14, 0)):
+        prayers.times_for(date(2026, 11, 21))
+        first = fake.urls[0] if fake.urls else ""
+        for part in ("/v1/calendarByCity/2026/11?", "city=Dhaka", "country=Bangladesh", "method=1", "school=1"):
+            if part not in first:
+                problems.append(f"the request lacks {part}: {first}")
+        if "tune=" in first:
+            problems.append(f"offsets sent with none set: {first}")
+        prayer_settings(city="Chittagong", tune={"Fajr": 2, "Maghrib": 3})
+        prayers.times_for(date(2026, 11, 21))
+        if len(fake.urls) != 2 or "city=Chittagong" not in fake.urls[-1] or \
+                "tune=0%2C2%2C0%2C0%2C0%2C3%2C0%2C0%2C0" not in fake.urls[-1]:
+            problems.append(f"after changing the city and the offsets: {fake.urls}")
+        prayer_settings()
+        good = prayers.config()
+        with open(prayers.CONFIG_FILE, "w") as f:
+            f.write("city: [Dhaka\n")
+        prayers._cfg["checked"] = 0.0
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            kept = prayers.config()
+        if kept != good or "keeping the last good settings" not in out.getvalue():
+            problems.append(f"a broken file: {out.getvalue()!r}")
+        prayer_settings()
+    bad = {"method": 6, "school": 2, "heads_up": {"minutes": 99}, "city": "Dhaka<script>", "hijri_adjust": 5,
+           "colour": "red", "jumuah": "1:15pm", "tune": {"Fajr": 90}, "brief": {"after": 5},
+           "morning_adhkar": {"en": "Before {sunrise_later}"}}
+    for key, value in bad.items():
+        if not prayers._validate({key: value})[1]:
+            problems.append(f"{key}: {value!r} was accepted")
+    for r in ([{"name": "A", "text": {"en": "no time"}}],
+              [{"name": "A", "at": "07:00", "text": {"en": "x"}}, {"name": "a", "at": "08:00", "text": {"en": "y"}}],
+              [{"name": "B", "after": "Noon", "text": {"en": "x"}}], [{"name": "C", "at": "25:00", "text": {"en": "x"}}],
+              [{"name": "D", "after": "Asr", "days": ["Funday"], "text": {"en": "x"}}],
+              [{"name": "E", "after": "Asr", "page": False, "telegram": False, "text": {"en": "x"}}]):
+        if not prayers._validate({"reminders": r})[1]:
+            problems.append(f"accepted {r}")
+    ok, found = prayers._validate({"reminders": [{"name": "Duha", "after": "Sunrise", "minutes": 20,
+                                                  "days": ["fri", "Saturday"], "text": {"en": "Duha ({sunrise})."}}]})
+    if found or ok["reminders"][0]["days"] != ["Fri", "Sat"] or ok["reminders"][0]["text"]["bn"] != "Duha ({sunrise}).":
+        problems.append(f"a good reminder: {found} {ok['reminders']}")
+    shipped = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config", "prayers.yaml")
+    with open(shipped, encoding="utf-8") as f:
+        if (found := prayers._validate(yaml.safe_load(f))[1]):
+            problems.append(f"the shipped config/prayers.yaml: {found}")
+    return {"problems": problems}
+
+
+def prayer_cache():
+    """One request for the month, whatever is asked about it, kept owner-only on disk; with Aladhan down the saved
+    times still answer, with nothing saved the answer says so (no guess); with only its month calendar down, the day
+    is asked for instead."""
+    problems = []
+    fake = prayer_fresh()
+    with prayer_clock(_dhaka(2026, 11, 21, 14, 0)):
+        for q in ("When's Maghrib?", "When is Isha?", "prayer times today", "What time is Fajr tomorrow?", "Asr"):
+            _turn(q)
+        if len(fake.urls) != 1:
+            problems.append(f"{len(fake.urls)} requests: {fake.urls}")
+        if oct(os.stat(prayers.CACHE_FILE).st_mode & 0o777) != "0o600":
+            problems.append(f"the saved months are {oct(os.stat(prayers.CACHE_FILE).st_mode & 0o777)}")
+        fake.down = True
+        prayers.forget()                                          # a restart: the months come from the file
+        reply, _ = _turn("When's Maghrib?")
+        if reply != "Maghrib is at 5:11 PM today, in 3 hours and 11 minutes.":
+            problems.append(f"Aladhan down, the saved month: {reply!r}")
+    prayer_fresh(FakeAladhan(down=True))
+    with prayer_clock(_dhaka(2026, 11, 21, 14, 0)):
+        reply, _ = _turn("When's Maghrib?")
+        if reply != ("I can't get the prayer times right now: Aladhan isn't answering, and I have nothing saved for "
+                     "that day."):
+            problems.append(f"Aladhan down, nothing saved: {reply!r}")
+    fake = prayer_fresh(FakeAladhan(months_down=True))
+    with prayer_clock(_dhaka(2026, 11, 21, 14, 0)):
+        reply, _ = _turn("When's Maghrib?")
+        if reply != "Maghrib is at 5:11 PM today, in 3 hours and 11 minutes." or \
+                sum("/timingsByCity/21-11-2026?" in u for u in fake.urls) != 1:
+            problems.append(f"the month calendar down: {reply!r}, {fake.urls}")
+    return {"problems": problems}
+
+
+def prayer_telegram():
+    """/prayers and /reminders answer in code from the same times and schedule; both are registered commands."""
+    problems = []
+    prayer_fresh()
+    with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 21, 14, 0)):
+        for text in ("/prayers", "/reminders"):
+            telegram_bot.handle_update(tg_message(OWNER, text))
+        got = fake.texts(OWNER)
+    if not got or not got[0].startswith("Next is Asr at 3:36 PM, in 1 hour and 36 minutes.\n\n"
+                                        "Prayer times · Dhaka, Saturday, 21 November:\n- Fajr  4:58 AM"):
+        problems.append(f"/prayers: {got[:1]}")
+    if len(got) < 2 or not got[1].startswith("Reminders in the next 24 hours:\n- 3:26 PM  Asr in 10 minutes · page and "
+                                             "Telegram\n- 3:36 PM  Asr begins · Telegram\n- 4:06 PM  Evening adhkar · "
+                                             "Telegram\n"):
+        problems.append(f"/reminders: {got[1:2]}")
+    if not {"prayers", "reminders"} <= {c for c, _ in telegram_bot.COMMANDS}:
+        problems.append(f"commands: {telegram_bot.COMMANDS}")
+    return {"problems": problems}
+
+
+def prayer_keep_awake():
+    """While the server runs on power, keep_awake asks macOS not to idle to sleep (caffeinate -s -w <the server's
+    pid>), and only when the settings say so (faked: no real process)."""
+    problems = []
+    on_mac = sys.platform == "darwin" and bool(shutil.which("caffeinate"))
+    SPAWNED.clear()
+    if prayers.keep_awake(4242) != on_mac or SPAWNED != ([["caffeinate", "-s", "-w", "4242"]] if on_mac else []):
+        problems.append(f"switched on: {SPAWNED}")
+    SPAWNED.clear()
+    prayer_settings(keep_awake=False)
+    if prayers.keep_awake(4242) or SPAWNED:
+        problems.append(f"switched off: {SPAWNED}")
+    prayer_settings()
+    return {"problems": problems}
+
+
 def brief_calendar_unread():
     """With the Google sign-in expired, morning_briefing left the calendar out and the model filled in "you have
     nothing on your calendar today" (2026-11-21): the brief says the calendar couldn't be read, never that it's empty."""
@@ -5150,6 +5636,28 @@ CASES += [
          [], [drive_ok], drive=brief_calendar_unread, script=[]),
     Case("market: a price said aloud is in cents above $1; the screen keeps the exchange's digits",
          [], [drive_ok], drive=spoken_prices, script=[]),
+    Case("prayer: 'when's Maghrib?' and 14 more, answered in code from Aladhan's month, each in well under 1.5 s",
+         [], [drive_ok], drive=prayer_answers, script=[]),
+    Case("prayer: with something else asked, the model gets prayer_times and must call it",
+         ["Tell me a fun fact, and when is Maghrib?"], [called("prayer_times"), reply_has("honey"), reply_has("5:11")],
+         script=["Fun fact: honey never spoils. Maghrib is around 6 PM.", call("prayer_times"),
+                 "Fun fact: honey never spoils. Maghrib is at 5:11 PM."]),
+    Case("prayer: a question about a prayer that isn't its time goes to the model, with nothing to look up",
+         ["How many rakats are in Maghrib?"], [not_called("prayer_times"), model_requests(1)],
+         script=["Maghrib has three fard rak'ahs."]),
+    Case("prayer: the heads-up 10 minutes before a prayer: once, never late, on the page until the prayer begins",
+         [], [drive_ok], drive=prayer_reminders, script=[]),
+    Case("prayer: a Sunday on the default settings: 13 Telegram messages at their minutes, 5 rings on the page",
+         [], [drive_ok], drive=prayer_day, script=[]),
+    Case("prayer: the morning brief, built in code: Telegram only, once, held while locked, in Bangla, a late wake",
+         [], [drive_ok], drive=prayer_brief, tasks=T5, script=[]),
+    Case("prayer: settings: what reaches Aladhan, a city change, a broken file, bad values, the shipped file",
+         [], [drive_ok], drive=prayer_config, script=[]),
+    Case("prayer: one request for the month, saved owner-only; Aladhan down with and without saved times",
+         [], [drive_ok], drive=prayer_cache, script=[]),
+    Case("prayer: /prayers and /reminders on Telegram", [], [drive_ok], drive=prayer_telegram, script=[]),
+    Case("prayer: keep_awake asks macOS not to idle to sleep while the server runs, only when the settings say so",
+         [], [drive_ok], drive=prayer_keep_awake, script=[]),
     Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
          [], [drive_ok], drive=file_routes, script=[]),
     Case("file: the file's text goes only to a provider cleared for personal data, as data with its pages",
@@ -5161,7 +5669,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 220, len(CASES)
+assert len(CASES) == 230, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -5231,6 +5739,9 @@ def run_case(case: Case) -> Result:
     fake_gnews = FakeGoogleNews(down=case.web_down or case.gnews_down)
     gnews._get = fake_gnews.get
     gnews._cache.clear()
+    prayer_settings()       # the suite's prayer settings, no saved months, nothing raised, the fake Aladhan
+    prayer_fresh()
+    SPAWNED.clear()
     for f in (timers.TIMERS_FILE, watches.WATCHES_FILE):
         if os.path.exists(f):
             os.remove(f)

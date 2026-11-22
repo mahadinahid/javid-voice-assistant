@@ -23,6 +23,7 @@ import uuid
 
 import gnews
 import markets
+import prayers
 import tracing
 import weather
 
@@ -564,6 +565,10 @@ def _loop() -> None:
             check_due()
         except Exception as e:
             print(f"[watch] {type(e).__name__}: {str(e)[:120]}")
+        try:
+            prayers.tick()          # prayer and zikir reminders, the morning brief: raised as alerts like a watch's
+        except Exception as e:
+            print(f"[prayers] {type(e).__name__}: {str(e)[:120]}")
 
 
 def start() -> None:

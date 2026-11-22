@@ -39,6 +39,7 @@ import edge_pool
 import markets
 import memory_store
 import news
+import prayers
 import providers
 import rates
 import selfcheck
@@ -263,7 +264,8 @@ SYSTEM_PROMPT = (
     "moved or deleted unless a tool result in this turn says so (to keep a fact, call propose_memory: it's saved only once Mahadi approves), "
     "and don't say you checked unless you called a tool. "
     "If you're not sure, say so instead of guessing. "
-    "Weather, prices and sums come only from get_weather, market_price and calculate, and a timer exists only "
+    "Weather, prices, prayer times and sums come only from get_weather, market_price, prayer_times and calculate, "
+    "and a timer exists only "
     "once set_timer says so. "
     "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
     "Calendar: when the day and time are given, add the event straight away. To move or delete one, "
@@ -663,6 +665,7 @@ TOOLS = [
     *rates.TOOLS,
     *skills.TOOLS,
     *weather.TOOLS,
+    *prayers.TOOLS,
     *timers.TOOLS,
     *calc.TOOLS,
     *markets.TOOLS,
@@ -929,6 +932,9 @@ REQUIRED_TOOLS = [
     (rates.ASK, "exchange_rates", "Mahadi asked about exchange rates: call exchange_rates now and use its figures "
                                   "exactly, naming each one's source."),
     (markets.BRIEF_ASK, "market_price", "Mahadi asked how the market is doing: call market_price now and use its figures."),
+    # A prayer-time question is answered in code too; with something else asked, the model must look the times up.
+    (prayers.ASK, "prayer_times", "Mahadi asked about prayer times, which you can't know: call prayer_times now and "
+                                  "use only its times."),
 ]
 # A required agent's request goes to that agent (delegate), with nothing else to call first.
 for _a in agents.all_agents():
@@ -968,6 +974,7 @@ TOOL_MAP = {
     **rates.TOOL_MAP,
     **skills.TOOL_MAP,
     **weather.TOOL_MAP,
+    **prayers.TOOL_MAP,
     **timers.TOOL_MAP,
     **calc.TOOL_MAP,
     **markets.TOOL_MAP,
@@ -1119,6 +1126,7 @@ TOOL_GROUPS = [
      r"liters?|gallons|mph|acres?|katha|bigha|decimal|sq ?ft|square feet)\b|times \d|divided|multipl|\bplus\b|"
      r"\bminus\b|হিসাব|যোগফল|গুণ|ভাগ"),
     (["exchange_rates"], rates.ASK.pattern),
+    (["prayer_times"], prayers.WORDS.pattern),
     (["market_price"], r"bitcoin|\bbtc\b|ethereum|\beth\b|crypto|binance|solana|\bsol\b|\bbnb\b|\bxrp\b|dogecoin|"
      r"\bdoge\b|\bpepe\b|\busdt\b|altcoin|\bcoins?\b|\bstocks?\b|\bshares?\b|nasdaq|s&p|dow jones|ticker|nvidia|"
      r"tesla|apple stock|বিটকয়েন|ক্রিপ্টো|শেয়ার"),
@@ -2653,11 +2661,13 @@ def _personal_call(call: dict) -> bool:
 
 
 def _code_answer(user_text: str):
-    """A watch to set, list or cancel, a rates question, a market brief or a news request that code answers whole
-    (watches.request, rates.request, markets.brief_request, news.request): a function of the reply language giving
-    the answer's generator. None leaves the message to the model."""
+    """A watch to set, list or cancel, a prayer-time question, a rates question, a market brief or a news request
+    that code answers whole (watches.request, prayers.request, rates.request, markets.brief_request, news.request): a
+    function of the reply language giving the answer's generator. None leaves the message to the model."""
     if (req := watches.request(user_text)):     # first: "tell me when bitcoin goes above 70k" isn't a market brief
         return lambda lang: watches.answer(req, lang)
+    if (req := prayers.request(user_text)):
+        return lambda lang: prayers.answer(req, lang)
     if (req := rates.request(user_text)):
         return lambda lang: rates.answer(req, lang)
     if (req := markets.brief_request(user_text)):

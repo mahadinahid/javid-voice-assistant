@@ -74,6 +74,7 @@ import memory_store  # noqa: E402
 import prayers  # noqa: E402
 import providers  # noqa: E402
 import quran  # noqa: E402
+import quran_text  # noqa: E402
 import rates  # noqa: E402
 import search  # noqa: E402
 import selfcheck  # noqa: E402
@@ -474,16 +475,84 @@ def hifz_fresh() -> None:
         os.remove(f)
 
 
-class FakeQuranCom:
-    """Quran.com's public API (api.quran.com/api/v4) without the network, for `quran.check`: made-up answers in its
-    documented format, built from quran_meta.json itself (none of Quran.com's data is in this repository: its terms
-    count that as redistribution). wrong: {"ayahs": (surah, count)} or {"juz": n} or {"husary": url} to differ."""
+def fake_words(s: int, a: int) -> list[str]:
+    """The made-up Tanzil text's words of an ayah (Arabic letters, never the Quran's words): 3 to 10 of them; 1:1 is
+    the made-up Bismillah, which the fake writes in front of every other surah's first ayah, as Tanzil does."""
+    if (s, a) == (1, 1):
+        return FAKE_BASMALA.split()
+    return [chr(0x0628 + (s + a + w) % 20) + chr(0x0644) + chr(0x0645) for w in range(3 + (s * 7 + a * 3) % 8)]
 
-    def __init__(self, wrong=None):
-        self.wrong, self.urls = wrong or {}, []
+
+FAKE_BASMALA = " ".join(chr(0x0628 + k) + chr(0x0633) + chr(0x0645) for k in range(4))
+
+
+def fake_text(kind: str, s: int, a: int) -> str:
+    if kind == "en":
+        return f"[en] {s}:{a}, a made-up translation."
+    if kind == "bn":
+        return f"[bn] {quran.bn_digits(s)}:{quran.bn_digits(a)}, বানানো অনুবাদ।"
+    words = fake_words(s, a)
+    if (s + a) % 5 == 0 and (s, a) != (1, 1):
+        words = words[:2] + [chr(0x06D6)] + words[2:]         # a pause mark: not a word
+    text = " ".join(words)
+    return f"{FAKE_BASMALA} {text}" if a == 1 and s not in (1, 9) else text
+
+
+class FakeTanzil:
+    """Tanzil's three downloads (the Uthmani text, en.sahih, bn.bengali) without the network: made-up text in its
+    txt-2 format (surah|ayah|text, then "#" notes), each surah's ayahs from quran_meta.json. missing: an ayah to
+    leave out; down: every download fails."""
+
+    def __init__(self, missing=None, down=False):
+        self.missing, self.down, self.urls = missing, down, []
 
     def get(self, url):
         self.urls.append(url)
+        if self.down:
+            raise OSError("the fake Tanzil is down")
+        kind = "ar" if "quranType=uthmani" in url else "en" if "en.sahih" in url else "bn" if "bn.bengali" in url else None
+        if not kind:
+            raise OSError(f"the fake Tanzil has no {url}")
+        lines = [f"{s['n']}|{a}|{fake_text(kind, s['n'], a)}" for s in quran.SURAHS for a in range(1, s["ayahs"] + 1)
+                 if (s["n"], a) != self.missing]
+        return ("\n".join(lines) + "\n\n# Made-up text for Javid's suite, in Tanzil's txt-2 format.\n").encode()
+
+
+def fake_timestamps(chapter: int, s: int, wrong: dict) -> list[dict]:
+    """A reciter's timings for a surah file in Quran.com's documented format: each ayah's words one after another
+    (400-500 ms a word), 300 ms between ayahs; wrong: {"lead": ms} before the first word, {"gap_word": (s, a)} drops
+    that ayah's second word, {"missing_ayah": s} leaves the surah's last ayah out, {"backwards": s} times going back."""
+    t, out = wrong.get("lead", 0), []
+    per = 400 + 50 * (chapter % 3)
+    count = quran.SURAHS[s - 1]["ayahs"]
+    for a in range(1, count + 1):
+        if wrong.get("missing_ayah") == s and a == count:
+            break
+        f, segs = t, []
+        for w in range(1, len(fake_words(s, a)) + 1):
+            if not (wrong.get("gap_word") == (s, a) and w == 2):
+                segs.append([w, t, t + per])
+            t += per
+        out.append({"verse_key": f"{s}:{a}", "timestamp_from": f, "timestamp_to": t, "duration": t - f, "segments": segs})
+        t += 300
+    if wrong.get("backwards") == s and len(out) > 2:
+        out[2]["timestamp_from"] = out[0]["timestamp_from"] - 100
+    return out
+
+
+class FakeQuranCom:
+    """Quran.com's public API (api.quran.com/api/v4) without the network: made-up answers in its documented format,
+    built from quran_meta.json and Javid's own reciter table (none of Quran.com's data is in this repository: its
+    terms count that as redistribution). wrong: {"ayahs": (surah, count)}, {"juz": n}, {"husary": url}, or a timing
+    fault (fake_timestamps); down: every request fails."""
+
+    def __init__(self, wrong=None, down=False):
+        self.wrong, self.down, self.urls = wrong or {}, down, []
+
+    def get(self, url):
+        self.urls.append(url)
+        if self.down:
+            raise OSError("the fake Quran.com is down")
         if url.endswith("/chapters"):
             out = []
             for s in quran.SURAHS:
@@ -510,11 +579,44 @@ class FakeQuranCom:
             lo, hi = quran.unit_range("manzil", int(m[1]))
             return {"verses": [{"verse_key": quran.key(lo)}], "pagination": {"total_records": hi - lo + 1}}
         if (m := re.search(r"/recitations/(\d+)/by_chapter/67", url)):
-            if m[1] == "6":
-                return {"audio_files": [{"verse_key": "67:1", "url": self.wrong.get(
-                    "husary", "//mirrors.quranicaudio.com/everyayah/Husary_64kbps/067001.mp3")}]}
-            return {"audio_files": [{"verse_key": "67:1", "url": "Alafasy/mp3/067001.mp3"}]}
+            if m[1] == "6" and "husary" in self.wrong:
+                return {"audio_files": [{"verse_key": "67:1", "url": self.wrong["husary"]}]}
+            rid = next(k for k, r in quran.RECITERS.items() if r["qurancom"] == int(m[1]))
+            full = quran.RECITERS[rid]["url"].format(s=67, a=1)
+            path = full.split("verses.quran.com/", 1)[1] if "verses.quran.com/" in full else "//" + full.split("//", 1)[1]
+            return {"audio_files": [{"verse_key": "67:1", "url": path}]}
+        if (m := re.search(r"/chapter_recitations/(\d+)/(\d+)\?segments=true$", url)):
+            cid, s = int(m[1]), int(m[2])
+            return {"audio_file": {"id": cid * 1000 + s, "chapter_id": s, "file_size": 1, "format": "mp3",
+                                   "audio_url": f"https://download.quranicaudio.com/qdc/fake_{cid}/{s}.mp3",
+                                   "timestamps": fake_timestamps(cid, s, self.wrong)}}
         raise OSError(f"the fake Quran.com has no {url}")
+
+
+# the reader's text (quran_text.py) and the recitation timings and saved place (quran.py), 2026-11-23: all scratch
+quran_text.DIR = os.path.join(SCRATCH, "quran")                    # never the Mac's downloaded text
+quran.TIMINGS_DIR = os.path.join(SCRATCH, "quran_timings")         # never its cached timings
+quran.STATE_FILE = os.path.join(SCRATCH, "quran_state.json")       # never his reading place or reciter
+quran._get = FakeQuranCom().get
+quran_text._get = FakeTanzil().get
+ENSURE_SOON: list[float] = []
+quran_text.ensure_soon = lambda: ENSURE_SOON.append(time.time())   # no background download in the suite
+
+
+def quran_fresh(text: bool = False) -> None:
+    """No downloaded text (with text: the fake Tanzil's, checked), no timings, no saved place or reciter."""
+    quran_text.forget()
+    shutil.rmtree(quran_text.DIR, ignore_errors=True)
+    shutil.rmtree(quran.TIMINGS_DIR, ignore_errors=True)
+    quran._timings.clear()
+    with contextlib.suppress(OSError):
+        os.remove(quran.STATE_FILE)
+    quran._get = FakeQuranCom().get
+    quran_text._get = FakeTanzil().get
+    ENSURE_SOON.clear()
+    if text:
+        quran_text.ensure()
+
 
 # ---------- files (documents.py, 2026-11-16): the sample files, a fake Tesseract, no vision model unless a case says ----------
 FILES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "files")
@@ -4898,7 +5000,7 @@ def hifz_config():
         if reply != "Logged manzil 1. That's today's revision done, MashaAllah. Tomorrow: manzil 2.":
             problems.append(f"manzil 1: {reply!r}")
     with open(hifz.CONFIG_FILE, "w") as f:
-        f.write("unit: juz\ndaily: 0\nreciter: sudais\nreminders:\n  morning: {after: Lunch}\n")
+        f.write("unit: juz\ndaily: 0\nreciter: nobody\nreminders:\n  morning: {after: Lunch}\n")
     hifz._cfg["checked"] = 0.0
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
@@ -5005,7 +5107,11 @@ def quran_text_asks():
     Quran.com link, an offer to play it; the structure (how many ayahs, which juz, where a juz starts) from the
     metadata; Arabic script never reaches edge-tts."""
     problems = []
-    for q, link in (("Recite Ayatul Kursi", "https://quran.com"), ("What does Surah Mulk say?", "https://quran.com/67"),
+    reply, events = _turn("Recite Ayatul Kursi")          # a reciter recites it: Al-Baqarah 255 from the player
+    cmd = next((v for k, v in events if k == "recite"), {})
+    if reply != "▶ Al-Baqarah, ayah 255 · Mahmoud Khalil Al-Husary" or (cmd.get("first"), cmd.get("last")) != ("2:255", "2:255"):
+        problems.append(f"'Recite Ayatul Kursi': {reply!r}, {cmd.get('first')}")
+    for q, link in (("What's Ayatul Kursi about?", "https://quran.com/2/255"), ("What does Surah Mulk say?", "https://quran.com/67"),
                     ("Translate ayah 2:255", "https://quran.com/2/255"),
                     ("What's the meaning of Surah Ikhlas?", "https://quran.com/112"),
                     ("Give me a verse about patience", "https://quran.com"),
@@ -5079,6 +5185,518 @@ def quran_metadata():
 
 def META_CHECKED():
     return isinstance(quran.META.get("checked"), dict) and quran.META["checked"].get("against") == "api.quran.com/api/v4"
+
+
+def quran_text_cache():
+    """The reader's text: Tanzil's three files downloaded once (made up here), checked surah by surah against the
+    metadata (6,236 ayahs) and kept owner-only with their checksums; read again from the files after a restart; a
+    changed file, a download short of an ayah and an offline start; the Bismillah above a surah, never inside its
+    first ayah; pause marks aren't words; Al-Baqarah with both translations from memory well under 1 s."""
+    problems = []
+    fake = FakeTanzil()
+    quran_text._get = fake.get
+    st = quran_text.ensure()
+    if not st["ready"] or set(st["langs"].values()) != {"ready"} or len(fake.urls) != 3:
+        problems.append(f"the first download: {st['langs']}, {len(fake.urls)} requests")
+    for lang in quran_text.LANGS:
+        if oct(os.stat(quran_text._path(lang)).st_mode & 0o777) != "0o600":
+            problems.append(f"{lang}'s file isn't owner-only")
+    man = quran_text._manifest()
+    if any(len(man.get(x, {}).get("sha256", "")) != 64 or man[x]["ayahs"] != 6236 for x in quran_text.LANGS):
+        problems.append(f"the manifest: {man}")
+    quran_text.forget()
+    fake.urls.clear()
+    if not quran_text.ensure()["ready"] or fake.urls:
+        problems.append(f"a restart downloaded again: {fake.urls}")
+    t0 = time.perf_counter()
+    baqarah = quran_text.reader([quran.surah_range(2)], ["en", "bn"])
+    ms = (time.perf_counter() - t0) * 1000
+    if baqarah["count"] != 286 or ms > 1000:
+        problems.append(f"Al-Baqarah: {baqarah['count']} ayahs in {ms:.0f} ms")
+    mulk = quran_text.reader([quran.surah_range(67)], ["en"])
+    p = mulk["parts"][0]
+    if (len(mulk["parts"]), len(p["verses"]), p["bismillah"], mulk["bismillah_text"]) != (1, 30, True, FAKE_BASMALA):
+        problems.append(f"Al-Mulk: {len(mulk['parts'])} parts, {len(p['verses'])} ayahs, Bismillah {p['bismillah']}")
+    first = p["verses"][0]
+    if [w for w, n in first["w"] if n] != fake_words(67, 1) or first["tr"] != {"en": fake_text("en", 67, 1)}:
+        problems.append(f"67:1: {first}")
+    marked = p["verses"][2]          # 67:3 carries a pause mark (67 + 3 is a multiple of 5)
+    if [n for _, n in marked["w"]] != [1, 2, 0] + list(range(3, len(fake_words(67, 3)) + 1)) or \
+            quran_text.word_count(67, 3) != len(fake_words(67, 3)):
+        problems.append(f"a pause mark counted as a word: {marked['w']}")
+    fatiha, tawbah = (quran_text.reader([quran.surah_range(n)])["parts"][0] for n in (1, 9))
+    if fatiha["bismillah"] or len(fatiha["verses"][0]["w"]) != 4 or tawbah["bismillah"]:
+        problems.append("Al-Fatiha's first ayah is its Bismillah, and At-Tawbah has none")
+    juz30 = quran_text.reader([quran.unit_range("juz", 30)], [])
+    if (len(juz30["parts"]), juz30["count"]) != (37, 564) or "tr" in juz30["parts"][0]["verses"][0]:
+        problems.append(f"juz 30: {len(juz30['parts'])} surahs, {juz30['count']} ayahs")
+    with open(quran_text._path("en"), "ab") as f:                # changed on disk: its checksum differs
+        f.write(b"67|31|a line that isn't Tanzil's\n")
+    quran_text.forget()
+    fake.urls.clear()
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        st = quran_text.ensure()
+    if not st["ready"] or fake.urls != [quran_text.SOURCES["en"]["url"]] or "checksum" not in out.getvalue():
+        problems.append(f"a changed file: {fake.urls}, {out.getvalue()!r}")
+    quran_text.forget()
+    shutil.rmtree(quran_text.DIR)
+    quran_text._get = FakeTanzil(missing=(18, 50)).get
+    with contextlib.redirect_stdout(io.StringIO()):
+        st = quran_text.ensure()
+    if st["ready"] or "surah 18: 109 of 110 ayahs" not in json.dumps(st["problems"]) or os.path.exists(quran_text._path("ar")):
+        problems.append(f"a download short of 18:50 was used: {st['problems']}")
+    quran_text.forget()
+    quran_text._get = FakeTanzil().get
+    with contextlib.redirect_stdout(io.StringIO()):
+        quran_text.ensure()
+    quran_text.forget()
+    down = FakeTanzil(down=True)
+    quran_text._get = down.get
+    if not quran_text.ensure()["ready"] or down.urls:
+        problems.append("offline with the files saved, the reader should read them")
+    quran_text.forget()
+    shutil.rmtree(quran_text.DIR)
+    with contextlib.redirect_stdout(io.StringIO()):
+        st = quran_text.ensure()
+        tried = len(down.urls)
+        quran_text.ensure()          # within RETRY_SEC: not tried again
+    if st["ready"] or st["langs"]["ar"] != "failed" or len(down.urls) != tried:
+        problems.append(f"offline with nothing saved: {st['langs']}, tried {len(down.urls)} times")
+    whole = {(x["n"], a): "x" for x in quran.SURAHS for a in range(1, x["ayahs"] + 1)}
+    if quran_text.problems_of(whole) or quran_text.problems_of({**whole, (1, 8): "x"}) != ["1 lines that aren't ayahs (first: 1:8)"]:
+        problems.append("problems_of: 6,236 ayahs pass, an extra one doesn't")
+    c = quran_text.credits()
+    if (c["ar"]["name"][:6], c["en"]["name"], c["bn"]["name"]) != ("Tanzil", "Saheeh International", "Muhiuddin Khan"):
+        problems.append(f"the credits: {c}")
+    return {"problems": problems}
+
+
+def quran_search():
+    """The surah list's search, by number and by name in English, Arabic and Bangla, whole or begun; nothing found is
+    empty; the rows give ayahs, Makki or Madani and the juz; the route does the same."""
+    problems = []
+    kahf_marked = "".join(map(chr, (0x0627, 0x0644, 0x0652, 0x0643, 0x064E, 0x0647, 0x0652, 0x0641)))   # الْكَهْف
+    for q, n in (("Kahf", 18), ("al-kahf", 18), ("Al Kahf", 18), ("surah kahf", 18), ("alkahf", 18), ("الكهف", 18),
+                 ("كهف", 18), ("كه", 18), (kahf_marked, 18), ("কাহফ", 18), ("আল-কাহফ", 18), ("সূরা কাহফ", 18), ("18", 18),
+                 ("১৮", 18), ("١٨", 18), ("Yaseen", 36), ("ya sin", 36), ("يس", 36), ("ইয়াসিন", 36), ("Mulk", 67),
+                 ("الملك", 67), ("মুলক", 67), ("rahman", 55), ("baqara", 2), ("ikhlas", 112)):
+        got = quran.search(q)
+        if not got or got[0] != n:
+            problems.append(f"{q!r} finds {got[:3]}, not {n}")
+    if quran.search("115") or quran.search("xyzq") or quran.search(chr(0x0642) * 3) or quran.search("") != list(range(1, 115)):
+        problems.append("a search for nothing")
+    rows = quran.surah_rows()
+    if (rows[17]["ayahs"], rows[17]["type"], rows[17]["juz"]) != (110, "meccan", [15, 16]) or \
+            (rows[1]["type"], rows[1]["juz"]) != ("medinan", [1, 3]):
+        problems.append(f"the rows: {rows[17]}, {rows[1]}")
+    from fastapi.testclient import TestClient
+    import server
+    out = TestClient(server.app).get("/quran/surahs", params={"q": "কাহফ"}, headers=KEYED).json()
+    if [r["n"] for r in out["surahs"]] != [18] or out["juz"]:
+        problems.append(f"/quran/surahs?q=কাহফ: {out.get('surahs')}")
+    return {"problems": problems}
+
+
+def quran_reader_voice():
+    """The reader by voice, in code: "read Surah Mulk with translation" opens it with Saheeh International's (in
+    Bangla, Muhiuddin Khan's); "hide the translation", "show the Bangla translation"; "test me on Surah Mulk", then
+    "show" (the next hidden ayah), "show all", "hide again", "stop the test"; "continue reading" and "continue
+    listening" from where he left off; "change qari to Minshawi", saved for the next recitation; "repeat ayah 5 to
+    10 three times", in Bangla too; "translate 2:255" opens the reader there; with the text not downloaded, it says
+    so and starts it. None of it reaches a model."""
+    problems = []
+    quran_fresh(text=True)
+    reader = {"active": False, "reader": {"open": True, "test": False, "translation": "en", "view": {"kind": "surah", "n": 67}}}
+    testing = {"active": False, "reader": {**reader["reader"], "test": True}}
+
+    def say(text, player=None, lang="en"):
+        javid.set_language(lang)
+        reply, events = _turn(text, player=player)
+        if any(k == "llm" for k, _ in events):
+            problems.append(f"{text!r} reached a model")
+        return reply, [v for k, v in events if k == "quran"], [v for k, v in events if k == "recite"], events
+
+    reply, cmds, _, _ = say("Read Surah Mulk with translation")
+    if reply != "Surah Al-Mulk is open, with Saheeh International's translation." or \
+            cmds != [{"open": {"kind": "surah", "n": 67}, "start": "67:1", "quiet": False, "translation": "en"}]:
+        problems.append(f"read Mulk: {reply!r}, {cmds}")
+    reply, cmds, _, _ = say("সূরা কাহফ অনুবাদসহ পড়ো", lang="bn")
+    if not reply.startswith("সূরা") or "মুহিউদ্দীন খান" not in reply or cmds[:1] and cmds[0].get("translation") != "bn":
+        problems.append(f"read Kahf in Bangla: {reply!r}, {cmds}")
+    for text, want, player in (("Hide the translation", {"translation": "off"}, reader), ("Arabic only", {"translation": "off"}, reader),
+                               ("show the bangla translation", {"translation": "bn"}, reader),
+                               ("অনুবাদ লুকাও", {"translation": "off"}, reader),
+                               ("show", {"reveal": "next"}, testing), ("show all", {"reveal": "all"}, testing),
+                               ("hide again", {"reveal": "none"}, testing), ("stop the test", {"test": False}, testing)):
+        reply, cmds, _, _ = say(text, player)
+        if len(cmds) != 1 or {k: cmds[0].get(k) for k in want} != want or not cmds[0].get("quiet"):
+            problems.append(f"{text!r}: {cmds} ({reply!r})")
+    javid.set_language("en")
+    if quran.state().get("translation") != "off" or quran.state().get("test") is not False:
+        problems.append(f"the reader's settings weren't kept: {quran.state()}")
+    reply, cmds, _, _ = say("Test me on Surah Mulk")
+    if not cmds or cmds[0].get("test") is not True or cmds[0].get("open") != {"kind": "surah", "n": 67} or "Hifz test" not in reply:
+        problems.append(f"test me on Mulk: {reply!r}, {cmds}")
+    if quran.request("show") or quran.request("show", reader):      # no reader, or no test: the model's
+        problems.append("a bare 'show' with no hifz test open was taken")
+    reply, _, _, _ = say("continue reading")
+    if reply != "You haven't read anything here yet. Say “read Surah Al-Kahf”.":
+        problems.append(f"continue reading with nothing saved: {reply!r}")
+    quran.save_state({"reading": {"key": "18:45", "view": {"kind": "surah", "n": 18}},
+                      "listening": {"key": "36:12", "reciter": "husary", "first": "36:1", "last": "36:83"}})
+    reply, cmds, _, _ = say("continue where I left off")
+    if reply != "Back to Surah Al-Kahf, ayah 45." or cmds != [{"open": {"kind": "surah", "n": 18}, "start": "18:45", "quiet": False}]:
+        problems.append(f"continue reading: {reply!r}, {cmds}")
+    reply, _, plays, _ = say("continue listening")
+    if not plays or (plays[0].get("first"), plays[0].get("last"), plays[0].get("reciter")) != ("36:12", "36:83", "husary") or \
+            reply != "▶ Ya-Sin 12 · Mahmoud Khalil Al-Husary":
+        problems.append(f"continue listening: {reply!r}, {plays[:1]}")
+    reply, cmds, _, _ = say("Change qari to Minshawi")
+    if reply != "From now on: Mohamed Siddiq al-Minshawi." or quran.state().get("reciter") != "minshawi":
+        problems.append(f"change qari: {reply!r}, {quran.state().get('reciter')}")
+    _, _, plays, _ = say("play surah ikhlas")
+    if not plays or plays[0].get("reciter") != "minshawi":
+        problems.append(f"the next recitation isn't Minshawi's: {plays[:1]}")
+    reply, _, _, _ = say("use Ghamdi")
+    if reply != "From now on: Saad Al-Ghamdi, lighting each ayah (not each word) as he recites.":
+        problems.append(f"use Ghamdi: {reply!r}")
+    reply, _, _, _ = say("ক্বারী বদলাও মিনশাভি", lang="bn")
+    if reply != "এখন থেকে মুহাম্মাদ সিদ্দিক আল-মিনশাভি-এর তিলাওয়াত চলবে।":
+        problems.append(f"change qari in Bangla: {reply!r}")
+    playing = {"active": True, "playing": True, "key": "67:3", "surah": 67, "ayah": 3, "reciter": "husary",
+               "first": "67:1", "last": "67:30"}
+    for text, lang, shown in (("repeat ayah 5 to 10 three times", "en", "🔁 Ayahs 5–10, 3×"),
+                              ("আয়াত ৫ থেকে ১০ তিনবার রিপিট করো", "bn", "🔁 আয়াত ৫–১০, ৩ বার")):
+        reply, _, plays, _ = say(text, playing, lang)
+        if reply != shown or not plays or {k: plays[0].get(k) for k in ("action", "ayah", "to", "times")} != \
+                {"action": "repeat", "ayah": 5, "to": 10, "times": 3}:
+            problems.append(f"{text!r}: {reply!r}, {plays[:1]}")
+    _, _, plays, _ = say("repeat ayah 5 to 10 twice", {**playing, "first": "67:20", "key": "67:21", "ayah": 21})
+    if not plays or (plays[0].get("action"), plays[0].get("first"), plays[0].get("last"), plays[0].get("times")) != ("play", "67:5", "67:10", 2):
+        problems.append(f"a range before what's playing: {plays[:1]}")
+    reply, _, plays, _ = say("change qari to Sudais", playing)
+    if not plays or plays[0].get("action") != "reciter" or quran.state().get("reciter") != "sudais":
+        problems.append(f"a reciter switch while playing: {plays[:1]}, {quran.state().get('reciter')}")
+    javid.set_language("en")
+    for text, view in (("translate 2:255", {"kind": "range", "first": "2:255", "last": "2:255"}),
+                       ("show me ayatul kursi", {"kind": "range", "first": "2:255", "last": "2:255"})):
+        reply, cmds, _, events = say(text)
+        if not cmds or cmds[0].get("open") != view or not reply.startswith("Al-Baqarah 255 is open"):
+            problems.append(f"{text!r}: {reply!r}, {cmds}")
+    quran_fresh()                       # the text not downloaded yet
+    reply, cmds, _, events = say("read surah mulk")
+    links = [x["url"] for k, v in events if k == "sources" for x in v]
+    if "still downloading" not in reply or cmds or not ENSURE_SOON or links != ["https://quran.com/67"]:
+        problems.append(f"no text yet: {reply!r}, {cmds}, {links}, download started: {bool(ENSURE_SOON)}")
+    return {"problems": problems}
+
+
+QSYNC_TESTS = r"""
+const problems = [];
+const ok = (cond, what) => { if (!cond) problems.push(what); };
+function fake(n, wordsPer, per, gap, lead = 500) {      // made-up timings: n ayahs, words one after another
+    const v = []; let t = lead;
+    for (let a = 1; a <= n; a++) {
+        const k = wordsPer + (a % 3), segs = [], f = t;
+        for (let w = 1; w <= k; w++) { segs.push([w, t, t + per]); t += per; }
+        v.push([f, t, 1, segs]); t += gap;
+    }
+    return v;
+}
+function simulate(r, ms0, dt = 20, limit = 2000000) {   // play from ms0, following seeks: the ayahs in the order heard
+    const out = []; let t = ms0, last = null;
+    for (let n = 0; n < 200000 && t < limit; n++) {
+        const x = QSync.tick(r, t);
+        if (x.seek != null) { out.push('seek' + x.a); t = x.seek; last = null; continue; }
+        if (x.end) { out.push('end' + x.a); break; }
+        if (last !== x.a) out.push(x.a);
+        last = x.a;
+        t += dt;
+    }
+    return out.join(' ');
+}
+const A = fake(7, 4, 500, 300), B = fake(7, 5, 430, 450, 1200);
+let r = QSync.run(A, 1, 7);
+ok(simulate(r, QSync.startMs(r, 1)) === '1 2 3 4 5 6 7 end7', 'a plain run: ' + simulate(QSync.run(A, 1, 7), A[0][0]));
+r = QSync.run(A, 1, 7);
+ok(simulate(r, 0) === '0 1 2 3 4 5 6 7 end7', 'before the first ayah (the Bismillah in the file) is 0');
+r = QSync.run(A, 1, 7);
+let at = QSync.repeat(r, 3, 3, 3);
+ok(at === A[2][0] && simulate(r, at) === '3 seek3 3 seek3 3 4 5 6 7 end7', 'repeat ayah 3 three times: ' + simulate(Object.assign(QSync.run(A, 1, 7)), at));
+r = QSync.run(A, 1, 7);
+at = QSync.repeat(r, 2, 4, 2);
+ok(simulate(r, at) === '2 3 4 seek2 2 3 4 5 6 7 end7', 'repeat ayahs 2 to 4 twice');
+r = QSync.run(A, 1, 7);
+at = QSync.repeat(r, 6, 7, 2);
+ok(simulate(r, at) === '6 7 seek6 6 7 end7', 'a repeat at the run\'s end, then the end');
+r = QSync.run(A, 3, 5);
+ok(simulate(r, QSync.startMs(r, 3)) === '3 4 5 end5', 'a run of ayahs 3 to 5 stops after 5');
+r = QSync.run(A, 1, 7);
+ok(QSync.repeat(r, 4, 4, 1) === A[3][0] && r.rep === null, 'once is no repeat');
+// a seek lands on its ayah, and the highlight follows the time, never the history: no drift
+r = QSync.run(A, 1, 7);
+for (let a = 1; a <= 7; a++) ok(QSync.tick(r, QSync.startMs(r, a)).a === a, 'a seek to ayah ' + a);
+let bad = 0;
+for (let n = 0; n < 3000; n++) {
+    const t = A[0][0] + Math.random() * (A[6][1] - A[0][0] - 50), x = QSync.tick(QSync.run(A, 1, 7), t);
+    if (x.end) continue;
+    const i = x.a - 1;
+    if (!(A[i][0] <= t && (i === 6 || t < A[i + 1][0]))) bad++;
+}
+ok(bad === 0, bad + ' of 3000 random times lit the wrong ayah');
+// words: the one being said; between words the last one said; an ayah whose words don't fit, none
+ok(QSync.wordAt(A[0], A[0][3][1][1] + 10) === 2, 'the second word of ayah 1');
+ok(QSync.wordAt(A[0], A[0][1] + 100) === A[0][3].length, 'in the gap after ayah 1, its last word stays lit');
+ok(QSync.wordAt([A[1][0], A[1][1], 0, []], A[1][0] + 10) === 0, 'words that don\'t fit light nothing');
+ok(QSync.wordAt([0, 3000, 1, [[1, 0, 500], [2, 500, 1000], [1, 1000, 1500]]], 1200) === 1, 'a word said again');
+ok(QSync.locate(A, 0) === 0 && QSync.locate(A, A[3][0]) === 3 && QSync.locate(A, A[3][1] + 10) === 3, 'locate');
+// a reciter switch: the same ayah in the other reciter's file, and on from there
+r = QSync.run(A, 1, 7);
+const mid = (A[4][0] + A[4][1]) / 2, here = QSync.tick(r, mid).a;
+const r2 = QSync.run(B, 1, 7);
+ok(here === 5 && QSync.tick(r2, QSync.startMs(r2, here)).a === 5, 'a reciter switch keeps ayah 5');
+ok(simulate(r2, QSync.startMs(r2, here)) === '5 6 7 end7', 'and goes on from there in the new file');
+// a repeat in the other file keeps going round there
+const r3 = QSync.run(B, 1, 7);
+ok(simulate(r3, QSync.repeat(r3, 2, 2, 2)) === '2 seek2 2 3 4 5 6 7 end7', 'a repeat after a switch');
+// next and previous within the run
+r = QSync.run(A, 2, 6);
+ok(QSync.step(r, 4, 1) === 5 && QSync.step(r, 6, 1) === 0 && QSync.step(r, 2, -1) === 2 && QSync.step(r, 0, 1) === 3, 'next and previous');
+// a repeat jumps back before the next ayah begins: the ayah after it is never lit on the way round
+r = QSync.run(A, 1, 7);
+ok(!/4 seek3/.test(simulate(r, QSync.repeat(r, 3, 3, 2))), 'a repeat let the next ayah in');
+const C = fake(5, 3, 400, 0);           // ayahs back to back, no pause between them
+r = QSync.run(C, 1, 5);
+const heard = simulate(r, QSync.repeat(r, 2, 2, 2));
+ok(heard === '2 seek2 2 3 4 5 end5', 'a repeat with no gap after the ayah: ' + heard);
+console.log(JSON.stringify({ problems }));
+"""
+
+
+def quran_sync():
+    """The player's timing logic (the page's QSync, run under node with made-up timings): a run, a seek to each ayah,
+    repeat one ayah and a range N times, a run's end, words (a gap, a word said again, words that don't fit),
+    3,000 random times each lighting the right ayah, a reciter switch keeping the ayah, next and previous."""
+    node = shutil.which("node")
+    if not node:
+        return {"problems": ["node isn't installed, so the page's timing logic can't be run"]}
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"), encoding="utf-8") as f:
+        page = f.read()
+    try:
+        code = page[page.index("// <qsync>"):page.index("// </qsync>")]
+    except ValueError:
+        return {"problems": ["index.html has no // <qsync> block"]}
+    path = os.path.join(SCRATCH, "qsync_test.js")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(code + QSYNC_TESTS)
+    out = subprocess.run([node, path], capture_output=True, text=True, timeout=60)
+    try:
+        return {"problems": json.loads(out.stdout.strip().splitlines()[-1])["problems"]}
+    except (ValueError, IndexError, KeyError):
+        return {"problems": [f"node: {out.stderr.strip()[:300] or out.stdout[:300]}"]}
+
+
+def quran_plans():
+    """The player's plans: Husary's surah file with Quran.com's timings, every ayah's words fitted to the text (one
+    with a word missing lights whole), his Bismillah first when the file starts on its first word (not when it's in
+    the file); juz 30 is 37 parts, the first with the plan and the rest from /quran/timings; Minshawi Mujawwad, Ghamdi
+    and Muaiqly ayah by ayah from their hosts; Quran.com down, or timings short of an ayah, fall back to ayah files; a
+    start inside the portion; the default reciter, then the one he chose; the picker's cards."""
+    problems = []
+    from fastapi.testclient import TestClient
+    import server
+    client = TestClient(server.app)
+    quran_fresh(text=True)
+    p = quran.plan([quran.surah_range(67)], "husary", "Al-Mulk")
+    part = (p.get("parts") or [{}])[0]
+    if (p["mode"], len(p["parts"]), part.get("url"), len(part.get("verses") or []), part.get("pre")) != \
+            ("chapter", 1, "https://download.quranicaudio.com/qdc/fake_6/67.mp3", 30,
+             "https://mirrors.quranicaudio.com/everyayah/Husary_64kbps/001001.mp3"):
+        problems.append(f"Al-Mulk with Husary: {p['mode']}, {part.get('url')}, {part.get('pre')}")
+    if not all(v[2] == 1 and v[3] for v in part.get("verses") or [[0, 0, 0, []]]) or len(p["items"]) != 31:
+        problems.append("Al-Mulk's words don't fit the text, or the ayah files aren't there to fall back on")
+    quran_fresh(text=True)
+    quran._get = FakeQuranCom({"gap_word": (67, 5)}).get
+    v = quran.plan([quran.surah_range(67)], "husary")["parts"][0]["verses"]
+    if (v[4][2], v[4][3], v[3][2]) != (0, [], 1):
+        problems.append(f"67:5 with a word missing: {v[4][:3]}")
+    quran_fresh(text=True)
+    quran._get = FakeQuranCom({"lead": 3000}).get
+    if quran.plan([quran.surah_range(67)], "husary")["parts"][0]["pre"] is not None:
+        problems.append("a Bismillah file before a surah file that has it")
+    quran_fresh(text=True)
+    p = quran.plan([quran.unit_range("juz", 30)], "alafasy", "Juz 30")
+    if (len(p["parts"]), p["parts"][0]["s"], p["parts"][1]["verses"]) != (37, 78, None) or not p["parts"][0]["verses"]:
+        problems.append(f"juz 30: {len(p['parts'])} parts")
+    got = client.get("/quran/timings", params={"reciter": "alafasy", "surah": 79}, headers=KEYED)
+    if got.status_code != 200 or len(got.json()["verses"]) != 46:
+        problems.append(f"/quran/timings for An-Nazi'at: {got.status_code}")
+    if client.get("/quran/timings", params={"reciter": "ghamdi", "surah": 1}, headers=KEYED).status_code != 404:
+        problems.append("Ghamdi has no surah timings: /quran/timings should say 404")
+    for rid, url, backup in (("minshawi_mujawwad", "https://verses.quran.com/Minshawi/Mujawwad/mp3/067001.mp3",
+                              "https://everyayah.com/data/Minshawy_Mujawwad_192kbps/067001.mp3"),
+                             ("ghamdi", "https://everyayah.com/data/Ghamadi_40kbps/067001.mp3",
+                              "https://mirrors.quranicaudio.com/everyayah/Ghamadi_40kbps/067001.mp3"),
+                             ("muaiqly", "https://everyayah.com/data/MaherAlMuaiqly128kbps/067001.mp3", None)):
+        p = quran.plan([quran.surah_range(67)], rid)
+        if (p["mode"], p["parts"], p["items"][1]["url"], p["items"][1]["backup"]) != ("ayah", [], url, backup):
+            problems.append(f"{rid}: {p['mode']}, {p['items'][1]}")
+    if quran.plan([quran.surah_range(67)], "ghamdi")["credit"] != "everyayah.com":
+        problems.append("Ghamdi's recitation isn't credited to everyayah.com")
+    for fault in ({"missing_ayah": 67}, {"backwards": 67}):
+        quran_fresh(text=True)
+        quran._get = FakeQuranCom(fault).get
+        with contextlib.redirect_stdout(io.StringIO()):
+            mode = quran.plan([quran.surah_range(67)], "husary")["mode"]
+        if mode != "ayah":
+            problems.append(f"timings with {fault} were used")
+    quran_fresh(text=True)
+    quran._get = FakeQuranCom(down=True).get
+    with contextlib.redirect_stdout(io.StringIO()):
+        if quran.plan([quran.surah_range(67)], "husary")["mode"] != "ayah":
+            problems.append("Quran.com down: the plan should be ayah files")
+    quran_fresh(text=True)
+    if quran.plan([quran.surah_range(67)], "husary", start="67:12")["start"] != "67:12":
+        problems.append("the start")
+    for start, code in (("67:12", 200), ("68:1", 400), ("nonsense", 400)):
+        r = client.post("/quran/plan", headers=KEYED, json={"portions": [{"kind": "surah", "n": 67}], "start": start})
+        if r.status_code != code or (code == 200 and r.json()["start"] != start):
+            problems.append(f"/quran/plan with start {start}: {r.status_code}")
+    if quran.default_reciter() != "husary" or quran.plan([quran.surah_range(112)])["reciter"] != "husary":
+        problems.append("the default reciter isn't Husary")
+    quran.save_state({"reciter": "sudais"})
+    if quran.plan([quran.surah_range(112)])["reciter"] != "sudais" or client.post(
+            "/quran/plan", headers=KEYED, json={"portions": [{"kind": "surah", "n": 112}]}).json()["reciter"] != "sudais":
+        problems.append("the reciter he chose isn't the one played")
+    quran.save_state({"reciter": "nobody"})
+    if quran.state()["reciter"] != "sudais":
+        problems.append("a reciter that isn't one was saved")
+    cards = {c["id"]: c for c in client.get("/quran/reciters", headers=KEYED).json()["reciters"]}
+    if len(cards) != 13 or cards["ghamdi"]["words"] or not cards["husary"]["words"] or cards["minshawi_mujawwad"]["words"] or \
+            cards["husary"]["preview"] != "https://mirrors.quranicaudio.com/everyayah/Husary_64kbps/001002.mp3" or \
+            cards["muaiqly"]["source"] != "everyayah":
+        problems.append(f"the picker's cards: {len(cards)}")
+    for words, rid in ((["husary", "muallim"], "husary_muallim"), (["abdul", "basit", "mujawwad"], "abdulbasit_mujawwad"),
+                       (["minshawi", "murattal"], "minshawi"), (["sudais"], "sudais"), (["মিনশাভি"], "minshawi")):
+        if (quran.reciter_in(words) or [None])[0] != rid:
+            problems.append(f"{words} isn't {rid}")
+    return {"problems": problems}
+
+
+def quran_timings_cache():
+    """Quran.com's timings: fetched once per reciter and surah, kept owner-only on this Mac under a week as its terms
+    allow, read from the file after a restart, fetched again after six days, old files pruned; a reciter without
+    surah files asks nothing."""
+    problems = []
+    quran_fresh(text=True)
+    fake = FakeQuranCom()
+    quran._get = fake.get
+    t = quran.timings("husary", 112)
+    if not t or len(t["verses"]) != 4 or len(fake.urls) != 1:
+        problems.append(f"the first fetch: {len(fake.urls)} requests")
+    quran.timings("husary", 112)
+    quran._timings.clear()
+    quran.timings("husary", 112)
+    if len(fake.urls) != 1:
+        problems.append(f"fetched again within the week: {fake.urls}")
+    path = quran._timing_path(6, 112)
+    if oct(os.stat(path).st_mode & 0o777) != "0o600":
+        problems.append("the timings file isn't owner-only")
+    saved = quran._now
+    try:
+        later = time.time() + 6 * 86400 + 60
+        quran._now = lambda: later
+        quran.timings("husary", 112)
+        if len(fake.urls) != 2:
+            problems.append("six days on, the timings weren't fetched again")
+        old = quran._timing_path(7, 1)
+        with open(old, "w") as f:
+            json.dump({"fetched": later - 8 * 86400, "url": "https://x", "verses": [{"f": 0, "t": 1, "g": []}]}, f)
+        if quran.prune_timings() < 1 or os.path.exists(old):
+            problems.append("an old timings file wasn't pruned")
+    finally:
+        quran._now = saved
+    n = len(fake.urls)
+    if quran.timings("ghamdi", 1) is not None or len(fake.urls) != n:
+        problems.append("Ghamdi has no surah files: nothing should be asked")
+    good = FakeQuranCom().get(f"{quran.API}/chapter_recitations/6/112?segments=true")
+    if not quran._clean_timings(112, good):
+        problems.append("good timings refused")
+    for broken in ({**good["audio_file"], "audio_url": "http://insecure.example/112.mp3"},
+                   {**good["audio_file"], "timestamps": good["audio_file"]["timestamps"][:3]},
+                   {**good["audio_file"], "timestamps": [{**x, "timestamp_to": x["timestamp_from"]} for x in good["audio_file"]["timestamps"]]}):
+        if quran._clean_timings(112, {"audio_file": broken}):
+            problems.append(f"broken timings used: {str(broken)[:80]}")
+    return {"problems": problems}
+
+
+def quran_routes():
+    """The reader's routes: /quran/read for a surah, a juz and a stretch (503 while the text downloads, which starts
+    it), from memory well under 1 s; /quran/surahs; /quran/state needs the page's Origin to write, keeps only what
+    checks out, owner-only and never his real file; the font comes with the key."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    quran_fresh()
+    r = client.get("/quran/read", params={"surah": 67}, headers=KEYED)
+    if r.status_code != 503 or not ENSURE_SOON:
+        problems.append(f"no text yet: {r.status_code}, download started: {bool(ENSURE_SOON)}")
+    quran_text.ensure()
+    t0 = time.perf_counter()
+    out = client.get("/quran/read", params={"surah": 2, "tr": "en,bn"}, headers=KEYED).json()
+    ms = (time.perf_counter() - t0) * 1000
+    if out.get("view") != {"kind": "surah", "n": 2} or out.get("count") != 286 or ms > 1000 or \
+            set(out["parts"][0]["verses"][0]["tr"]) != {"en", "bn"}:
+        problems.append(f"Al-Baqarah: {out.get('view')}, {out.get('count')} ayahs, {ms:.0f} ms")
+    for params, count in (({"juz": 30}, 564), ({"first": "2:255", "last": "2:257"}, 3), ({"surah": 1, "tr": "off"}, 7)):
+        out = client.get("/quran/read", params=params, headers=KEYED).json()
+        if out.get("count") != count or (params.get("tr") == "off" and "tr" in out["parts"][0]["verses"][0]):
+            problems.append(f"/quran/read {params}: {out.get('count')}")
+    for params in ({"surah": 115}, {"juz": 31}, {"first": "2:257", "last": "2:255"}, {"first": "200:1", "last": "200:2"}, {}):
+        if client.get("/quran/read", params=params, headers=KEYED).status_code != 400:
+            problems.append(f"/quran/read {params} wasn't refused")
+    out = client.get("/quran/surahs", headers=KEYED).json()
+    if len(out["surahs"]) != 114 or len(out["juz"]) != 30 or not out["text"]["ready"]:
+        problems.append("/quran/surahs")
+    body = {"reading": {"key": "18:45", "view": {"kind": "surah", "n": 18}}, "reciter": "alafasy", "translation": "both",
+            "font": 6, "test": True, "something": "else"}
+    if client.post("/quran/state", headers=KEYED, json=body).status_code != 403:
+        problems.append("/quran/state written without the page's Origin")
+    st = client.post("/quran/state", headers=PAGE, json=body).json()
+    if (st.get("reading", {}).get("key"), st.get("reciter"), st.get("translation"), st.get("font"), st.get("test")) != \
+            ("18:45", "alafasy", "both", 6, True) or "something" in st:
+        problems.append(f"/quran/state: {st}")
+    st = client.post("/quran/state", headers=PAGE, json={"font": 99, "translation": "fr", "reciter": "nobody",
+                                                          "reading": {"key": "200:1"}, "test": "yes"}).json()
+    if (st["font"], st["translation"], st["reciter"], st["reading"]["key"], st["test"]) != (6, "both", "alafasy", "18:45", True):
+        problems.append(f"bad values were kept: {st}")
+    if not quran.STATE_FILE.startswith(SCRATCH) or oct(os.stat(quran.STATE_FILE).st_mode & 0o777) != "0o600":
+        problems.append("the saved place isn't owner-only in scratch")
+    if client.get("/quran/state", headers=KEYED).json().get("reciter") != "alafasy":
+        problems.append("GET /quran/state")
+    import threading as _th            # the page saves the reading and listening places at once (seen 2026-11-23)
+    errors = []
+
+    def save(k):
+        try:
+            quran.save_state({"font": k % 9} if k % 2 else {"listening": {"key": f"36:{k + 1}", "reciter": "husary"}})
+        except Exception as e:
+            errors.append(repr(e))
+    threads = [_th.Thread(target=save, args=(k,)) for k in range(24)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    st = quran.state()
+    if errors or "listening" not in st or "reading" not in st or glob.glob(quran.STATE_FILE + ".*tmp"):
+        problems.append(f"saves at once: {errors[:2]}, {sorted(st)}")
+    if client.get("/fonts/amiri-quran.ttf", headers={"host": "localhost:8000"}).status_code != 401:
+        problems.append("the font without the key")
+    font = client.get("/fonts/amiri-quran.ttf", headers=KEYED)
+    if font.status_code != 200 or font.content[:4] != b"\x00\x01\x00\x00":
+        problems.append(f"the font: {font.status_code}")
+    return {"problems": problems}
 
 
 def ramadan_answers():
@@ -6391,6 +7009,20 @@ CASES += [
                  "Today's revision is juz 1, Al-Fatihah 1 to Al-Baqarah 141. Fun fact: honey never spoils."]),
     Case("quran: quran_meta.json is whole and in order, every name finds its surah, the check against Quran.com works",
          [], [drive_ok], drive=quran_metadata, script=[]),
+    Case("quran: the reader's text: Tanzil's files downloaded once, checked (6,236 ayahs), owner-only; a changed file, a short download, offline",
+         [], [drive_ok], drive=quran_text_cache, script=[]),
+    Case("quran: the surah search finds a surah by number or by name, in English, Arabic and Bangla",
+         [], [drive_ok], drive=quran_search, script=[]),
+    Case("quran: the reader by voice: with or without translation, the hifz test, where I left off, change qari, a range repeat",
+         [], [drive_ok], drive=quran_reader_voice, script=[]),
+    Case("quran: the player's timing logic (the page's QSync under node): seeks, repeats, a reciter switch, no drift",
+         [], [drive_ok], drive=quran_sync, script=[]),
+    Case("quran: plans: surah files with Quran.com's timings, words fitted; ayah files for Ghamdi, Muaiqly, Minshawi Mujawwad; fallbacks",
+         [], [drive_ok], drive=quran_plans, script=[]),
+    Case("quran: Quran.com's timings kept under a week, owner-only; broken ones refused",
+         [], [drive_ok], drive=quran_timings_cache, script=[]),
+    Case("quran: the reader's routes: /quran/read, /quran/surahs, /quran/state (the page's Origin to write), the font",
+         [], [drive_ok], drive=quran_routes, script=[]),
     Case("prayer: 'when is Ramadan?' in code from Aladhan, moved for Bangladesh; Aladhan down says so",
          [], [drive_ok], drive=ramadan_answers, script=[]),
     Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
@@ -6404,7 +7036,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 249, len(CASES)
+assert len(CASES) == 256, len(CASES)
 
 
 def print_token_summary() -> None:
@@ -6479,6 +7111,7 @@ def run_case(case: Case) -> Result:
     SPAWNED.clear()
     hifz_settings()         # the suite's hifz settings and an empty revision log
     hifz_fresh()
+    quran_fresh()           # no reader text, no timings, no saved place or reciter
     for f in (timers.TIMERS_FILE, watches.WATCHES_FILE):
         if os.path.exists(f):
             os.remove(f)

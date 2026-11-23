@@ -33,10 +33,17 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
   7 manzils), brings weak portions back two days later, and answers "what's due today?", "what's behind?", "when did I
   last revise Ya-Sin?" and "how much did I revise this week?". After Fajr it names today's exact portion with your
   streak and the days to Ramadan, and nudges after Asr and Isha while it isn't logged; on Telegram the reminder has
-  buttons that log it in one tap. The Hifz view shows every juz as a star coloured by how fresh it is. "Play Surah
-  Mulk, Husary" plays Quran.com's recitation (Husary or Alafasy; everyayah.com as the backup), with "next ayah",
-  "repeat this ayah 3 times" and "pause" by voice. Javid never says the Quran's words itself: verses and translations
-  come from Quran.com, and the settings are in [`config/hifz.yaml`](config/hifz.yaml).
+  buttons that log it in one tap. The Hifz view shows every juz as a star coloured by how fresh it is. The settings
+  are in [`config/hifz.yaml`](config/hifz.yaml).
+- **The Quran to read and to hear.** The Hifz view's Read tab: every surah and juz, found by number or by name in
+  English, Arabic or Bangla ("18", "Kahf", "الكهف", "কাহফ"), in the Uthmani script (Amiri Quran, large, right to left),
+  Arabic only, with Saheeh International's or Muhiuddin Khan's translation, or as a hifz test (the ayahs blurred; tap
+  one or say "show"). Press ▶ or tap an ayah, and it's recited by your choice of thirteen qaris (Husary, Alafasy, Abdul
+  Basit, Minshawi, Sudais, Shuraim and more; Husary by default), the ayah lit as it's recited and, for Quran.com's
+  reciters, each word too; "repeat ayah 5 to 10 three times", "change qari to Minshawi", "read Surah Mulk with
+  translation" and "continue where I left off" work by voice. The text is downloaded once from Tanzil and read
+  offline after that; recitations stream from Quran.com (Ghamdi and Muaiqly from everyayah.com). Javid never says
+  the Quran's words itself, and a model never writes, completes or translates an ayah.
 - **It remembers, with your say-so.** Nothing goes into its memory until you approve it, and secrets are refused.
   Past chats are searchable.
 - **On your phone.** A Telegram bot, paired by scanning a QR code. Anything that changes your data waits for an
@@ -61,7 +68,7 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
  Browser: index.html ── /talk, /type ──►  server.py (FastAPI) ──►  javid.py: the agent loop
    microphone                              speech to text: Groq Whisper (whisper-large-v3-turbo)
    speaker   ◄── /speak ─────────────────  answered in code first: news, watches, exchange rates, market briefs,
-                                           prayer times, hifz revision, recitation, questions about Javid,
+                                           prayer times, hifz revision, the reader, recitation, questions about Javid,
                                            the self-check
                                            otherwise a language model with 27 tools:
                                            Groq gpt-oss-20b, then the fallbacks in config/providers.yaml
@@ -133,7 +140,9 @@ rest, all kept out of git. The server listens on `127.0.0.1` only, and every req
 from Javid's own page: another website, a DNS-rebinding page or another program on the Mac gets a refusal and nothing
 else. What does leave the machine: each voice clip goes to Groq for transcription, each spoken
 reply to Microsoft's edge-tts, your city and prayer settings to Aladhan, the surah your browser plays to Quran.com's
-audio hosts (or everyayah.com), and your requests to the language model and search providers that are on. Calendar,
+audio hosts (or everyayah.com), the reciter and surah whose timings Javid fetches from Quran.com, Tanzil's download of
+the text (once), and your requests to the language model and search providers that are on. Where you left off reading
+and listening stays on your Mac (`data/quran_state.json`). Calendar,
 tasks, memory, chats, your revision log and the files you give it go only to providers with `personal_ok: true`; a file's text is
 treated as data, so nothing written in a file can change your tasks, calendar or memory without your Approve.
 
@@ -142,7 +151,7 @@ treated as data, so nothing written in a file can change your tasks, calendar or
 ## Testing
 
 ```bash
-python regression.py                         # 185 scripted checks: no network, no API tokens
+python regression.py                         # 192 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -150,7 +159,7 @@ python regression.py --certify <model>       # the tool tests a model must pass 
 ```
 
 The scripted run uses scratch copies of every data file and fakes for the calendar, search, news, weather, prices,
-prayer times, Quran.com, Telegram and Drive, so it never touches your data or spends a credit. Run it before and after any change.
+prayer times, Quran.com, Tanzil, Telegram and Drive, so it never touches your data or spends a credit. Run it before and after any change.
 
 ## Project layout
 
@@ -168,7 +177,9 @@ prayer times, Quran.com, Telegram and Drive, so it never touches your data or sp
 | `watches.py` | Alerts on prices, news and rain |
 | `prayers.py`, `config/prayers.yaml`, `fixtures/prayers/` | Prayer times (Aladhan), prayer and zikir reminders, the Hijri date, Ramadan's date and the morning brief; its settings; the recorded months its tests use |
 | `hifz.py`, `config/hifz.yaml` | The hifz revision tracker: the log (`data/hifz_log.jsonl`, never in git), the rotation, the questions, the reminders |
-| `quran.py`, `quran_meta.json` | The Quran's structure (surahs, juz, manzils, pages; the names people say in English and Bangla), the recitation player's audio from Quran.com, and the rule that Quran text never comes from a model. The structure is from [Tanzil's Quran metadata](https://tanzil.net/docs/quran_metadata) (CC BY 3.0), checked against Quran.com with `python quran.py --check` |
+| `quran.py`, `quran_meta.json` | The Quran's structure (surahs, juz, manzils, pages; the names people say in English and Bangla), the reciters and their timings from Quran.com, the reader's search and saved place, and the rule that Quran text never comes from a model. The structure is from [Tanzil's Quran metadata](https://tanzil.net/docs/quran_metadata) (CC BY 3.0), checked against Quran.com with `python quran.py --check` |
+| `quran_text.py` | The reader's text, downloaded once into `data/quran/` and checked (6,236 ayahs): [Tanzil's Uthmani text](https://tanzil.net) (CC BY 3.0, verbatim) and its translations by Saheeh International and Muhiuddin Khan (non-commercial use) |
+| `fonts/` | [Amiri Quran](https://github.com/aliftype/amiri) for the reader, under the SIL Open Font License (`fonts/OFL-AmiriQuran.txt`) |
 | `telegram_bot.py`, `telegram.html` | The Telegram bot and its setup page |
 | `approvals.py` | Approve cards: a delete or a move waits for a tap or your yes (every write, on Telegram) |
 | `documents.py`, `fixtures/files/` | Reading PDFs, Word and text files and pictures (parsed locally; Tesseract, then a vision model only for pictures without text), and the sample files its tests use |

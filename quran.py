@@ -9,30 +9,43 @@ Tanzil's Quran metadata 1.0 (tanzil.net, Creative Commons Attribution 3.0) and i
 source repository as redistribution, and this repository is public. Every ayah has an index 0..6235 (`index`,
 `verse`); a portion is a list of (first, last) index ranges.
 
-Audio: Quran.com lists each reciter's ayah files on public hosts (checked 2026-11-22: no key, no sign-up, open to a
-web page): Husary (its recitation 6) on its QuranicAudio mirror of everyayah.com, Alafasy (7) on verses.quran.com.
-`plan()` gives the page the files in order, the reciter's Bismillah (his Al-Fatiha 1:1) before a surah that opens with
-one, and the same recording on everyayah.com as each file's backup. The page plays them in its own player: recitation
-never goes through edge-tts, and Javid keeps no copy (the terms allow no rehosting and at most a week's cache). The
-reciter and Quran Foundation are credited on the player.
+Audio (2026-11-23): thirteen reciters (RECITERS). Eleven are Quran.com's: each one's surah files (download.quranicaudio.com)
+with Quran.com's verse and word timings (its keyless /chapter_recitations, kept on this Mac under a week: TIMING_KEEP_SEC,
+as Quran Foundation's terms allow), and its ayah files (verses.quran.com, the QuranicAudio mirror) with the same
+recording on everyayah.com as their backup; Minshawi Mujawwad has ayah files only. Saad Al-Ghamdi and Maher
+Al-Muaiqly aren't on Quran.com: their ayah files are everyayah.com's (Mahadi approved it, 2026-11-23). `plan()` gives
+the page "chapter" mode (the surah files, part by part, each ayah's from/to and its words' times where they fit the
+text) or "ayah" mode (the files in order, the reciter's Bismillah before a surah that opens with one); seeks inside a
+surah file were measured in Chrome to land within 0.12 s, variable-bitrate files included. The page plays them in its
+own player: recitation never goes through edge-tts, and Javid keeps no audio (no rehosting). The reciter and Quran
+Foundation (or everyayah.com) are credited on the player.
 
-Quran text: no model says the Quran's words, a translation or a verse number. A request for them is answered here (it
-says so, links to Quran.com and offers to play it); a question about the structure (how many ayahs, which juz) is
-answered from quran_meta.json; and every model reply is checked (reply_problem: Arabic script, a verse reference or an
-ayah number, a quoted verse), rewritten once, then cut (strip_reply). javid.synthesize never gets Arabic script.
+The reader (quran_text.py has the text): the surah list and its search (`search`: a number or a name in English,
+Arabic or Bangla), and where Mahadi left off reading and listening, his reciter and the reader's settings
+(data/quran_state.json, owner-only). Its voice commands are answered here too ("read Surah Mulk with translation",
+"hide the translation", "test me", "show", "continue reading", "change qari to Minshawi").
+
+Quran text: no model says the Quran's words, a translation or a verse number. A request for them is answered here: the
+reader opens at that portion with Tanzil's text and a translation (or, until the text is downloaded, a link to
+Quran.com and an offer to play it); a question about the structure (how many ayahs, which juz) is answered from
+quran_meta.json; and every model reply is checked (reply_problem: Arabic script, a verse reference or an ayah number, a
+quoted verse), rewritten once, then cut (strip_reply). javid.synthesize never gets Arabic script.
 """
 import bisect
+import contextlib
 import json
 import os
 import re
 import ssl
 import sys
+import threading
+import time
 import unicodedata
 import urllib.request
 from datetime import date
 
 META_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "quran_meta.json")
-API = "https://api.quran.com/api/v4"     # only `python quran.py --check` calls it
+API = "https://api.quran.com/api/v4"     # keyless: `python quran.py --check`, and the reciters' timings (timings())
 USER_AGENT = "Javid/1.0 (personal voice assistant)"
 MAX_ITEMS = 1200        # a play request covers at most this many files (about five juz)
 
@@ -476,6 +489,8 @@ def portions(text: str, words: list[str] | None = None, bare_names: bool = True)
                 a2, k = a[0], j + 2
                 if k < len(words) and words[k] in RANGE and (b := number(words, k + 1)) and words[k + 1].isdigit():
                     a2, k = b[0], k + 2
+                    if k + 1 < len(words) and words[k] == ":" and words[k + 1].isdigit() and b[0] == int(words[i]):
+                        a2, k = int(words[k + 1]), k + 2      # "2:255 to 2:260": the surah said again
                 out.append(_surah_portion(int(words[i]), a[0], a2))
                 used.update(range(i, k))
                 i = k
@@ -551,42 +566,261 @@ def cap(s: str) -> str:
 
 
 # ---------- recitation ----------
+# Each reciter: Quran.com's surah audio and its verse and word timings ("chapter": Quran.com's chapter reciter id,
+# checked 2026-11-22: every ayah of the surahs sampled has its timing, and the words' timings match the words in
+# 76–100% of ayahs), and the ayah files ("url"), with the same recording elsewhere as the backup. Ghamdi and Muaiqly
+# aren't on Quran.com: their ayah files are everyayah.com's (Mahadi approved it 2026-11-23), with no timings.
+_EA = "https://everyayah.com/data/{d}/{{s:03d}}{{a:03d}}.mp3"
+_MIRROR = "https://mirrors.quranicaudio.com/everyayah/{d}/{{s:03d}}{{a:03d}}.mp3"
+_VQ = "https://verses.quran.com/{d}/{{s:03d}}{{a:03d}}.mp3"
 RECITERS = {
     "husary": {"name": "Mahmoud Khalil Al-Husary", "short": "Husary", "name_bn": "মাহমুদ খলিল আল-হুসারি",
-               "qurancom": 6, "url": "https://mirrors.quranicaudio.com/everyayah/Husary_64kbps/{s:03d}{a:03d}.mp3",
-               "backup": "https://everyayah.com/data/Husary_128kbps/{s:03d}{a:03d}.mp3",
-               "words": _nfc(("husary", "husari", "hussary", "hussari", "husory", "hosary", "husri", "husaree",
-                              "khalil", "হুসারি", "হুসারী", "হুসরি", "হোসারি", "হুসারির", "হুসারীর"))},
+               "style": "Murattal", "chapter": 6, "qurancom": 6, "source": "qurancom",
+               "url": _MIRROR.format(d="Husary_64kbps"), "backup": _EA.format(d="Husary_128kbps"),
+               "words": ("husary", "husari", "hussary", "hussari", "husory", "hosary", "husri", "husaree", "khalil",
+                         "হুসারি", "হুসারী", "হুসরি", "হোসারি", "হুসারির", "হুসারীর")},
+    "husary_muallim": {"name": "Mahmoud Khalil Al-Husary (Muallim)", "short": "Husary (Muallim)",
+                       "name_bn": "মাহমুদ খলিল আল-হুসারি (মুআল্লিম)", "style": "Muallim", "chapter": 12, "qurancom": 12,
+                       "source": "qurancom", "url": _MIRROR.format(d="Husary_Muallim_128kbps"),
+                       "backup": _EA.format(d="Husary_Muallim_128kbps"), "base": "husary", "words": ()},
     "alafasy": {"name": "Mishary Rashid Alafasy", "short": "Alafasy", "name_bn": "মিশারি রাশিদ আল-আফাসি",
-                "qurancom": 7, "url": "https://verses.quran.com/Alafasy/mp3/{s:03d}{a:03d}.mp3",
-                "backup": "https://everyayah.com/data/Alafasy_128kbps/{s:03d}{a:03d}.mp3",
-                "words": _nfc(("alafasy", "afasy", "alafasi", "afasi", "mishary", "mishari", "mishary's", "mishari's",
-                               "rashid", "মিশারি", "মিশারী", "আফাসি", "আলাফাসি", "আফাসির", "মিশারির", "মিশারীর"))},
+                "style": "Murattal", "chapter": 7, "qurancom": 7, "source": "qurancom",
+                "url": _VQ.format(d="Alafasy/mp3"), "backup": _EA.format(d="Alafasy_128kbps"),
+                "words": ("alafasy", "afasy", "alafasi", "afasi", "mishary", "mishari", "mishary's", "mishari's",
+                          "rashid", "মিশারি", "মিশারী", "আফাসি", "আলাফাসি", "আফাসির", "মিশারির", "মিশারীর")},
+    "abdulbasit": {"name": "AbdulBaset AbdulSamad", "short": "Abdul Basit", "name_bn": "আব্দুল বাসিত আব্দুস সামাদ",
+                   "style": "Murattal", "chapter": 2, "qurancom": 2, "source": "qurancom",
+                   "url": _VQ.format(d="AbdulBaset/Murattal/mp3"), "backup": _EA.format(d="Abdul_Basit_Murattal_192kbps"),
+                   "words": ("basit", "baset", "abdulbasit", "abdulbaset", "basit's", "বাসিত", "বাসেত", "বাসিতের")},
+    "abdulbasit_mujawwad": {"name": "AbdulBaset AbdulSamad (Mujawwad)", "short": "Abdul Basit (Mujawwad)",
+                            "name_bn": "আব্দুল বাসিত আব্দুস সামাদ (মুজাওয়াদ)", "style": "Mujawwad", "chapter": 1,
+                            "qurancom": 1, "source": "qurancom", "url": _VQ.format(d="AbdulBaset/Mujawwad/mp3"),
+                            "backup": _EA.format(d="Abdul_Basit_Mujawwad_128kbps"), "base": "abdulbasit", "words": ()},
+    "minshawi": {"name": "Mohamed Siddiq al-Minshawi", "short": "Minshawi", "name_bn": "মুহাম্মাদ সিদ্দিক আল-মিনশাভি",
+                 "style": "Murattal", "chapter": 9, "qurancom": 9, "source": "qurancom",
+                 "url": _VQ.format(d="Minshawi/Murattal/mp3"), "backup": _EA.format(d="Minshawy_Murattal_128kbps"),
+                 "words": ("minshawi", "minshawy", "menshawi", "minshawi's", "minshavi", "মিনশাভি", "মিনশাবি",
+                           "মিনশাওয়ি", "মিনশাভির")},
+    "minshawi_mujawwad": {"name": "Mohamed Siddiq al-Minshawi (Mujawwad)", "short": "Minshawi (Mujawwad)",
+                          "name_bn": "মুহাম্মাদ সিদ্দিক আল-মিনশাভি (মুজাওয়াদ)", "style": "Mujawwad", "chapter": None,
+                          "qurancom": 8, "source": "qurancom", "url": _VQ.format(d="Minshawi/Mujawwad/mp3"),
+                          "backup": _EA.format(d="Minshawy_Mujawwad_192kbps"), "base": "minshawi", "words": ()},
+    "sudais": {"name": "Abdur-Rahman as-Sudais", "short": "Sudais", "name_bn": "আব্দুর রহমান আস-সুদাইস",
+               "style": "Murattal", "chapter": 3, "qurancom": 3, "source": "qurancom",
+               "url": _VQ.format(d="Sudais/mp3"), "backup": _EA.format(d="Abdurrahmaan_As-Sudais_192kbps"),
+               "words": ("sudais", "sudays", "sudes", "sudais's", "সুদাইস", "সুদাইসি", "সুদাইসের", "সুদায়েস")},
+    "shuraim": {"name": "Sa'ud ash-Shuraim", "short": "Shuraim", "name_bn": "সাউদ আশ-শুরাইম",
+                "style": "Murattal", "chapter": 10, "qurancom": 10, "source": "qurancom",
+                "url": _VQ.format(d="Shuraym/mp3"), "backup": _EA.format(d="Saood_ash-Shuraym_128kbps"),
+                "words": ("shuraim", "shuraym", "shurem", "shuraim's", "শুরাইম", "শুরায়ম", "শুরাইমের")},
+    "shatri": {"name": "Abu Bakr al-Shatri", "short": "Shatri", "name_bn": "আবু বকর আশ-শাতিরি",
+               "style": "Murattal", "chapter": 4, "qurancom": 4, "source": "qurancom",
+               "url": _VQ.format(d="Shatri/mp3"), "backup": _EA.format(d="Abu_Bakr_Ash-Shaatree_128kbps"),
+               "words": ("shatri", "shatree", "shaatree", "shatiri", "শাতরি", "শাতিরি", "শাতেরি")},
+    "rifai": {"name": "Hani ar-Rifai", "short": "Rifai", "name_bn": "হানি আর-রিফাঈ",
+              "style": "Murattal", "chapter": 5, "qurancom": 5, "source": "qurancom",
+              "url": _VQ.format(d="Rifai/mp3"), "backup": _EA.format(d="Hani_Rifai_192kbps"),
+              "words": ("rifai", "rifaee", "rifa'i", "rifaei", "রিফাঈ", "রিফাই", "রিফায়ী")},
+    "ghamdi": {"name": "Saad Al-Ghamdi", "short": "Ghamdi", "name_bn": "সাদ আল-গামদি",
+               "style": "Murattal", "chapter": None, "qurancom": None, "source": "everyayah",
+               "url": _EA.format(d="Ghamadi_40kbps"), "backup": _MIRROR.format(d="Ghamadi_40kbps"),
+               "words": ("ghamdi", "ghamidi", "ghamadi", "gamdi", "ghamdy", "গামদি", "গামেদি", "গামিদি")},
+    "muaiqly": {"name": "Maher Al-Muaiqly", "short": "Muaiqly", "name_bn": "মাহের আল-মুআইকলি",
+                "style": "Murattal", "chapter": None, "qurancom": None, "source": "everyayah",
+                "url": _EA.format(d="MaherAlMuaiqly128kbps"), "backup": None,
+                "words": ("muaiqly", "muaiqli", "muaiqlee", "maher", "maahir", "mueaqly", "muayqili", "muaiqily",
+                          "মুআইকলি", "মুয়াইকলি", "মাহের", "মাহির")},
 }
+for _r in RECITERS.values():
+    _r["words"] = _nfc(set(_r["words"]))
+_STYLE_WORDS = {"muallim": _nfc({"muallim", "mualim", "muallem", "muallim's", "teaching", "teacher", "learning",
+                                 "মুআল্লিম", "মুয়াল্লিম", "মুআল্লিমের", "শিক্ষণ"}),
+                "mujawwad": _nfc({"mujawwad", "mujawad", "mujowad", "mojawwad", "mujawwed", "মুজাওয়াদ", "মুজাব্বাদ",
+                                  "মুজাওয়াদের"}),
+                "murattal": _nfc({"murattal", "muratal", "murattil", "মুরাত্তাল", "মুরাত্তালের"})}
 DEFAULT_RECITER = "husary"
 CREDIT = "Quran.com (Quran Foundation)"
 BACKUP_CREDIT = "everyayah.com"
 
 
 def reciter_in(words: list[str]) -> tuple[str, set[int]] | None:
+    """The reciter a message names, and its words: "Minshawi", "Abdul Basit mujawwad", "Husary's muallim"."""
     for i, w in enumerate(words):
         for rid, r in RECITERS.items():
             if w in r["words"]:
-                return rid, {i}
+                used = {i}
+                if i > 0 and words[i - 1] in ("abdul", "abdel", "abd", "আব্দুল", "আবদুল"):
+                    used.add(i - 1)
+                for style, ws in _STYLE_WORDS.items():
+                    j = next((j for j, x in enumerate(words) if x in ws), None)
+                    if j is None:
+                        continue
+                    variant = next((k for k, v in RECITERS.items() if v.get("base") == rid and
+                                    v["style"].lower() == style), None)
+                    if variant or style == "murattal":
+                        return variant or rid, used | {j}
+                return rid, used
     return None
 
 
 def _file(rid: str, s: int, a: int) -> dict:
     r = RECITERS[rid]
-    return {"key": f"{s}:{a}", "s": s, "a": a, "url": r["url"].format(s=s, a=a), "backup": r["backup"].format(s=s, a=a)}
+    return {"key": f"{s}:{a}", "s": s, "a": a, "url": r["url"].format(s=s, a=a),
+            "backup": r["backup"].format(s=s, a=a) if r.get("backup") else None}
 
 
-def plan(ranges: list, rid: str | None = None, title: str = "", lang: str = "en", times: int = 1) -> dict:
-    """What the page's player plays, in order: each ayah's file (and its backup), the reciter's Bismillah before a
-    surah that opens with one (not Al-Fatiha, where it's the first ayah, nor At-Tawbah); at most MAX_ITEMS files.
-    times: the whole of it, that many times over ("Surah Al-Ikhlas three times")."""
-    rid = rid if rid in RECITERS else DEFAULT_RECITER
-    items = []
+def reciter_card(rid: str, lang: str = "en") -> dict:
+    """A reciter for the page's picker: names, style, where its audio comes from, and whether it highlights each
+    word (Quran.com's timings) or each ayah."""
+    r = RECITERS[rid]
+    return {"id": rid, "name": r["name"], "name_bn": r["name_bn"], "short": r["short"], "style": r["style"],
+            "source": r["source"], "words": bool(r["chapter"]),
+            "credit": CREDIT if r["source"] == "qurancom" else BACKUP_CREDIT,
+            "preview": r["url"].format(s=1, a=2)}
+
+
+# Quran.com's verse and word timings for a reciter's surah file (its /chapter_recitations, no key), kept on this
+# Mac for at most a week as Quran Foundation's terms allow: TIMING_KEEP_SEC, under a week, then fetched again.
+TIMINGS_DIR = os.path.join("data", "quran_timings")
+TIMING_KEEP_SEC = 6 * 86400
+BISMILLAH_LEAD_MS = 2500        # a surah file whose first word starts this late has the Bismillah in it already
+_timings: dict[tuple, dict] = {}
+_now = time.time
+
+
+def _timing_path(chapter: int, s: int) -> str:
+    return os.path.join(TIMINGS_DIR, f"{chapter}_{s:03d}.json")
+
+
+def prune_timings() -> int:
+    """Timings older than TIMING_KEEP_SEC go (at server start, and before each fetch)."""
+    gone = 0
+    for k in [k for k, v in _timings.items() if _now() - v["fetched"] >= TIMING_KEEP_SEC]:
+        del _timings[k]
+    try:
+        names = os.listdir(TIMINGS_DIR)
+    except OSError:
+        return 0
+    for n in names:
+        p = os.path.join(TIMINGS_DIR, n)
+        try:
+            with open(p, encoding="utf-8") as f:
+                fetched = json.load(f).get("fetched", 0)
+        except (OSError, ValueError):
+            fetched = 0
+        if _now() - fetched >= TIMING_KEEP_SEC:
+            with contextlib.suppress(OSError):
+                os.remove(p)
+                gone += 1
+    return gone
+
+
+def _clean_timings(s: int, raw: dict) -> dict | None:
+    """Quran.com's answer as the page needs it: the file's URL and, per ayah in order, from and to (ms) and the
+    words' [position, from, to]. None if an ayah is missing or the times go backwards."""
+    af = raw.get("audio_file") or {}
+    url = af.get("audio_url") or ""
+    ts = af.get("timestamps") or []
+    count = SURAHS[s - 1]["ayahs"]
+    by = {}
+    for t in ts:
+        try:
+            ss, a = map(int, str(t["verse_key"]).split(":"))
+            f, to = int(t["timestamp_from"]), int(t["timestamp_to"])
+        except (KeyError, ValueError, TypeError):
+            return None
+        segs = []
+        for g in t.get("segments") or []:
+            if isinstance(g, (list, tuple)) and len(g) >= 3 and all(isinstance(x, (int, float)) for x in g[-3:]):
+                segs.append([int(g[-3]), int(g[-2]), int(g[-1])])
+        if ss == s and 1 <= a <= count and to > f:
+            by[a] = {"f": f, "t": to, "g": segs}
+    if not url.startswith("https://") or sorted(by) != list(range(1, count + 1)):
+        return None
+    verses = [by[a] for a in range(1, count + 1)]
+    if any(verses[k + 1]["f"] < verses[k]["f"] for k in range(count - 1)):
+        return None
+    return {"url": url, "verses": verses}
+
+
+def timings(rid: str, s: int) -> dict | None:
+    """A reciter's surah file and its timings ({url, verses, fetched}), from memory, this Mac (under a week old) or
+    Quran.com; None when the reciter has no surah files or they can't be had (the page then plays ayah files)."""
+    chapter = RECITERS.get(rid, {}).get("chapter")
+    if not chapter or not 1 <= s <= 114:
+        return None
+    k = (chapter, s)
+    got = _timings.get(k)
+    if got and _now() - got["fetched"] < TIMING_KEEP_SEC:
+        return got
+    try:
+        with open(_timing_path(chapter, s), encoding="utf-8") as f:
+            got = json.load(f)
+        if _now() - got["fetched"] < TIMING_KEEP_SEC and got.get("verses"):
+            _timings[k] = got
+            return got
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    try:
+        clean = _clean_timings(s, _get(f"{API}/chapter_recitations/{chapter}/{s}?segments=true"))
+    except Exception as e:      # offline, Quran.com down: ayah files instead
+        print(f"[quran] timings for {rid} {s}: {type(e).__name__}")
+        return None
+    if not clean:
+        print(f"[quran] timings for {rid} {s}: incomplete, not used")
+        return None
+    got = {**clean, "fetched": _now()}
+    _timings[k] = got
+    with contextlib.suppress(OSError):
+        prune_timings()
+        os.makedirs(TIMINGS_DIR, exist_ok=True)
+        tmp = f"{_timing_path(chapter, s)}.{threading.get_ident()}.tmp"
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(got, f)
+        os.replace(tmp, _timing_path(chapter, s))
+    return got
+
+
+def part(rid: str, s: int) -> dict | None:
+    """The player's part for one surah file: its URL, each ayah's [from, to, words fit?, words], and whether the
+    reciter's Bismillah plays first (a surah with one whose file starts on its first word)."""
+    t = timings(rid, s)
+    if not t:
+        return None
+    import quran_text
+    verses = []
+    for a, v in enumerate(t["verses"], 1):
+        n = quran_text.word_count(s, a)
+        pos = sorted({g[0] for g in v["g"]})
+        fit = bool(n) and pos == list(range(1, n + 1))     # every word has its time (else the ayah lights whole)
+        verses.append([v["f"], v["t"], 1 if fit else 0, v["g"] if fit else []])
+    first = t["verses"][0]
+    lead = first["g"][0][1] if first["g"] else first["f"]
+    pre = s not in (1, 9) and lead < BISMILLAH_LEAD_MS and bool(RECITERS[rid].get("url"))
+    return {"s": s, "url": t["url"], "verses": verses, "pre": _file(rid, 1, 1)["url"] if pre else None}
+
+
+def default_reciter() -> str:
+    """The one Mahadi chose last (saved), else config/hifz.yaml's, else Husary."""
+    rid = state().get("reciter")
+    if rid in RECITERS:
+        return rid
+    import hifz
+    return hifz.config().get("reciter") if hifz.config().get("reciter") in RECITERS else DEFAULT_RECITER
+
+
+def plan(ranges: list, rid: str | None = None, title: str = "", lang: str = "en", times: int = 1,
+         start: str | None = None) -> dict:
+    """What the page's player plays. mode "chapter": the reciter's surah files with Quran.com's timings, part by part
+    (a juz is several surahs); the first part's timings come with the plan, the rest when the page asks. mode "ayah":
+    each ayah's file (the reciter has no surah files, or their timings couldn't be had). Both carry `items`, each
+    ayah's file and its backup with the reciter's Bismillah before a surah that opens with one (not Al-Fatiha, where
+    it's the first ayah, nor At-Tawbah), at most MAX_ITEMS: ayah mode plays them, chapter mode falls back to them.
+    times: the whole of it, that many times over ("Surah Al-Ikhlas three times"); start: the ayah to begin at."""
+    rid = rid if rid in RECITERS else default_reciter()
+    r = RECITERS[rid]
+    items, spans = [], []
     for lo, hi in ranges:
         for i in range(lo, hi + 1):
             if len(items) >= MAX_ITEMS:
@@ -595,15 +829,182 @@ def plan(ranges: list, rid: str | None = None, title: str = "", lang: str = "en"
             if a == 1 and s not in (1, 9):
                 items.append({**_file(rid, 1, 1), "key": f"{s}:0", "s": s, "a": 0, "bismillah": True})
             items.append(_file(rid, s, a))
-    r = RECITERS[rid]
+            if spans and spans[-1]["s"] == s and spans[-1]["last"] == a - 1:
+                spans[-1]["last"] = a
+            else:
+                spans.append({"s": s, "first": a, "last": a})
+    mode, parts = "ayah", []
+    if r["chapter"] and spans:
+        got = part(rid, spans[0]["s"])
+        if got:
+            mode = "chapter"
+            parts = [{**sp, "url": None, "verses": None, "pre": None} for sp in spans]
+            parts[0].update(got)
+            parts[0].update(first=spans[0]["first"], last=spans[0]["last"])
+            rest = [sp["s"] for sp in spans[1:]]
+            if rest:        # fetched ahead, so the next surah starts at once
+                threading.Thread(target=lambda: [part(rid, x) for x in rest], daemon=True).start()
     first, last = verse(ranges[0][0]), verse(ranges[-1][1])
-    touched = sorted({verse(i)[0] for lo, hi in ranges for i in (lo, hi)} |
-                     {n for lo, hi in ranges for n in range(verse(lo)[0], verse(hi)[0] + 1)})
+    touched = sorted({sp["s"] for sp in spans})
     return {"title": title, "reciter": rid, "reciter_name": r["name_bn"] if lang == "bn" else r["name"],
-            "credit": CREDIT, "backup_credit": BACKUP_CREDIT, "items": items, "times": max(1, min(int(times), 20)),
+            "reciter_short": r["short"], "credit": CREDIT if r["source"] == "qurancom" else BACKUP_CREDIT,
+            "backup_credit": BACKUP_CREDIT, "mode": mode, "parts": parts, "items": items,
+            "times": max(1, min(int(times), 20)), "start": start,
             "first": f"{first[0]}:{first[1]}", "last": f"{last[0]}:{last[1]}",
             "surahs": {str(n): {"en": name(n), "bn": name(n, "bn"), "ar": surah(n)["ar"], "ayahs": surah(n)["ayahs"]}
                        for n in touched}}
+
+
+# ---------- the reader: search, the surah list, where Mahadi left off ----------
+_AR_MARKS = re.compile(f"[{chr(0x064B)}-{chr(0x065F)}{chr(0x0670)}{chr(0x06D6)}-{chr(0x06ED)}{chr(0x0640)}]")
+_AR_FOLD = str.maketrans({chr(0x0623): chr(0x0627), chr(0x0625): chr(0x0627), chr(0x0622): chr(0x0627),
+                          chr(0x0671): chr(0x0627), chr(0x0649): chr(0x064A), chr(0x0629): chr(0x0647),
+                          chr(0x0624): chr(0x0648), chr(0x0626): chr(0x064A)})
+_AR_SURAH = chr(0x0633) + chr(0x0648) + chr(0x0631) + chr(0x0647)       # سوره (سورة, folded)
+_AR_AL = chr(0x0627) + chr(0x0644)                                          # ال
+_AR_DIGITS = str.maketrans("".join(chr(0x0660 + d) for d in range(10)), "0123456789")
+
+
+def _key_ar(s: str) -> str:
+    """An Arabic name without its vowel marks, alif forms folded, سورة and ال taken off: الكهف, الْكَهْف and كهف are one."""
+    s = _AR_MARKS.sub("", unicodedata.normalize("NFC", s)).translate(_AR_FOLD).strip()
+    s = re.sub(f"^{_AR_SURAH}\\s*", "", s)
+    s = re.sub(r"\s+", " ", s)
+    return " ".join(w[2:] if w.startswith(_AR_AL) and len(w) > 3 else w for w in s.split())
+
+
+_BN_SURAH_PREFIX = re.compile("^(?:" + "|".join(sorted((w for w in SURAH_WORDS if re.search(f"[{BN}]", w)), key=len,
+                                                   reverse=True)) + r")\s*")
+_SEARCH: list[tuple[int, str, str]] = []        # (surah, script, key)
+for _s in SURAHS:
+    _SEARCH += [(_s["n"], "en", _key_en(w)) for w in [_s["en"], *_s["aka"]]]
+    _SEARCH += [(_s["n"], "bn", _key_bn(w)) for w in [_s["bn"], *_s["aka_bn"]]]
+    _SEARCH.append((_s["n"], "ar", _key_ar(_s["ar"])))
+
+
+def search(q: str) -> list[int]:
+    """The surahs a search box's text finds, best first: a number (18, ১৮, ١٨), or a name in English, Arabic or
+    Bangla, whole or begun ("Kahf", "al-kahf", "الكهف", "كهف", "কাহফ", "ya sin", "ইয়াসিন")."""
+    q = unicodedata.normalize("NFC", q or "").strip()
+    if not q:
+        return [s["n"] for s in SURAHS]
+    digits = q.translate(_BN_DIGITS).translate(_AR_DIGITS).strip()
+    if digits.isdigit():
+        n = int(digits)
+        return [n] if 1 <= n <= 114 else []
+    script = "ar" if _ARABIC.search(q) else "bn" if re.search(f"[{BN}]", q) else "en"
+    k = {"ar": _key_ar, "bn": _key_bn, "en": _key_en}[script](q)
+    if script == "en" and re.match(r"^(?:sura[ht]?|soorah)\s+", q, re.I):
+        k = _key_en(re.sub(r"^(?:sura[ht]?|soorah)\s+", "", q, flags=re.I))
+    if script == "bn":
+        k = _key_bn(_BN_SURAH_PREFIX.sub("", q))
+    if not k:
+        return []
+    keys = [k]
+    if script == "en" and re.match(r"^a[lnrstzd][a-z]{3,}$", q.lower()):
+        keys.append(_key_en(q[2:]))         # "alkahf": the article written joined
+    scored: dict[int, int] = {}
+    for n, sc, key_ in _SEARCH:
+        if sc != script or not key_:
+            continue
+        score = max(3 if key_ == x else 2 if key_.startswith(x) else 1 if len(x) >= 3 and x in key_ else 0 for x in keys)
+        if score > scored.get(n, 0):
+            scored[n] = score
+    return [n for n, _ in sorted(scored.items(), key=lambda x: (-x[1], x[0]))]
+
+
+def surah_rows() -> list[dict]:
+    """The reader's surah list: number, names, ayahs, Makki or Madani, and the juz it's in."""
+    out = []
+    for s in SURAHS:
+        lo, hi = surah_range(s["n"])
+        out.append({"n": s["n"], "en": s["en"], "ar": s["ar"], "bn": s["bn"], "meaning": s.get("meaning", ""),
+                    "ayahs": s["ayahs"], "type": s["type"], "juz": [unit_of("juz", lo), unit_of("juz", hi)]})
+    return out
+
+
+def juz_rows() -> list[dict]:
+    out = []
+    for n in range(1, 31):
+        lo, hi = unit_range("juz", n)
+        out.append({"n": n, "first": key(lo), "last": key(hi), "span": span_text(lo, hi), "span_bn": span_text(lo, hi, "bn"),
+                    "ayahs": hi - lo + 1})
+    return out
+
+
+# Where Mahadi left off reading and listening, his reciter and the reader's settings: personal, on this Mac only
+# (data/quran_state.json, 0600, gitignored), written by the page (POST /quran/state) and by voice ("change qari").
+STATE_FILE = os.path.join("data", "quran_state.json")
+TRANSLATIONS = ("off", "en", "bn", "both")
+FONT_STEPS = 9
+
+
+def _ayah_key(k) -> str | None:
+    try:
+        s, a = map(int, str(k).split(":"))
+        index(s, a)
+        return f"{s}:{a}"
+    except (ValueError, TypeError):
+        return None
+
+
+def _view(v) -> dict | None:
+    """The reader's portion: a surah, a juz or a stretch {kind, n} / {kind: "range", first, last}."""
+    if not isinstance(v, dict):
+        return None
+    if v.get("kind") in ("surah", "juz") and isinstance(v.get("n"), int) and 1 <= v["n"] <= (114 if v["kind"] == "surah" else 30):
+        return {"kind": v["kind"], "n": v["n"]}
+    if v.get("kind") == "range" and (f := _ayah_key(v.get("first"))) and (l := _ayah_key(v.get("last"))):
+        if index(*map(int, f.split(":"))) <= index(*map(int, l.split(":"))):
+            return {"kind": "range", "first": f, "last": l}
+    return None
+
+
+def state() -> dict:
+    try:
+        with open(STATE_FILE, encoding="utf-8") as f:
+            st = json.load(f)
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+_state_lock = threading.Lock()      # the page saves his reading and listening places at once: one at a time
+
+
+def save_state(changes: dict) -> dict:
+    """Merge checked changes into the saved state: reading {key, view}, listening {key, reciter, first, last},
+    reciter, translation (off, en, bn, both), font (0..8), test (on or off). Anything else is ignored."""
+    with _state_lock:
+        return _save_state(changes)
+
+
+def _save_state(changes: dict) -> dict:
+    st = state()
+    ch = changes if isinstance(changes, dict) else {}
+    if isinstance(ch.get("reading"), dict) and (k := _ayah_key(ch["reading"].get("key"))):
+        st["reading"] = {"key": k, "view": _view(ch["reading"].get("view")), "at": int(_now())}
+    if isinstance(ch.get("listening"), dict) and (k := _ayah_key(ch["listening"].get("key"))):
+        rid = ch["listening"].get("reciter")
+        st["listening"] = {"key": k, "reciter": rid if rid in RECITERS else default_reciter(),
+                           "first": _ayah_key(ch["listening"].get("first")) or k,
+                           "last": _ayah_key(ch["listening"].get("last")) or k, "at": int(_now())}
+    if ch.get("reciter") in RECITERS:
+        st["reciter"] = ch["reciter"]
+    if ch.get("translation") in TRANSLATIONS:
+        st["translation"] = ch["translation"]
+    if isinstance(ch.get("font"), int) and not isinstance(ch.get("font"), bool) and 0 <= ch["font"] < FONT_STEPS:
+        st["font"] = ch["font"]
+    if isinstance(ch.get("test"), bool):
+        st["test"] = ch["test"]
+    os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+    tmp = f"{STATE_FILE}.{os.getpid()}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(st, f, ensure_ascii=False)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, STATE_FILE)
+    return st
 
 
 # ---------- requests answered in code: play, the player's controls, the structure, Quran text ----------
@@ -639,6 +1040,7 @@ _TEXT_ASK = _re(
     r"(?:about|on|for|from|of|that|which)\b|"
     r"\b(?:quran|qur'an|koran)(?:ic)? (?:verse|verses|quote|quotes|text|words)\b|\bthe quran says\b|"
     r"\bwhat(?:'s| is| are| was)\b.{0,25}\b(?:ayah|ayat|aya|verse|verses|ayahs)\b|"
+    r"\b(?:translate|translation of|meaning of|tafsir of|explain)\s+\d{1,3}\s*:\s*\d{1,3}\b|"
     r"অনুবাদ|তরজমা|তাফসির|তাফসীর|অর্থ কী|অর্থ কি|মানে কী|মানে কি|"
     r"(?:কুরআনে|কোরআনে|কুরআন|কোরআন).{0,20}(?:কী বলা|কি বলা|কী বলে|কি বলে|কী আছে|কি আছে)|"
     r"আয়াত.{0,25}(?:বলো|বলুন|লিখে|লিখো|কী|কি)")
@@ -663,25 +1065,54 @@ def _player_active(player) -> bool:
     return isinstance(player, dict) and bool(player.get("active"))
 
 
+def _reader_of(player) -> dict:
+    """The page's reader as it is (sent inside the player's state): {open, test, translation, view, key}."""
+    r = player.get("reader") if isinstance(player, dict) else None
+    return r if isinstance(r, dict) else {}
+
+
 def leftover(words: list[str], used: set[int], allowed: set[str]) -> list[str]:
     return [w for i, w in enumerate(words) if i not in used and w not in allowed]
 
 
+# Passages known by name: where they are (metadata, not text).
+_NAMED_SPANS = ((_re(r"\bayat ?(?:ul|al|-al|ul-)? ?kursi\b|\bayatul ?kursi\b|\bkursi\b|আয়াতুল কুরসি|আয়াতুল কুরসী|কুরসি"),
+                 (2, 255, 255)),
+                (_re(r"\bamana ?(?:r|al) ?rasul\b|\blast (?:two|2) (?:ayahs|ayat|verses) of (?:surah )?(?:al[- ]?)?baqara\w*|"
+                     r"আমানার রাসূল|আমানার রাসুল"), (2, 285, 286)))
+
+
+def named_portions(t: str) -> list[dict]:
+    return [_surah_portion(*span) for rx, span in _NAMED_SPANS if rx.search(t)]
+
+
+def _named_words(words: list[str]) -> set[int]:
+    """The words of a named passage ("ayatul kursi"), so they aren't left over."""
+    names = _nfc({"ayat", "ayatul", "ayatu", "ul", "al", "kursi", "kursee", "amana", "amanar", "rasul", "আয়াতুল",
+                  "কুরসি", "কুরসী", "আমানার", "রাসূল", "রাসুল", "last", "two", "2", "of", "baqarah", "baqara"})
+    return {i for i, w in enumerate(words) if w in names}
+
+
 def request(text: str, player: dict | None = None) -> dict | None:
-    """What a message asks of the recitation player or about the Quran, when code can answer all of it; else None.
-    player: the page's player as it is ({active, playing, key, surah, ayah, reciter}), for "next ayah", "repeat this
-    ayah three times", "pause"."""
+    """What a message asks of the recitation player, the reader or about the Quran, when code can answer all of it;
+    else None. player: the page's player as it is ({active, playing, key, surah, ayah, reciter, reader: {open, test,
+    translation}}), for "next ayah", "repeat this ayah three times", "pause", "hide the translation", "show"."""
     t = norm(text)
     words = tokens(text)
     if not words:
         return None
     if (req := _control(words, t, player)):
         return req
+    if (req := _reader_command(words, t, player)):
+        return req
     if (req := _play(words, t)):
+        return req
+    if (req := _read(words, t)):
         return req
     structure = _STRUCTURE_AYAHS.search(t) or _STRUCTURE_WHERE.search(t)
     if _NAMED_PASSAGE.search(t) or (_TEXT_ASK.search(t) and not structure):
-        return {"action": "text", "portions": portions(text, words)[0]}
+        found = [p for p in portions(text, words)[0] if p["kind"] != "bad_ayah"] or named_portions(t)
+        return {"action": "text", "portions": found}
     if _STRUCTURE_COUNT.search(t):
         return {"action": "count"}
     if structure:
@@ -705,11 +1136,133 @@ def _play(words: list[str], t: str) -> dict | None:
                     "times": times[0] or 1}
         return None
     found, named = portions(" ".join(words), words)
+    if not found and (np := named_portions(t)):
+        found, named = np, _named_words(words)
     if not found or leftover(words, used | named, _FILLER | AND):
         return None
     bad = next((p for p in found if p["kind"] == "bad_ayah"), None)
     return {"action": "play", "today": False, "portions": [p for p in found if p["kind"] != "bad_ayah"],
             "reciter": rec[0] if rec else None, "bad": bad, "times": times[0] or 1}
+
+
+# ---------- the reader's words: open a portion, translation on or off, the hifz test, where I left off, a qari ----------
+_READ_WORDS = _nfc({"read", "open", "show", "display", "bring", "pull", "view", "পড়ো", "পড়ব", "পড়তে", "পড়াও",
+                    "পড়ি", "পড়বো", "খোলো", "খুলো", "খোল", "খুলে", "দেখাও", "দেখাবে", "porbo", "poro", "pori", "porte",
+                    "kholo", "dekhao", "dekhaw", "দেখি"})
+_TR_WORDS = _nfc({"translation", "translations", "meaning", "meanings", "tarjama", "tarjuma", "english", "bangla",
+                  "bengali", "both", "with", "without", "no", "its", "and", "অনুবাদ", "ছাড়া", "অনুবাদসহ", "অর্থ", "অর্থসহ", "সহ", "বাংলা",
+                  "ইংরেজি", "দুটোই", "onubad", "soho", "translated"})
+_TEST_WORDS = _nfc({"test", "quiz", "hifz", "memorisation", "memorization", "me", "on", "hide", "the", "ayahs", "ayat",
+                    "verses", "text", "arabic", "start", "begin", "a", "হিফজ", "হিফয", "টেস্ট", "পরীক্ষা", "নাও", "নিন",
+                    "koro", "nao", "করো"})
+_TR_ON = _re(r"\bwith (?:the |its |an? )?(?:english |bangla |bengali |both )?(?:translations?|meanings?|tarjam?a)\b|"
+             r"অনুবাদসহ|অনুবাদ সহ|অর্থসহ|অর্থ সহ|onubad soho|translation soho")
+_TR_OFF = _re(r"^(?:please )?(?:hide|remove|turn off|switch off|close|no) (?:the )?(?:translations?|meanings?)(?: please)?$|"
+              r"^(?:the )?translations? off$|^(?:arabic only|only (?:the )?arabic|just (?:the )?arabic)(?: please)?$|"
+              r"^অনুবাদ (?:লুকাও|বন্ধ করো|বন্ধ|সরাও|ছাড়া)$|^শুধু আরবি$|^কেবল আরবি$|^without (?:the )?translations?$")
+_TR_SHOW = _re(r"^(?:please )?(?:show|turn on|switch on|add|open|give me) (?:the |me the )?(?:(english|bangla|bengali|both) )?"
+               r"(?:translations?|meanings?)(?: too| please| as well)?$|^(?:the )?translations? on$|"
+               r"^(english|bangla|bengali|both) translations?$|"
+               r"^(?:(বাংলা|ইংরেজি) )?অনুবাদ (?:দেখাও|চালু করো|চালু|দাও)$|^(বাংলা|ইংরেজি) অনুবাদ$")
+_TEST_ON = _re(r"\btest me\b|\bquiz me\b|\bhifz test\b|\bmemori[sz]ation test\b|\b(?:start|begin) (?:the |a )?(?:hifz )?test\b|"
+               r"\bhide the (?:ayahs|ayat|verses|arabic|text)\b|হিফজ টেস্ট|হিফয টেস্ট|পরীক্ষা নাও|টেস্ট নাও|test koro|test nao")
+_TEST_OFF = _re(r"^(?:stop|end|finish|close|exit|leave|turn off) (?:the )?(?:hifz )?test$|^test off$|"
+                r"^(?:হিফজ )?টেস্ট (?:বন্ধ|শেষ)(?: করো)?$|^পরীক্ষা শেষ$")
+_REVEAL_NEXT = _re(r"^(?:show|reveal|show me|show it|reveal it|show (?:the )?next(?: one| ayah| verse)?|"
+                   r"reveal (?:the )?next(?: one| ayah| verse)?|next one|দেখাও|পরেরটা দেখাও|পরের আয়াত দেখাও|dekhao)$")
+_REVEAL_ALL = _re(r"^(?:show|reveal) (?:them |it )?all$|^(?:show|reveal) (?:the )?whole(?: surah)?$|^সব দেখাও$|^সবগুলো দেখাও$")
+_HIDE_ALL = _re(r"^hide (?:them |it )?(?:all|again)$|^hide (?:the )?ayahs? again$|^সব লুকাও$|^আবার লুকাও$")
+_CONTINUE_READ = _re(r"^(?:continue|resume) (?:my |the )?reading$|^where (?:was i|did i (?:stop|leave off))$|"
+                     r"^(?:continue|pick up) (?:from )?where i (?:left off|stopped)(?: reading)?$|^(?:open|show) where i left off$|"
+                     r"^যেখানে (?:ছিলাম|থেমেছিলাম)(?: সেখান থেকে)?(?: পড়ো| খোলো)?$|^আবার পড়া শুরু(?: করো)?$")
+_CONTINUE_LISTEN = _re(r"^(?:continue|resume) (?:my |the )?(?:listening|recitation)$|^(?:continue|resume) (?:listening )?"
+                       r"where i (?:left off|stopped)(?: listening)?$|^(?:continue|resume) the (?:quran|qur'an)$|"
+                       r"^শোনা চালিয়ে যাও$|^যেখানে শোনা থেমেছিল(?: সেখান থেকে)?(?: চালাও)?$")
+_QARI = _re(r"\b(?:change|switch|set|use|make|choose|pick)\b.{0,24}\b(?:qari|reciter|voice|recitation|sheikh|shaikh)\b|"
+            r"\b(?:qari|reciter)\b.{0,12}\b(?:to|as|be)\b|ক্বারী|ক্বারি|কারী|qari bodlao|reciter bodlao")
+_POLITE = _nfc({"please", "javid", "jabid", "javed", "jawed", "hey", "ok", "okay", "now", "kindly", "জাভিদ", "জাভেদ",
+                "একটু", "দয়া", "করে", "plz"})
+
+
+def _bare(words: list[str]) -> str:
+    """A short command without polite words: "please hide the translation, Javid" is "hide the translation"."""
+    return " ".join(w for w in words if w not in _POLITE)
+
+
+def _tr_lang(t: str) -> str | None:
+    if re.search(r"\bboth\b|দুটোই|দুটো", t):
+        return "both"
+    if re.search(r"\b(?:bangla|bengali)\b|বাংলা", t):
+        return "bn"
+    if re.search(r"\benglish\b|ইংরেজি", t):
+        return "en"
+    return None
+
+
+def _reader_command(words: list[str], t: str, player) -> dict | None:
+    """The reader's commands, and the ones that need no portion: "continue reading", "change qari to Minshawi",
+    "hide the translation", "test me", "show" (the next hidden ayah, in a hifz test)."""
+    reader = _reader_of(player)
+    bare = _bare(words)
+    if _CONTINUE_READ.search(bare):
+        return {"action": "continue", "what": "reading"}
+    if _CONTINUE_LISTEN.search(bare) and not _player_active(player):
+        return {"action": "continue", "what": "listening"}
+    rec = reciter_in(words)
+    if rec and (_QARI.search(t) or re.match(r"^(?:use|switch to|change to|try|go with)\b", bare)):
+        allowed = _FILLER | _CTL_EXTRA | _nfc({"change", "switch", "set", "use", "make", "choose", "pick", "qari",
+                                               "reciter", "voice", "as", "be", "my", "default", "from", "now", "on",
+                                               "go", "try", "বদলাও", "পাল্টাও", "বদলে", "দাও", "করো", "bodlao", "kore",
+                                               "dao", "ক্বারী", "ক্বারি", "কারী", "কারি", "ক্বারীর", "ক্বারির", "হিসেবে"}) | \
+            set().union(*_STYLE_WORDS.values())
+        if not leftover(words, rec[1], allowed):
+            return {"action": "qari", "reciter": rec[0], "active": _player_active(player), "player": player}
+    if _TR_OFF.search(bare):
+        return {"action": "reader", "translation": "off", "open": bool(reader.get("open"))}
+    if _TR_SHOW.search(bare):
+        return {"action": "reader", "translation": _tr_lang(bare) or "on", "open": bool(reader.get("open"))}
+    if _TEST_OFF.search(bare):
+        return {"action": "reader", "test": False, "open": bool(reader.get("open"))}
+    if reader.get("open") and reader.get("test"):
+        if _REVEAL_ALL.search(bare):
+            return {"action": "reader", "reveal": "all", "open": True}
+        if _HIDE_ALL.search(bare):
+            return {"action": "reader", "reveal": "none", "open": True}
+        if _REVEAL_NEXT.search(bare) or (bare in ("next", "পরের", "পরেরটা") and not _player_active(player)):
+            return {"action": "reader", "reveal": "next", "open": True}
+    if _TEST_ON.search(t):
+        found, used = portions(" ".join(words), words)
+        found = [p for p in found if p["kind"] != "bad_ayah"]
+        test_words = {i for i, w in enumerate(words) if w in _TEST_WORDS | _READ_WORDS}
+        if not leftover(words, used | test_words, _FILLER | _TR_WORDS):
+            if found:
+                return {"action": "read", "portions": found, "test": True, "translation": _tr_choice(t)}
+            return {"action": "reader", "test": True, "open": bool(reader.get("open"))}
+    return None
+
+
+def _tr_choice(t: str) -> str | None:
+    """A read request's translation: "with translation" (on, in the language named), or nothing said (None)."""
+    if _TR_ON.search(t):
+        return _tr_lang(t) or "on"
+    if re.search(r"\bwithout (?:the )?translations?\b|\barabic only\b|\bonly arabic\b|শুধু আরবি", t):
+        return "off"
+    return None
+
+
+def _read(words: list[str], t: str) -> dict | None:
+    """"read Surah Mulk with translation", "open juz 30", "show me 2:255 to 2:260", "সূরা কাহফ অনুবাদসহ পড়ো"."""
+    verbs = {i for i, w in enumerate(words) if w in _READ_WORDS}
+    if not verbs:
+        return None
+    found, named = portions(" ".join(words), words)
+    if not found and (np := named_portions(t)):
+        found, named = np, _named_words(words)
+    found = [p for p in found if p["kind"] != "bad_ayah"] if found else []
+    if not found or leftover(words, verbs | named, _FILLER | _TR_WORDS | AND | _nfc({"me", "up", "on", "screen",
+                                                                                      "page", "reader", "সহ"})):
+        return None
+    return {"action": "read", "portions": found, "translation": _tr_choice(t), "test": None}
 
 
 def times_in(words: list[str]) -> tuple[int | None, set[int]]:
@@ -752,6 +1305,22 @@ def _control(words: list[str], t: str, player) -> dict | None:
     ayah = ayah_number(words, exclude=times[1])
     allowed = _FILLER | AYAH_WORDS | _CTL_EXTRA | set().union(*_C.values())
     taken = times[1] | (ayah[1] if ayah else set())
+    upto = None             # "repeat ayah 5 to 10", "আয়াত ৫ থেকে ১০", "৫ থেকে ১০ নম্বর আয়াত": the range's end
+    if ayah:
+        j, k0 = max(ayah[1]) + 1, min(ayah[1])
+        if j < len(words) and words[j] in RANGE and (to := number(words, j + 1)) and j + 1 not in times[1] and \
+                to[0] >= ayah[0]:
+            upto, taken = to[0], taken | set(range(j, j + 1 + to[1]))
+            j = _skip_tail(words, j + 1 + to[1])
+            if j < len(words) and words[j] in AYAH_WORDS:
+                taken |= set(range(max(ayah[1]) + 1, j + 1))
+            while j < len(words) and words[j] in _ONWARD:      # "পর্যন্ত"
+                taken.add(j)
+                j += 1
+        elif k0 >= 2 and words[k0 - 1] in RANGE and (fr := number(words, k0 - 2)) and fr[1] == 1 and \
+                fr[0] <= ayah[0] and k0 - 2 not in times[1]:
+            upto, ayah = ayah[0], (fr[0], ayah[1] | {k0 - 2, k0 - 1})
+            taken |= {k0 - 2, k0 - 1}
 
     def clean(extra: set = frozenset()) -> bool:
         return not leftover(words, taken | set(extra), allowed)
@@ -759,16 +1328,18 @@ def _control(words: list[str], t: str, player) -> dict | None:
     rec = reciter_in(words)
     if rec and not ayah and clean(rec[1]):
         return {"action": "reciter", "reciter": rec[0], "active": active, "player": player}
-    seek = ayah and (any(w in _nfc(("from", "থেকে", "theke")) for w in words) or
-                     re.search(r"\b(?:go to|jump to|skip to|start at|take me to)\b", t))
+    seek = ayah and not upto and (any(w in _nfc(("from", "থেকে", "theke")) for w in words) or
+                                  re.search(r"\b(?:go to|jump to|skip to|start at|take me to)\b", t))
     if seek and clean():
         return {"action": "seek", "ayah": ayah[0], "active": active, "player": player}
     resume_verb = bool(has & {"resume"}) and any(w in _C["resume"] - {"play"} for w in words)
     if (("repeat" in has and not resume_verb) or times[0]) and clean():
-        return {"action": "repeat", "ayah": ayah[0] if ayah else None, "times": max(1, min(times[0] or 1, 20)),
-                "active": active, "player": player}
+        return {"action": "repeat", "ayah": ayah[0] if ayah else None, "to": upto,
+                "times": max(1, min(times[0] or 1, 20)), "active": active, "player": player}
     for k in ("next", "prev", "pause", "stop", "resume"):
         if k in has and not ayah and clean():
+            if k == "resume" and not active:        # "resume the recitation": from where he stopped listening
+                return {"action": "continue", "what": "listening"}
             return {"action": k, "active": active}
     return None
 
@@ -796,6 +1367,14 @@ def answer(req: dict, lang: str):
     act = req["action"]
     if act == "text":
         return (yield from _text_answer(req, lang))
+    if act == "read":
+        return (yield from _read_answer(req, lang))
+    if act == "reader":
+        return (yield from _reader_answer(req, lang))
+    if act == "continue":
+        return (yield from _continue_answer(req, lang))
+    if act == "qari":
+        return (yield from _qari_answer(req, lang))
     if act == "count":
         return (f"কুরআনে ১১৪টি সূরা, {bn_digits(f'{TOTAL:,}')}টি আয়াত (হাফসের গণনায়), ৩০টি পারা আর ৭টি মঞ্জিল।"
                 if lang == "bn" else
@@ -851,11 +1430,156 @@ def link(p: dict | None) -> dict:
             "date": None, "date_text": ""}
 
 
-def _text_answer(req: dict, lang: str):
+def view_of(p: dict) -> dict:
+    """A portion as the reader's view: a whole surah or juz, or a stretch of ayahs."""
+    if p["kind"] in ("juz", "surah") and not p.get("a1"):
+        return {"kind": p["kind"], "n": p["n"]}
+    lo, hi = p["ranges"][0]
+    return {"kind": "range", "first": key(lo), "last": key(hi)}
+
+
+def _view_title(v: dict, lang: str) -> str:
+    if v["kind"] == "surah":
+        return surah_title(v["n"], lang, True)
+    if v["kind"] == "juz":
+        return f"পারা {bn_digits(v['n'])}" if lang == "bn" else f"Juz {v['n']}"
+    lo, hi = (index(*map(int, v[k].split(":"))) for k in ("first", "last"))
+    if lo == hi:
+        s, a = verse(lo)
+        return f"{name(s, lang, True)} {bn_digits(a) if lang == 'bn' else a}"
+    return span_text(lo, hi, lang, True)
+
+
+def _tr_mode(choice: str | None, lang: str) -> str | None:
+    """"on" (no language named): both if that's what he reads, else the reply language's (Bangla in Bangla)."""
+    if choice != "on":
+        return choice
+    return "both" if state().get("translation") == "both" else ("bn" if lang == "bn" else "en")
+
+
+def _tr_said(mode: str, lang: str) -> str:
+    import quran_text
+    names = {k: quran_text.SOURCES[k]["name_bn" if lang == "bn" else "name"] for k in ("en", "bn")}
+    who = {"en": names["en"], "bn": names["bn"], "both": f"{names['en']}{' আর ' if lang == 'bn' else ' and '}{names['bn']}"}
+    return who.get(mode, "")
+
+
+def _read_answer(req: dict, lang: str, *, start: str | None = None):
+    """Open the reader at a portion (the Hifz view's Read tab): the page shows Tanzil's text and the translation."""
+    import quran_text
+    if not quran_text.ready():
+        quran_text.ensure_soon()
+        return (yield from _text_answer({"portions": req["portions"]}, lang, downloading=True))
+    view = view_of(req["portions"][0])
+    tr = _tr_mode(req.get("translation"), lang)
+    cmd = {"open": view, "start": start or key(req["portions"][0]["ranges"][0][0]), "quiet": False}
+    if tr:
+        cmd["translation"] = tr
+        save_state({"translation": tr})
+    if req.get("test") is not None:
+        cmd["test"] = bool(req["test"])
+    yield ("quran", cmd)
+    title = _view_title(view, lang)
+    mode = tr or state().get("translation") or "off"
+    if lang == "bn":
+        said = f"{title} খোলা হলো" + (f", {_tr_said(mode, lang)}-এর অনুবাদসহ" if mode in ("en", "bn", "both") else "")
+        said += "। হিফজ টেস্ট: আয়াতগুলো ঢাকা; চাপলে বা “দেখাও” বললে একটি করে খুলবে।" if req.get("test") else "।"
+    else:
+        said = f"{title} is open" + (f", with {_tr_said(mode, lang)}'s translation" if mode in ("en", "bn", "both") else "")
+        said += (". Hifz test: the ayahs are hidden; tap one, or say “show”, to reveal it." if req.get("test") else ".")
+    return said, ""
+
+
+def _reader_answer(req: dict, lang: str):
+    """Translation on or off, the hifz test on or off, reveal the next hidden ayah (or all, or none)."""
+    cmd = {"quiet": True}
+    if "translation" in req:
+        tr = _tr_mode(req["translation"], lang)
+        cmd["translation"] = tr
+        save_state({"translation": tr})
+        if tr == "off":
+            shown = "অনুবাদ বন্ধ: শুধু আরবি।" if lang == "bn" else "Translation off: Arabic only."
+        else:
+            shown = (f"অনুবাদ: {_tr_said(tr, lang)}।" if lang == "bn" else f"Translation: {_tr_said(tr, lang)}.")
+    elif "test" in req:
+        cmd["test"] = bool(req["test"])
+        save_state({"test": bool(req["test"])})
+        shown = (("হিফজ টেস্ট চালু: চাপলে বা “দেখাও” বললে একটি করে আয়াত খুলবে।" if req["test"] else "হিফজ টেস্ট বন্ধ।")
+                 if lang == "bn" else
+                 ("Hifz test on: tap an ayah, or say “show”, to reveal the next one." if req["test"] else "Hifz test off."))
+    else:
+        cmd["reveal"] = req["reveal"]
+        shown = {"next": ("পরের আয়াত খোলা হলো।", "Next ayah shown."), "all": ("সব আয়াত খোলা হলো।", "All shown."),
+                 "none": ("আবার ঢাকা হলো।", "Hidden again.")}[req["reveal"]][0 if lang == "bn" else 1]
+    if not req.get("open"):
+        cmd["quiet"] = False
+        cmd["open_last"] = True        # nothing open: the page opens where he left off reading
+        shown += (" যেখানে পড়া থেমেছিল সেখানে খুলছি।" if lang == "bn" else " Opening where you left off reading.") \
+            if state().get("reading") else (" সূরা খুলতে বলো, যেমন “সূরা মুলক পড়ো”।" if lang == "bn" else
+                                            " Open a surah to read: say “read Surah Al-Mulk”.")
+    yield ("quran", cmd)
+    return shown, ""
+
+
+def _continue_answer(req: dict, lang: str):
+    st = state()
+    if req["what"] == "reading":
+        r = st.get("reading")
+        if not r:
+            return ("এখানে এখনো কিছু পড়া হয়নি। বলো “সূরা কাহফ পড়ো”।" if lang == "bn" else
+                    "You haven't read anything here yet. Say “read Surah Al-Kahf”."), ""
+        s, a = map(int, r["key"].split(":"))
+        view = r.get("view") or {"kind": "surah", "n": s}
+        yield ("quran", {"open": view, "start": r["key"], "quiet": False})
+        return (f"আবার {surah_title(s, 'bn')}, আয়াত {bn_digits(a)}।" if lang == "bn" else
+                f"Back to {surah_title(s, 'en', True)}, ayah {a}."), ""
+    lst = st.get("listening")
+    if not lst:
+        return ("শোনার মতো কিছু থেমে নেই। বলো “সূরা ইয়াসিন চালাও”।" if lang == "bn" else
+                "There's no recitation to pick up yet. Say “play Surah Ya-Sin”."), ""
+    s, a = map(int, lst["key"].split(":"))
+    lo = index(s, a)
+    try:
+        hi = index(*map(int, lst["last"].split(":")))
+    except (KeyError, ValueError, TypeError):
+        hi = surah_range(s)[1]
+    hi = max(hi, lo)
+    title = f"{name(s, lang)} {bn_digits(a) if lang == 'bn' else a}"
+    cmd = {"action": "play", "quiet": True, **plan([(lo, hi)], lst.get("reciter"), title, lang)}
+    yield ("recite", cmd)
+    return f"▶ {title} · {cmd['reciter_name']}", ""
+
+
+def _qari_answer(req: dict, lang: str):
+    """Change the reciter: saved for every recitation from now on, and the one playing switches at its ayah."""
+    rid = req["reciter"]
+    r = RECITERS[rid]
+    save_state({"reciter": rid})
+    shown = r["name_bn"] if lang == "bn" else r["name"]
+    if req.get("active"):
+        yield ("recite", {"action": "reciter", "quiet": True, "reciter": rid, "reciter_name": shown})
+        return f"↺ {shown}", ""
+    yield ("quran", {"reciter": rid, "quiet": False})
+    how = ("" if r["chapter"] else (" (প্রতিটি আয়াত আলাদা, শব্দ ধরে নয়)" if lang == "bn" else
+                                    ", lighting each ayah (not each word) as he recites"))
+    return (f"এখন থেকে {shown}-এর তিলাওয়াত চলবে{how}।" if lang == "bn" else f"From now on: {shown}{how}."), ""
+
+
+def _text_answer(req: dict, lang: str, downloading: bool = False):
     p = next((x for x in req["portions"] if x["kind"] in ("surah", "juz")), None)
+    import quran_text
+    if p and not downloading and quran_text.ready():        # the reader has it: Tanzil's text and a translation
+        yield ("sources", [link(p)])
+        return (yield from _read_answer({"portions": [p], "translation": "on"}, lang))
+    if not quran_text.ready():
+        quran_text.ensure_soon()
     yield ("sources", [link(p)])
-    target = (surah_title(p["n"], lang, True) if p["kind"] == "surah" else portion_label(p, lang)) if p else \
-        surah_title(67, lang, True)
+    if downloading:
+        return (("কুরআনের পাঠ এখনো এই ম্যাকে নামছে; এক মিনিট পরে আবার বলো। ততক্ষণ Quran.com-এ পড়তে পারো, লিংক নিচে।"
+                 if lang == "bn" else "The Quran's text is still downloading to this Mac; ask again in a minute. Until "
+                                      "then you can read it on Quran.com: the link is below."), "")
+    target = ((portion_label(p, lang, True) if p.get("a1") else surah_title(p["n"], lang, True)) if p["kind"] == "surah"
+              else portion_label(p, lang)) if p else surah_title(67, lang, True)
     play = f"“{target} চালাও”" if lang == "bn" else f"“play {target}”"
     if lang == "bn":
         return (f"কুরআনের শব্দ, অনুবাদ বা আয়াতের নম্বর আমি নিজে থেকে বলি না, যাতে একটি শব্দও ভুল না হয়। Quran.com-এ "
@@ -865,8 +1589,10 @@ def _text_answer(req: dict, lang: str):
 
 
 def _play_answer(req: dict, lang: str):
-    import hifz      # the default reciter and today's portion are the tracker's
-    rid = req.get("reciter") or hifz.config()["reciter"]
+    import hifz      # today's portion is the tracker's
+    rid = req.get("reciter") or default_reciter()
+    if req.get("reciter"):
+        save_state({"reciter": rid})        # the reciter he names is the one from now on
     if req.get("bad") and not req["portions"]:
         b = req["bad"]
         return (f"সূরা {name(b['n'], 'bn')}-এ {bn_digits(b['count'])}টি আয়াত।" if lang == "bn" else
@@ -891,6 +1617,7 @@ def _control_answer(req: dict, lang: str):
                 "Nothing is playing. Say “play Surah Al-Mulk” to start one."), ""
     if act == "reciter":
         r = RECITERS[req["reciter"]]
+        save_state({"reciter": req["reciter"]})      # remembered: the next recitation is his too
         yield ("recite", {"action": "reciter", "quiet": True, "reciter": req["reciter"],
                           "reciter_name": r["name_bn"] if lang == "bn" else r["name"]})
         return f"↺ {r['name_bn'] if lang == 'bn' else r['name']}", ""
@@ -898,25 +1625,29 @@ def _control_answer(req: dict, lang: str):
     if act in ("seek", "repeat") and req.get("ayah") and (pl := req.get("player") or {}).get("surah"):
         s = int(pl["surah"])
         count = SURAHS[s - 1]["ayahs"]
-        if req["ayah"] > count:
+        if max(req["ayah"], req.get("to") or 0) > count:
             return (f"সূরা {name(s, 'bn')}-এ {bn_digits(count)}টি আয়াত।" if lang == "bn" else
                     f"{name(s, 'en', True)} has {count} ayahs."), ""
-        target = index(s, req["ayah"])
+        target, end = index(s, req["ayah"]), index(s, req.get("to") or req["ayah"])
         try:
             lo, hi = (index(*map(int, str(pl[k]).split(":"))) for k in ("first", "last"))
         except (KeyError, ValueError, TypeError):
             lo = hi = None
-        if lo is None or not lo <= target <= hi:
-            span = (target, target) if act == "repeat" else (target, surah_range(s)[1])
-            title = f"{name(s, lang)} {bn_digits(req['ayah']) if lang == 'bn' else req['ayah']}"
+        if lo is None or not lo <= target <= end <= hi:
+            span = (target, end) if act == "repeat" else (target, surah_range(s)[1])
+            a_text = (f"{req['ayah']}–{req['to']}" if req.get("to") else str(req["ayah"]))
+            title = f"{name(s, lang)} {bn_digits(a_text) if lang == 'bn' else a_text}"
             cmd = {"action": "play", "quiet": True, **plan([span], pl.get("reciter"), title, lang,
                                                            req.get("times", 1) if act == "repeat" else 1)}
             yield ("recite", cmd)
             return f"▶ {title} · {cmd['reciter_name']}", ""
     cmd = {"action": act, "quiet": True}
     if act == "repeat":
-        cmd.update(ayah=req.get("ayah"), times=req["times"])
-        if lang == "bn":
+        cmd.update(ayah=req.get("ayah"), to=req.get("to"), times=req["times"])
+        if req.get("to"):
+            shown = (f"🔁 আয়াত {bn_digits(req['ayah'])}–{bn_digits(req['to'])}, {bn_digits(req['times'])} বার"
+                     if lang == "bn" else f"🔁 Ayahs {req['ayah']}–{req['to']}, {req['times']}×")
+        elif lang == "bn":
             shown = f"🔁 {'আয়াত ' + bn_digits(req['ayah']) if req.get('ayah') else 'এই আয়াত'}, {bn_digits(req['times'])} বার"
         else:
             shown = f"🔁 {'Ayah ' + str(req['ayah']) if req.get('ayah') else 'This ayah'}, {req['times']}×"
@@ -1069,13 +1800,23 @@ def check(get=_get) -> tuple[bool, list[str]]:
             lines.append(f"manzil {n}: {key(lo)} with {hi - lo + 1} ayahs here, {s}:{a} with "
                          f"{first['pagination']['total_records']} on Quran.com")
     lines.append("manzils: 7 checked (start and length)")
+    checked = []
     for rid, r in RECITERS.items():
-        got = get(f"{API}/recitations/{r['qurancom']}/by_chapter/67?per_page=1")["audio_files"][0]["url"]
-        got = "https:" + got if got.startswith("//") else got if got.startswith("http") else "https://verses.quran.com/" + got
-        if got != r["url"].format(s=67, a=1):
-            bad += 1
-            lines.append(f"{rid}: Quran.com lists {got}, Javid plays {r['url'].format(s=67, a=1)}")
-    lines.append("reciters: Husary (6) and Alafasy (7): their ayah files are where Javid plays them from")
+        if r["qurancom"]:
+            got = get(f"{API}/recitations/{r['qurancom']}/by_chapter/67?per_page=1")["audio_files"][0]["url"]
+            got = "https:" + got if got.startswith("//") else got if got.startswith("http") else "https://verses.quran.com/" + got
+            if got != r["url"].format(s=67, a=1):
+                bad += 1
+                lines.append(f"{rid}: Quran.com lists {got}, Javid plays {r['url'].format(s=67, a=1)}")
+        if r["chapter"]:
+            t = _clean_timings(67, get(f"{API}/chapter_recitations/{r['chapter']}/67?segments=true"))
+            if not t:
+                bad += 1
+                lines.append(f"{rid}: Quran.com's timings for Al-Mulk ({r['chapter']}) aren't whole")
+        if r["qurancom"]:
+            checked.append(r["short"])
+    lines.append(f"reciters: Quran.com's {len(checked)} ({', '.join(checked)}): the ayah files are where Javid plays "
+                 "them from, and each surah file has Al-Mulk's timings whole (Ghamdi and Muaiqly are everyayah.com's)")
     return bad == 0, lines
 
 
@@ -1098,6 +1839,6 @@ if __name__ == "__main__":
     print("OK: quran_meta.json matches Quran.com" if ok else "MISMATCH: see above")
     if ok:
         _write_checked({"date": date.today().isoformat(), "against": "api.quran.com/api/v4",
-                        "what": "the ayah counts and pages of all 114 surahs, the 30 juz, the 7 manzils, and where "
-                                "the reciters' ayah files are"})
+                        "what": "the ayah counts and pages of all 114 surahs, the 30 juz, the 7 manzils, where the "
+                                "reciters' ayah files are, and each surah-file reciter's timings for Al-Mulk"})
     sys.exit(0 if ok else 1)

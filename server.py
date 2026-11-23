@@ -7,6 +7,7 @@ Run: python server.py  →  open the link it prints (the page's address with Jav
 import argparse
 import asyncio
 import json
+import os
 import sys
 import threading
 import webbrowser
@@ -30,6 +31,7 @@ import memory_store
 import prayers
 import providers
 import quran
+import quran_text
 import selfcheck
 import skills
 import telegram_bot
@@ -90,6 +92,8 @@ async def lifespan(app: FastAPI):
     watches.start()         # price, news and rain watches: checked in code, alerts ring like timers
     threading.Thread(target=prayers.prefetch, daemon=True).start()   # this month's prayer times, before a question
     threading.Thread(target=prayers.ramadan_start, daemon=True).start()   # Ramadan's date (hifz.py counts down to it)
+    threading.Thread(target=quran_text.ensure, daemon=True).start()       # the reader's text: checked, or downloaded once
+    quran.prune_timings()   # Quran.com's timings are kept under a week (its terms)
     if prayers.keep_awake():    # on power, no idle sleep while the server runs: Fajr's reminders go out
         print("[prayers] keeping the Mac awake while the server runs on power (keep_awake in config/prayers.yaml)")
     documents.prune()       # uploads older than KEEP_DAYS go
@@ -246,6 +250,8 @@ def _reply_event(kind: str, value) -> str | None:
         return _event(type="recite", **value)
     if kind == "hifz":              # the tracker changed (refresh the Hifz panel) or asked to open the Hifz view
         return _event(type="hifz", **value)
+    if kind == "quran":             # the reader: open a portion, the translation, the hifz test, a reciter chosen
+        return _event(type="quran", **value)
     return None
 
 
@@ -734,11 +740,98 @@ class QuranPlanBody(BaseModel):
     today: bool = False
     keys: list[str] | None = None        # ["12:53", "14:52"]: that stretch (the player switching reciters)
     reciter: str | None = None
+    start: str | None = None             # the ayah to begin at (a tapped ayah, the one playing when the reciter changed)
+
+
+def _key_index(k: str) -> int:
+    try:
+        return quran.index(*map(int, str(k).split(":")))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "an ayah is written like 67:1")
+
+
+# The reader (the Hifz view's Read tab): the surah list and its search, a portion's text and translations from this
+# Mac (quran_text.py), Quran.com's timings for a reciter's surah file, the reciters, and where Mahadi left off.
+@app.get("/fonts/amiri-quran.ttf")
+def amiri_quran():
+    """The reader's Quran font (Amiri Quran, SIL Open Font License: fonts/OFL-AmiriQuran.txt), from Javid itself so
+    reading works offline; the page loads it with its key (FontFace)."""
+    return FileResponse(os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts", "AmiriQuran-Regular.ttf"),
+                        media_type="font/ttf",
+                        headers={"Cache-Control": "private, max-age=604800"})
+
+
+@app.get("/quran/surahs")
+def quran_surahs(q: str = ""):
+    rows = quran.surah_rows()
+    if q.strip():
+        found = quran.search(q)
+        rows = [rows[n - 1] for n in found]
+    return {"surahs": rows, "juz": quran.juz_rows() if not q.strip() else [], "text": quran_text.status(),
+            "state": quran.state()}
+
+
+@app.get("/quran/read")
+def quran_read(surah: int | None = None, juz: int | None = None, first: str | None = None, last: str | None = None,
+               tr: str = "en"):
+    """A surah, a juz or a stretch to read: Tanzil's text by surah, with the translations asked for (tr: en, bn,
+    "en,bn" or off). 503 while the text is still downloading (it starts then, if it isn't)."""
+    if not quran_text.ready():
+        quran_text.ensure_soon()
+        raise HTTPException(503, "The Quran's text is still downloading to this Mac.")
+    if surah is not None:
+        if not 1 <= surah <= 114:
+            raise HTTPException(400, "a surah is 1 to 114")
+        ranges, view = [quran.surah_range(surah)], {"kind": "surah", "n": surah}
+    elif juz is not None:
+        if not 1 <= juz <= 30:
+            raise HTTPException(400, "a juz is 1 to 30")
+        ranges, view = [quran.unit_range("juz", juz)], {"kind": "juz", "n": juz}
+    elif first and last:
+        lo, hi = _key_index(first), _key_index(last)
+        if lo > hi or hi - lo >= quran_text.MAX_AYAHS:
+            raise HTTPException(400, f"a stretch is in order, at most {quran_text.MAX_AYAHS} ayahs")
+        ranges, view = [(lo, hi)], {"kind": "range", "first": quran.key(lo), "last": quran.key(hi)}
+    else:
+        raise HTTPException(400, "name a surah, a juz or a first and last ayah")
+    langs = [x for x in tr.split(",") if x in ("en", "bn")]
+    return {"view": view, **quran_text.reader(ranges, langs)}
+
+
+@app.get("/quran/timings")
+def quran_timings(reciter: str, surah: int):
+    """A reciter's surah file and Quran.com's timings for it (the player's next part); 404 when there are none, and
+    the page plays that surah ayah by ayah."""
+    if reciter not in quran.RECITERS or not 1 <= surah <= 114:
+        raise HTTPException(400, "a reciter and a surah, 1 to 114")
+    got = quran.part(reciter, surah)
+    if not got:
+        raise HTTPException(404, "No timings for that surah: it plays ayah by ayah.")
+    return got
+
+
+@app.get("/quran/reciters")
+def quran_reciters():
+    return {"reciters": [quran.reciter_card(rid) for rid in quran.RECITERS], "chosen": quran.default_reciter()}
+
+
+@app.get("/quran/state")
+def quran_state():
+    return quran.state()
+
+
+@app.post("/quran/state")
+def quran_save_state(body: dict, request: Request):
+    """Where he left off reading and listening, his reciter, the translation, the font size, the hifz test: kept on
+    this Mac (data/quran_state.json, 0600). Only from the Javid page."""
+    _local_page_only(request)
+    return quran.save_state(body)
 
 
 @app.post("/quran/plan")
 def quran_plan(body: QuranPlanBody):
-    """The player's files for a portion (the Hifz view's ▶ buttons): Quran.com's ayah files, in order."""
+    """The player's plan for a portion (the Hifz view's ▶ buttons, a tapped ayah, a reciter switch): the reciter's
+    surah files with Quran.com's timings, or ayah files."""
     found = hifz.today_portions() if body.today else []
     if body.keys and len(body.keys) == 2:
         try:
@@ -760,8 +853,14 @@ def quran_plan(body: QuranPlanBody):
         raise HTTPException(400, "Nothing to play.")
     title = quran.cap(quran.join([quran.portion_label(p) if p["kind"] != "range" else quran.span_text(*p["ranges"][0])
                                   for p in found]))
-    return {"action": "play", **quran.plan([r for p in found for r in p["ranges"]],
-                                           body.reciter or hifz.config()["reciter"], title)}
+    ranges = [r for p in found for r in p["ranges"]]
+    start = None
+    if body.start:
+        k = _key_index(body.start)
+        if not any(lo <= k <= hi for lo, hi in ranges):
+            raise HTTPException(400, "the start isn't in what's to play")
+        start = quran.key(k)
+    return {"action": "play", **quran.plan(ranges, body.reciter or quran.default_reciter(), title, start=start)}
 
 
 @app.get("/skills")

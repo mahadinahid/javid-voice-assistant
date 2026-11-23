@@ -3012,7 +3012,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     --hz-soon: #7FAE95;
     --hz-over: #E08A5E;
     --hz-weak: #FF7A6B;
-    --hz-ar: 'Amiri', 'Geeza Pro', 'Noto Naskh Arabic', serif;
+    --hz-ar: 'Amiri', 'Amiri Quran', 'Geeza Pro', 'Noto Naskh Arabic', serif;
     --hz-head: 'Amiri', Georgia, 'Times New Roman', serif;
     --hz-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='none' stroke='%23E9C46A' stroke-width='0.8' stroke-opacity='0.13'%3E%3Cpath d='M28 11L33 16L40 16L40 23L45 28L40 33L40 40L33 40L28 45L23 40L16 40L16 33L11 28L16 23L16 16L23 16Z'/%3E%3Cpath d='M0 -17L5 -12L12 -12L12 -5L17 0L12 5L12 12L5 12L0 17L-5 12L-12 12L-12 5L-17 0L-12 -5L-12 -12L-5 -12Z'/%3E%3Cpath d='M0 39L5 44L12 44L12 51L17 56L12 61L12 68L5 68L0 73L-5 68L-12 68L-12 61L-17 56L-12 51L-12 44L-5 44Z'/%3E%3Cpath d='M56 -17L61 -12L68 -12L68 -5L73 0L68 5L68 12L61 12L56 17L51 12L44 12L44 5L39 0L44 -5L44 -12L51 -12Z'/%3E%3Cpath d='M56 39L61 44L68 44L68 51L73 56L68 61L68 68L61 68L56 73L51 68L44 68L44 61L39 56L44 51L44 44L51 44Z'/%3E%3Cpath d='M28 20.4L30.2 22.6L33.4 22.6L33.4 25.8L35.6 28L33.4 30.2L33.4 33.4L30.2 33.4L28 35.6L25.8 33.4L22.6 33.4L22.6 30.2L20.4 28L22.6 25.8L22.6 22.6L25.8 22.6Z'/%3E%3Cpath d='M28 0V11M28 45V56M0 28H11M45 28H56'/%3E%3C/g%3E%3C/svg%3E");
     color: var(--hz-ivory);
@@ -3062,20 +3062,37 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-dash-stats { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 11.5px; color: var(--hz-text-2); }
 .hz-dash-stats b { color: var(--hz-gold); font-weight: 700; }
 
-/* the view */
+/* the view: its header and tabs on top, the tab's pane in the middle (it scrolls, never under anything), and the
+   player docked at the foot in the Today tab (beside the text in Read) */
 .hz-view {
     position: fixed;
     inset: 0;
     z-index: 90;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: var(--hz-pattern) center / 56px, radial-gradient(1100px 520px at 50% -10%, rgba(233, 196, 106, 0.16), transparent 70%),
                 linear-gradient(180deg, #062B21, #031914 60%, #02130F);
     animation: hz-in 0.35s ease-out;
 }
 .hz-view[hidden] { display: none; }
 @keyframes hz-in { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
-.hz-inner { max-width: 1040px; margin: 0 auto; padding: 22px 22px 120px; }
+.hz-top { flex: none; border-bottom: 1px solid var(--hz-line); background: rgba(2, 19, 15, 0.55); }
+.hz-top .hz-head { max-width: 1480px; margin: 0 auto; padding: 12px 22px; }
+.hz-body { flex: 1; min-height: 0; display: flex; }
+.hz-pane { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; }
+.hz-pane[hidden] { display: none; }
+.hz-inner { max-width: 1040px; margin: 0 auto; padding: 18px 22px 28px; }
+.hz-dock { flex: none; display: flex; justify-content: center; padding: 10px 18px 12px; border-top: 1px solid var(--hz-line);
+           background: rgba(2, 19, 15, 0.7); }
+.hz-dock:not(:has(> .hz-player:not([hidden]))) { display: none; }
 .hz-head { display: flex; align-items: center; gap: 16px; }
+.hz-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-left: auto; border-radius: 999px; border: 1px solid var(--hz-line-2);
+           background: rgba(4, 33, 26, 0.6); }
+.hz-tabs button { padding: 8px 16px; border-radius: 999px; border: none; background: none; color: var(--hz-text-2);
+                  font-size: 13.5px; font-weight: 600; cursor: pointer; }
+.hz-tabs button:hover { color: var(--hz-ivory); }
+.hz-tabs button[aria-selected="true"] { background: linear-gradient(135deg, #F1D27F, #D6A84C); color: var(--hz-ink); }
 .hz-mark { width: 54px; height: 54px; color: var(--hz-gold); filter: drop-shadow(0 0 14px rgba(233, 196, 106, 0.45)); }
 .hz-mark svg { width: 100%; height: 100%; }
 .hz-mark .hz-mark-in { fill: #04211A; }
@@ -3194,17 +3211,19 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: var(--hz-muted); line-height: 1.6; }
 .hz-foot a { color: var(--hz-gold); }
 
-/* the recitation player: a slim bar under the header (at the view's foot while it's open) */
+/* the recitation player: always in the page's flow, so it never covers anything. Under the header on the main page
+   (#main-dock), at the Hifz view's foot in Today (#hz-dock), and a full panel beside the text in Read (#qr-side, .full:
+   with the reciters and the repeat). The script moves the one element between them (hifzUI.placePlayer). */
+.main-dock { flex: none; display: flex; justify-content: center; padding: 8px 16px 0; position: relative; z-index: 2; }
+.main-dock:not(:has(> .hz-player:not([hidden]))) { display: none; }
 .hz-player {
-    position: fixed; top: 66px; left: 50%; z-index: 95; transform: translateX(-50%);
-    display: flex; align-items: center; gap: 12px; width: min(640px, calc(100vw - 32px)); padding: 9px 12px 9px 10px;
+    position: relative; display: flex; flex-direction: column; gap: 6px; width: min(760px, 100%); padding: 9px 12px 8px 10px;
     border-radius: 18px; border: 1px solid var(--hz-line-2);
     background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0C4334, #052A20);
-    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 30px rgba(233, 196, 106, 0.12);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 0 30px rgba(233, 196, 106, 0.10);
 }
 .hz-player[hidden] { display: none; }
-body.hifz-open .hz-player { top: auto; bottom: 18px; }
-body:has(.hz-ring:not([hidden])):not(.hifz-open) .hz-player { top: 196px; }     /* under a revision reminder */
+.hz-pl-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .hz-pl-art { position: relative; width: 42px; height: 42px; flex-shrink: 0; color: var(--hz-gold); }
 .hz-pl-art svg { width: 100%; height: 100%; }
 .hz-player.playing .hz-pl-art svg { animation: hz-turn 24s linear infinite; }
@@ -3215,16 +3234,133 @@ body:has(.hz-ring:not([hidden])):not(.hifz-open) .hz-player { top: 196px; }     
 .hz-pl-sub .rep { color: var(--hz-gold); font-weight: 700; }
 .hz-pl-prog { height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(233, 196, 106, 0.15); overflow: hidden; }
 .hz-pl-prog span { display: block; height: 100%; width: 0; background: var(--hz-gold); transition: width 0.4s; }
-.hz-pl-ctl { display: flex; gap: 4px; }
+.hz-pl-ctl { display: flex; gap: 4px; flex-shrink: 0; }
 .hz-pl-ctl button {
     width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; border: 1px solid transparent;
     background: none; color: var(--hz-ivory); cursor: pointer;
 }
 .hz-pl-ctl button:hover { border-color: var(--hz-line-2); color: var(--hz-gold); }
+.hz-pl-ctl button:disabled { opacity: 0.4; cursor: default; }
 .hz-pl-ctl button svg { width: 16px; height: 16px; }
 .hz-pl-ctl #rp-play { background: var(--hz-gold); color: var(--hz-ink); }
-.hz-pl-credit { position: absolute; right: 14px; bottom: -17px; font-size: 10px; color: var(--hz-muted); text-decoration: none; text-shadow: 0 1px 2px #000; }
+.hz-pl-credit { align-self: flex-end; font-size: 10.5px; color: var(--hz-muted); text-decoration: none; }
 .hz-pl-credit:hover { color: var(--hz-gold); }
+.hz-pl-more { display: none; }
+.hz-pl-k { font-size: 10.5px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); margin-bottom: 8px; }
+/* the full panel (Read): the title and controls stacked, then the reciters and the repeat */
+.hz-player.full { width: 100%; padding: 0; gap: 16px; border: none; border-radius: 0; background: none; box-shadow: none; }
+.hz-player.full .hz-pl-main { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 12px; padding: 14px;
+    border-radius: 18px; border: 1px solid var(--hz-line-2); background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0C4334, #052A20); }
+.hz-player.full .hz-pl-ctl { grid-column: 1 / -1; justify-content: center; gap: 8px; }
+.hz-player.full .hz-pl-ctl button { width: 40px; height: 40px; }
+.hz-player.full .hz-pl-ctl #rp-play { width: 50px; height: 50px; }
+.hz-player.full .hz-pl-ctl button svg { width: 18px; height: 18px; }
+.hz-player.full .hz-pl-title { white-space: normal; flex-wrap: wrap; }
+.hz-player.full .hz-pl-more { display: flex; flex-direction: column; gap: 16px; }
+.hz-player.full .hz-pl-credit { align-self: auto; text-align: center; }
+.rp-reciters { display: flex; flex-direction: column; gap: 4px; }
+.rp-r { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px 7px 12px;
+        border-radius: 12px; border: 1px solid transparent; background: rgba(4, 33, 26, 0.5); cursor: pointer; color: var(--hz-ivory); text-align: left; }
+.rp-r:hover { border-color: var(--hz-line-2); }
+.rp-r[aria-selected="true"] { border-color: var(--hz-gold); background: rgba(233, 196, 106, 0.12); }
+.rp-r b { display: block; font-size: 13px; font-weight: 600; }
+.rp-r small { display: block; margin-top: 1px; font-size: 11px; color: var(--hz-muted); }
+.rp-r small i { font-style: normal; color: var(--hz-gold); }
+.rp-pv { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--hz-line-2);
+         background: none; color: var(--hz-gold); cursor: pointer; }
+.rp-pv svg { width: 12px; height: 12px; }
+.rp-pv.on { background: var(--hz-gold); color: var(--hz-ink); }
+.rp-rep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--hz-text-2); }
+.rp-rep input { width: 58px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.7);
+                color: var(--hz-ivory); font-size: 13px; }
+.rp-rep .hz-btn { padding: 7px 14px; font-size: 12.5px; }
+.rp-idle { font-size: 13px; color: var(--hz-text-2); line-height: 1.5; }
+
+/* the reader (Read): the surah index, the text, the player beside it; stacked on a narrow window */
+.qr-pane { --qr-ar: 'Amiri Quran', 'Amiri', 'Geeza Pro', serif; position: relative; flex: 1; min-width: 0; min-height: 0;
+           display: grid; grid-template-columns: 300px minmax(0, 1fr) 340px; }
+.qr-pane[hidden] { display: none; }
+.qr-index { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--hz-line); background: rgba(2, 19, 15, 0.5); }
+.qr-search { padding: 12px 12px 8px; }
+.qr-search input { width: 100%; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.75);
+                   color: var(--hz-ivory); font-size: 13.5px; }
+.qr-search input::placeholder { color: var(--hz-muted); }
+.qr-cont { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 8px; }
+.qr-cont:empty { display: none; }
+.qr-cont button { text-align: left; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--hz-line-2); background: rgba(233, 196, 106, 0.07);
+                  color: var(--hz-ivory); font-size: 12.5px; cursor: pointer; }
+.qr-cont button:hover { border-color: var(--hz-gold); }
+.qr-cont small { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-gold); }
+.qr-itabs { display: flex; gap: 4px; padding: 0 12px 8px; }
+.qr-itabs button { flex: 1; padding: 6px; border-radius: 10px; border: 1px solid var(--hz-line); background: none; color: var(--hz-text-2);
+                   font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.qr-itabs button[aria-selected="true"] { border-color: var(--hz-gold); color: var(--hz-gold); }
+.qr-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
+.qr-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 7px 8px;
+          border: none; border-radius: 12px; background: none; color: var(--hz-ivory); text-align: left; cursor: pointer; }
+.qr-row:hover { background: rgba(233, 196, 106, 0.07); }
+.qr-row.on { background: rgba(233, 196, 106, 0.14); }
+.qr-row .n { position: relative; display: grid; place-items: center; width: 32px; height: 32px; font-size: 11.5px; font-weight: 700; color: var(--hz-gold); }
+.qr-row .n svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.qr-row .n svg path { fill: none; stroke: var(--hz-line-2); stroke-width: 4; }
+.qr-row .n span { position: relative; }
+.qr-row b { display: block; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qr-row small { display: block; margin-top: 1px; font-size: 11px; color: var(--hz-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qr-row .ar { font-family: var(--qr-ar); font-size: 19px; color: var(--hz-gold); }
+.qr-none { padding: 14px; font-size: 13px; color: var(--hz-muted); }
+.qr-reader { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.qr-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 18px; border-bottom: 1px solid var(--hz-line);
+          background: rgba(2, 19, 15, 0.4); }
+.qr-idx-btn { display: none; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.6);
+              color: var(--hz-ivory); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.qr-title { min-width: 0; margin-right: auto; font: 700 18px var(--hz-head); color: var(--hz-ivory); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qr-title [lang="ar"] { margin-left: 8px; font-family: var(--qr-ar); font-size: 21px; font-weight: 400; color: var(--hz-gold); }
+.qr-title small { margin-left: 8px; font: 400 12px var(--font, Inter, sans-serif); color: var(--hz-muted); }
+.qr-modes { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.qr-seg { display: inline-flex; border: 1px solid var(--hz-line-2); border-radius: 999px; overflow: hidden; }
+.qr-seg button { padding: 6px 11px; border: none; background: none; color: var(--hz-text-2); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.qr-seg button + button { border-left: 1px solid var(--hz-line); }
+.qr-seg button[aria-pressed="true"] { background: rgba(233, 196, 106, 0.2); color: var(--hz-gold); }
+.qr-chip { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: none; color: var(--hz-text-2);
+           font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.qr-chip[aria-pressed="true"] { border-color: var(--hz-gold); background: var(--hz-gold); color: var(--hz-ink); }
+.qr-bar2[hidden] { display: none; }
+.qr-bar2 { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 18px; border-bottom: 1px solid var(--hz-line); }
+.qr-bar2 .hz-btn { padding: 7px 14px; font-size: 12.5px; }
+.qr-bar2 .hz-log button { padding: 6px 11px; font-size: 12px; }
+.qr-note { font-size: 12px; color: var(--hz-muted); }
+.qr-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 22px 28px; }
+.qr-text { --qa-size: 34px; max-width: 980px; margin: 0 auto; }
+.qr-welcome { max-width: 560px; margin: 60px auto; text-align: center; color: var(--hz-text-2); font-size: 14px; line-height: 1.7; }
+.qr-welcome b { display: block; margin-bottom: 6px; font: 700 22px var(--hz-head); color: var(--hz-ivory); }
+.qr-surah { margin: 22px 0 6px; padding: 12px 16px; border-radius: 16px; border: 1px solid var(--hz-line-2); text-align: center;
+            background: linear-gradient(160deg, var(--hz-card-2), var(--hz-card)); }
+.qr-surah [lang="ar"] { display: block; font-family: var(--qr-ar); font-size: 28px; color: var(--hz-gold); line-height: 1.6; }
+.qr-surah b { font: 700 17px var(--hz-head); color: var(--hz-ivory); }
+.qr-surah small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--hz-muted); }
+.qr-basmala { margin: 6px 0 4px; padding: 6px 10px; border-radius: 14px; text-align: center; font-family: var(--qr-ar);
+              font-size: calc(var(--qa-size) * 0.9); line-height: 2; color: var(--hz-gold); transition: background 0.25s; }
+.qr-basmala.now { background: rgba(233, 196, 106, 0.14); }
+.qa { position: relative; margin: 2px 0; padding: 10px 16px; border-radius: 16px; border: 1px solid transparent; cursor: pointer;
+      transition: background 0.25s, border-color 0.25s; }
+.qa:hover { background: rgba(233, 196, 106, 0.05); }
+.qa-ar { font-family: var(--qr-ar); font-size: var(--qa-size); line-height: 2.15; direction: rtl; text-align: right; color: var(--hz-ivory); }
+.qa-ar .w { transition: color 0.15s, text-shadow 0.15s; }
+.qa-end { margin-inline: 0.2em; color: var(--hz-gold); white-space: nowrap; }
+.qa-tr { margin-top: 2px; font-size: 15px; line-height: 1.65; color: var(--hz-text-2); direction: ltr; text-align: left; unicode-bidi: isolate; }
+.qa-tr + .qa-tr { margin-top: 6px; }
+.qa-tr .qa-n { margin-right: 6px; font-size: 11.5px; font-weight: 700; color: var(--hz-gold); }
+.qr-text.tr-off .qa-tr, .qr-text.tr-en .qa-tr[lang="bn"], .qr-text.tr-bn .qa-tr[lang="en"] { display: none; }
+.qa.now { border-color: rgba(233, 196, 106, 0.5); background: linear-gradient(100deg, rgba(233, 196, 106, 0.17), rgba(233, 196, 106, 0.05)); }
+.qa.done .qa-ar { color: #B9C7BB; }
+.qa-ar .w.now { color: var(--hz-gold); text-shadow: 0 0 16px rgba(233, 196, 106, 0.6); }
+.qa.sel { border-color: var(--hz-line-2); }
+.qr-text.test .qa:not(.shown) .qa-ar { filter: blur(11px); opacity: 0.5; user-select: none; }
+.qr-text.test .qa:not(.shown) .qa-hint { display: block; }
+.qa-hint { display: none; position: absolute; left: 16px; top: 12px; font-size: 11px; color: var(--hz-muted); }
+.qr-credits { max-width: 980px; margin: 22px auto 0; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--hz-muted); }
+.qr-credits a { color: var(--hz-gold); }
+.qr-side { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; border-left: 1px solid var(--hz-line); background: rgba(2, 19, 15, 0.5); }
 
 /* the revision reminder: stays until you log it, choose later, or dismiss it */
 .hz-ring {
@@ -3244,24 +3380,42 @@ body:has(.hz-ring:not([hidden])):not(.hifz-open) .hz-player { top: 196px; }     
 .hz-ring .hz-later { margin-left: auto; padding: 7px 12px; border: none; background: none; color: var(--hz-muted); font-size: 12.5px; cursor: pointer; }
 .hz-ring .hz-later:hover { color: var(--hz-ivory); }
 
+@media (max-width: 1279px) {      /* the index becomes a drawer over the reader, opened by "☰ Surahs" */
+    .qr-pane { grid-template-columns: minmax(0, 1fr) 320px; }
+    .qr-index { position: absolute; z-index: 6; left: 0; top: 0; bottom: 0; width: min(330px, 92%); background: #03201A;
+                transform: translateX(-105%); transition: transform 0.25s; box-shadow: 20px 0 50px rgba(0, 0, 0, 0.5); }
+    .qr-pane.idx-open .qr-index { transform: none; }
+    .qr-pane:not(.idx-open) .qr-index { visibility: hidden; }
+    .qr-idx-btn { display: inline-flex; }
+}
+@media (max-width: 899px) {       /* stacked: the reader, then the player under it (never over it) */
+    .qr-pane { display: flex; flex-direction: column; }
+    .qr-reader { flex: 1; min-height: 0; }
+    .qr-side { flex: none; max-height: 44vh; padding: 10px; border-left: none; border-top: 1px solid var(--hz-line); }
+    .qr-bar, .qr-bar2 { padding: 8px 12px; }
+    .qr-scroll { padding: 4px 10px 18px; }
+    .hz-tabs button { padding: 7px 12px; }
+}
 @media (max-width: 860px) {
     .hz-hero, .hz-two { grid-template-columns: 1fr; }
     .hz-stats { grid-template-rows: none; grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .hz-stat { flex-direction: column; text-align: center; gap: 6px; }
     .hz-map { grid-template-columns: repeat(6, minmax(0, 1fr)); }
-    .hz-pl-credit { display: none; }
+    .hz-player:not(.full) .hz-pl-credit { display: none; }
+    .hz-line { display: none; }
 }
 @media (max-width: 520px) {
-    .hz-inner { padding: 16px 14px 120px; }
+    .hz-inner { padding: 14px 14px 20px; }
     .hz-stats { grid-template-columns: 1fr; }
     .hz-stat { flex-direction: row; text-align: left; }
     .hz-map { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
     .hz-today-n { font-size: 32px; }
-    .hz-pl-ctl #rp-rep, .hz-pl-ctl #rp-prev { display: none; }
+    .hz-player:not(.full) .hz-pl-ctl #rp-rep3, .hz-player:not(.full) .hz-pl-ctl #rp-prev { display: none; }
+    .hz-mark, .hz-titles { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
     .hz-view, .hz-ring, .hz-star.today::after, .hz-player.playing .hz-pl-art svg { animation: none !important; }
-    .hz-star { transition: none; }
+    .hz-star, .qa, .qa-ar .w, .qr-index, .qr-basmala { transition: none; }
 }
 </style>
 </head>
@@ -3291,6 +3445,7 @@ body:has(.hz-ring:not([hidden])):not(.hifz-open) .hz-player { top: 196px; }     
     <button id="new-chat-btn" class="new-chat-btn" title="Start a new chat (your other chats stay in the Chats panel)">+ New chat</button>
     <button id="chats-toggle" class="chats-toggle" title="Show or hide your chats">☰ Chats</button>
 </header>
+<div id="main-dock" class="hz-scope main-dock"></div>
 
 <div class="layout">
 
@@ -3492,74 +3647,140 @@ body:has(.hz-ring:not([hidden])):not(.hifz-open) .hz-player { top: 196px; }     
 
 <!-- ── Hifz (hifz.py, quran.py): the view, the recitation player, the revision reminder ── -->
 <div id="hifz" class="hz-scope hz-view" role="dialog" aria-modal="true" aria-labelledby="hz-title" hidden>
-    <div class="hz-inner">
+    <div class="hz-top">
         <div class="hz-head">
             <div class="hz-mark" aria-hidden="true"><svg viewBox="0 0 100 100"><path class="hz-star-out" fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><path class="hz-mark-in" d="M50 22L59.9 31.1L71.2 28.8L68.9 40.1L78 50L68.9 59.9L71.2 71.2L59.9 68.9L50 78L40.1 68.9L28.8 71.2L31.1 59.9L22 50L31.1 40.1L28.8 28.8L40.1 31.1Z"/><circle cx="50" cy="50" r="9" fill="currentColor"/></svg></div>
             <div class="hz-titles">
                 <h2 class="hz-title" id="hz-title"><span lang="ar">حِفْظ</span><span>Hifz</span></h2>
                 <p class="hz-line" id="hz-line">Your Quran, kept fresh one portion at a time.</p>
             </div>
+            <div class="hz-tabs" role="tablist" aria-label="Hifz">
+                <button type="button" role="tab" id="hz-tab-today" data-tab="today" aria-selected="true" aria-controls="hz-pane-today">Today</button>
+                <button type="button" role="tab" id="hz-tab-read" data-tab="read" aria-selected="false" aria-controls="hz-pane-read">Read &amp; listen</button>
+            </div>
             <button class="hz-x" id="hz-close" type="button" aria-label="Close the Hifz view">✕</button>
         </div>
-        <div class="hz-rule" aria-hidden="true"></div>
-
-        <section class="hz-hero">
-            <div class="hz-card hz-today" id="hz-today" aria-live="polite"></div>
-            <div class="hz-stats">
-                <div class="hz-card hz-stat">
-                    <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M24 4v4M17 8h14l3 6H14l3-6zM14 14c-3 4-4 9-4 14 0 6 4 10 14 10s14-4 14-10c0-5-1-10-4-14"/><path d="M24 20c-3 3-4 6-4 9a4 4 0 0 0 8 0c0-3-1-6-4-9z" fill="currentColor" fill-opacity="0.35"/><path d="M18 38l-2 6h16l-2-6"/></svg>
-                    <div><b id="hz-streak">0</b><span id="hz-streak-k">days in a row</span><small id="hz-best"></small></div>
-                </div>
-                <div class="hz-card hz-stat">
-                    <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M30 6a18 18 0 1 0 12 30A15 15 0 1 1 30 6z"/><path fill="currentColor" d="M38 12l1.4 3 3.2.4-2.4 2.2.7 3.2-2.9-1.6-2.9 1.6.7-3.2-2.4-2.2 3.2-.4z"/></svg>
-                    <div><b id="hz-ramadan">—</b><span id="hz-ramadan-k">days to Ramadan</span><small id="hz-ramadan-s"></small></div>
-                </div>
-                <div class="hz-card hz-stat">
-                    <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="6" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="13" fill="currentColor"/></svg>
-                    <div><b id="hz-fresh">—</b><span id="hz-fresh-k">fresh</span><small id="hz-fresh-s"></small></div>
-                </div>
-            </div>
-        </section>
-
-        <section class="hz-card hz-sec">
-            <div class="hz-sec-head">
-                <h3 id="hz-map-title">Your Quran</h3>
-                <div class="hz-legend" id="hz-legend"></div>
-            </div>
-            <div class="hz-map" id="hz-map" role="list"></div>
-            <div class="hz-tip" id="hz-tip">Tap a star to see when you last revised it.</div>
-        </section>
-
-        <section class="hz-two">
-            <div class="hz-card hz-sec">
-                <div class="hz-sec-head"><h3 id="hz-due-title">Coming back</h3></div>
-                <ul class="hz-list" id="hz-due"></ul>
-            </div>
-            <div class="hz-card hz-sec">
-                <div class="hz-sec-head"><h3 id="hz-recent-title">Recent</h3>
-                    <button class="hz-btn ghost" id="hz-undo" type="button" style="margin-left:auto">Undo last</button></div>
-                <ul class="hz-list" id="hz-recent"></ul>
-            </div>
-        </section>
-        <p class="hz-foot" id="hz-foot">Recitations from <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>
-            (Quran Foundation), with <a href="https://everyayah.com" target="_blank" rel="noopener">everyayah.com</a> as the backup.
-            The Quran's structure: Tanzil's metadata, checked against Quran.com. Your log stays on this Mac.</p>
     </div>
+    <div class="hz-body">
+        <div class="hz-pane" id="hz-pane-today" role="tabpanel" aria-labelledby="hz-tab-today">
+            <div class="hz-inner">
+            <div class="hz-rule" aria-hidden="true"></div>
+
+            <section class="hz-hero">
+                <div class="hz-card hz-today" id="hz-today" aria-live="polite"></div>
+                <div class="hz-stats">
+                    <div class="hz-card hz-stat">
+                        <svg viewBox="0 0 48 48" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M24 4v4M17 8h14l3 6H14l3-6zM14 14c-3 4-4 9-4 14 0 6 4 10 14 10s14-4 14-10c0-5-1-10-4-14"/><path d="M24 20c-3 3-4 6-4 9a4 4 0 0 0 8 0c0-3-1-6-4-9z" fill="currentColor" fill-opacity="0.35"/><path d="M18 38l-2 6h16l-2-6"/></svg>
+                        <div><b id="hz-streak">0</b><span id="hz-streak-k">days in a row</span><small id="hz-best"></small></div>
+                    </div>
+                    <div class="hz-card hz-stat">
+                        <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="currentColor" d="M30 6a18 18 0 1 0 12 30A15 15 0 1 1 30 6z"/><path fill="currentColor" d="M38 12l1.4 3 3.2.4-2.4 2.2.7 3.2-2.9-1.6-2.9 1.6.7-3.2-2.4-2.2 3.2-.4z"/></svg>
+                        <div><b id="hz-ramadan">—</b><span id="hz-ramadan-k">days to Ramadan</span><small id="hz-ramadan-s"></small></div>
+                    </div>
+                    <div class="hz-card hz-stat">
+                        <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="6" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="13" fill="currentColor"/></svg>
+                        <div><b id="hz-fresh">—</b><span id="hz-fresh-k">fresh</span><small id="hz-fresh-s"></small></div>
+                    </div>
+                </div>
+            </section>
+
+            <section class="hz-card hz-sec">
+                <div class="hz-sec-head">
+                    <h3 id="hz-map-title">Your Quran</h3>
+                    <div class="hz-legend" id="hz-legend"></div>
+                </div>
+                <div class="hz-map" id="hz-map" role="list"></div>
+                <div class="hz-tip" id="hz-tip">Tap a star to see when you last revised it.</div>
+            </section>
+
+            <section class="hz-two">
+                <div class="hz-card hz-sec">
+                    <div class="hz-sec-head"><h3 id="hz-due-title">Coming back</h3></div>
+                    <ul class="hz-list" id="hz-due"></ul>
+                </div>
+                <div class="hz-card hz-sec">
+                    <div class="hz-sec-head"><h3 id="hz-recent-title">Recent</h3>
+                        <button class="hz-btn ghost" id="hz-undo" type="button" style="margin-left:auto">Undo last</button></div>
+                    <ul class="hz-list" id="hz-recent"></ul>
+                </div>
+            </section>
+            <p class="hz-foot" id="hz-foot">Recitations and their timings from <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>
+                (Quran Foundation); <a href="https://everyayah.com" target="_blank" rel="noopener">everyayah.com</a> for Ghamdi and Muaiqly, and as the backup.
+                The text: <a href="https://tanzil.net" target="_blank" rel="noopener">Tanzil</a>, with Saheeh International's and Muhiuddin Khan's translations.
+                The structure: Tanzil's metadata, checked against Quran.com. Your log and your place stay on this Mac.</p>
+            </div>
+        </div>
+        <div class="qr-pane" id="hz-pane-read" role="tabpanel" aria-labelledby="hz-tab-read" hidden>
+            <aside class="qr-index" id="qr-index" aria-label="Surahs and juz">
+                <div class="qr-search"><input id="qr-q" type="search" autocomplete="off" spellcheck="false"
+                    placeholder="Number or name: 18, Kahf, الكهف, কাহফ" aria-label="Find a surah"></div>
+                <div class="qr-cont" id="qr-cont"></div>
+                <div class="qr-itabs" role="tablist" aria-label="List">
+                    <button type="button" role="tab" data-it="surah" aria-selected="true">Surahs</button>
+                    <button type="button" role="tab" data-it="juz" aria-selected="false">Juz</button>
+                </div>
+                <div class="qr-list" id="qr-list" role="list"></div>
+            </aside>
+            <section class="qr-reader" aria-label="Reader">
+                <div class="qr-bar">
+                    <button class="qr-idx-btn" id="qr-idx-btn" type="button" aria-controls="qr-index" aria-expanded="false">☰ Surahs</button>
+                    <div class="qr-title" id="qr-title">Read &amp; listen</div>
+                    <div class="qr-modes">
+                        <div class="qr-seg" id="qr-tr" role="group" aria-label="Translation">
+                            <button type="button" data-tr="off" aria-pressed="false">Arabic</button><button type="button" data-tr="en" aria-pressed="true">English</button><button type="button" data-tr="bn" aria-pressed="false" lang="bn">বাংলা</button><button type="button" data-tr="both" aria-pressed="false">Both</button>
+                        </div>
+                        <button type="button" class="qr-chip" id="qr-test" aria-pressed="false" title="Hide the ayahs; tap one, or say “show”, to reveal it">Hifz test</button>
+                        <div class="qr-seg" role="group" aria-label="Text size">
+                            <button type="button" id="qr-font-down" aria-label="Smaller text" title="Smaller text">A−</button><button type="button" id="qr-font-up" aria-label="Larger text" title="Larger text">A+</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="qr-bar2" id="qr-bar2" hidden>
+                    <button class="hz-btn" id="qr-listen" type="button"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg><span>Listen</span></button>
+                    <div class="hz-log" id="qr-log"><span>Revised:</span><button type="button" data-st="strong">Strong</button><button type="button" data-st="okay">Okay</button><button type="button" data-st="weak">Weak</button></div>
+                    <span class="qr-note" id="qr-note"></span>
+                </div>
+                <div class="qr-scroll" id="qr-scroll">
+                    <div class="qr-text tr-en" id="qr-text"></div>
+                    <p class="qr-credits" id="qr-credits"></p>
+                </div>
+            </section>
+            <div class="qr-side" id="qr-side"></div>
+        </div>
+    </div>
+    <div class="hz-dock" id="hz-dock"></div>
 </div>
 
 <div id="recite-bar" class="hz-scope hz-player" role="region" aria-label="Recitation" hidden>
-    <div class="hz-pl-art" aria-hidden="true"><svg viewBox="0 0 100 100"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg></div>
-    <div class="hz-pl-info">
-        <div class="hz-pl-title"><span id="rp-title">—</span><span id="rp-ar" lang="ar"></span></div>
-        <div class="hz-pl-sub"><span id="rp-ayah"></span> · <span id="rp-reciter"></span><span id="rp-rep" class="rep"></span></div>
-        <div class="hz-pl-prog"><span id="rp-prog"></span></div>
+    <div class="hz-pl-main">
+        <div class="hz-pl-art" aria-hidden="true"><svg viewBox="0 0 100 100"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg></div>
+        <div class="hz-pl-info">
+            <div class="hz-pl-title"><span id="rp-title">—</span><span id="rp-ar" lang="ar"></span></div>
+            <div class="hz-pl-sub"><span id="rp-ayah"></span> · <span id="rp-reciter"></span><span id="rp-rep" class="rep"></span></div>
+            <div class="hz-pl-prog"><span id="rp-prog"></span></div>
+        </div>
+        <div class="hz-pl-ctl">
+            <button id="rp-prev" type="button" aria-label="Previous ayah" title="Previous ayah"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
+            <button id="rp-play" type="button" aria-label="Play" title="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path id="rp-play-icon" d="M7 4v16l13-8z"/></svg></button>
+            <button id="rp-next" type="button" aria-label="Next ayah" title="Next ayah"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
+            <button id="rp-rep3" type="button" aria-label="Repeat this ayah three times" title="Repeat this ayah 3 times"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
+            <button id="rp-stop" type="button" aria-label="Stop the recitation" title="Stop"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg></button>
+        </div>
     </div>
-    <div class="hz-pl-ctl">
-        <button id="rp-prev" type="button" aria-label="Previous ayah" title="Previous ayah"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 5h2v14H6zM20 5v14L9 12z"/></svg></button>
-        <button id="rp-play" type="button" aria-label="Pause" title="Pause"><svg viewBox="0 0 24 24" fill="currentColor"><path id="rp-play-icon" d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button>
-        <button id="rp-next" type="button" aria-label="Next ayah" title="Next ayah"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 5h2v14h-2zM4 5v14l11-7z"/></svg></button>
-        <button id="rp-rep3" type="button" aria-label="Repeat this ayah three times" title="Repeat this ayah 3 times"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3"/><path d="M20 13v2a4 4 0 0 1-4 4H4"/></svg></button>
-        <button id="rp-stop" type="button" aria-label="Stop the recitation" title="Stop"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg></button>
+    <div class="hz-pl-more">
+        <div>
+            <div class="hz-pl-k" id="rp-rec-k">Reciter</div>
+            <div class="rp-reciters" id="rp-reciters" role="listbox" aria-label="Reciter"></div>
+        </div>
+        <div>
+            <div class="hz-pl-k" id="rp-rep-k">Repeat for hifz</div>
+            <div class="rp-rep">
+                <span id="rp-rep-a">Ayahs</span><input id="rp-from" type="number" min="1" inputmode="numeric" aria-label="From ayah">
+                <span id="rp-rep-to">to</span><input id="rp-to" type="number" min="1" inputmode="numeric" aria-label="To ayah">
+                <span>×</span><input id="rp-times" type="number" min="1" max="20" value="3" inputmode="numeric" aria-label="Times">
+                <button class="hz-btn" id="rp-rep-go" type="button">Repeat</button>
+            </div>
+        </div>
     </div>
     <a class="hz-pl-credit" id="rp-credit" href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>
 </div>
@@ -5144,7 +5365,10 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     muted = muted || !!ev.quiet;    // Javid doesn't talk over the recitation he's driving
                     recite.apply(ev);
                 } else if (ev.type === 'hifz') {
-                    if (ev.open) hifzUI.open(); else hifzUI.refresh();
+                    if (ev.open) hifzUI.open('today'); else hifzUI.refresh();
+                } else if (ev.type === 'quran') {
+                    muted = muted || !!ev.quiet;    // a reader command is shown, not spoken
+                    quranReader.apply(ev);
                 } else if (ev.type === 'lang') {
                     setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
@@ -5197,6 +5421,13 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
     }
 }
 
+// The page's Quran state with each message: the player (quran.py's "next ayah", "repeat this ayah 3 times") and the
+// reader ("hide the translation", "show" in a hifz test). None when neither is open.
+function quranState() {
+    const p = recite.state(), r = quranReader.state();
+    return p || r.open ? { ...(p || { active: false }), reader: r } : null;
+}
+
 async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null) {
     const fd = new FormData();
     fd.append('audio', blob, `audio.${ext}`);
@@ -5204,7 +5435,7 @@ async function submitAudio(blob, ext, mode = 'push', barge = null, marks = null)
     if (activeChat) fd.append('session', activeChat);
     const sent = mode === 'push' ? takeAttachments() : [];      // a file goes with push-to-talk, never hands-free
     if (sent.length) fd.append('files', sent.map(f => f.id).join(','));
-    const playerState = recite.state();
+    const playerState = quranState();
     if (playerState) fd.append('recite', JSON.stringify(playerState));
     await streamReply('/talk', { method: 'POST', body: fd }, {
         quiet: mode !== 'push',
@@ -5233,7 +5464,7 @@ async function submitText(text) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ text, session: activeChat, files: sent.length ? sent.map(f => f.id) : undefined,
-                               recite: recite.state() || undefined }),
+                               recite: quranState() || undefined }),
     });
 }
 
@@ -7237,102 +7468,348 @@ refreshWatches();
 // isn't a player command or doesn't start with "Javid" (reciting along, the room), and then it carries on.
 const STAR_D = 'M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z';
 let hzFontsAdded = false;
-function hzFonts() {            // Amiri, for the Arabic names: loaded the first time something of Hifz shows
-    if (hzFontsAdded) return;
+function hzFonts() {            // loaded the first time something of Hifz shows: Amiri for names and headings
+    if (hzFontsAdded) return;      // (Google Fonts), Amiri Quran for the text from Javid itself, so reading works offline
     hzFontsAdded = true;
     document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet',
         href: 'https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400&display=swap' }));
+    fetch('/fonts/amiri-quran.ttf').then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+        .then(buf => new FontFace('Amiri Quran', buf).load()).then(f => document.fonts.add(f))
+        .catch(() => document.head.appendChild(Object.assign(document.createElement('link'), { rel: 'stylesheet',
+            href: 'https://fonts.googleapis.com/css2?family=Amiri+Quran&display=swap' })));
 }
 const hzBn = () => replyLang === 'bn';
 const hzT = (en, bn) => (hzBn() ? bn : en);
 const hzNum = n => (hzBn() ? String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]) : String(n));
 const hzCap = t => t.charAt(0).toUpperCase() + t.slice(1);
 
+// <qsync> The player's timing logic, pure: given Quran.com's timings for one reciter's surah file ([from, to, words
+// fit, words] per ayah, in ms; words are [position, from, to]) and the audio's current time, which ayah and word are
+// being recited, where a repeat jumps back to and where a run ends. The highlight is worked out again from the time
+// on every frame, so it can't drift; a seek, a repeat or a reciter switch is only a new time. regression.py runs this
+// under node with made-up timings.
+const QSync = (() => {
+    const EPS = 40;         // ms before an ayah's end at which a repeat jumps back (the next ayah's first sound unheard)
+    function locate(verses, ms) {       // the ayah (index) holding ms: the last to start at or before it
+        let lo = 0, hi = verses.length - 1, at = 0;
+        while (lo <= hi) {
+            const mid = (lo + hi) >> 1;
+            if (verses[mid][0] <= ms) { at = mid; lo = mid + 1; } else hi = mid - 1;
+        }
+        return at;
+    }
+    function wordAt(v, ms) {            // the word being recited (from 1); between words, the last one said; 0: none
+        if (!v || !v[2] || !v[3] || !v[3].length) return 0;
+        let w = 0;
+        for (const [pos, s, e] of v[3]) {
+            if (s > ms) break;
+            w = pos;
+            if (ms < e) return pos;
+        }
+        return w;
+    }
+    // A run: ayahs a0..a1 (from 1) of one surah file; rep: {from, to, left} plays from..to `left` more times.
+    const run = (verses, a0, a1) => ({ v: verses, a0, a1, rep: null });
+    const startMs = (r, a) => r.v[a - 1][0];
+    function repeat(r, from, to, times) {       // from..to `times` times in all: the time to jump to now
+        r.rep = times > 1 ? { from, to, left: times - 1 } : null;
+        return startMs(r, from);
+    }
+    function tick(r, ms, eps = EPS) {   // {a, w}, with seek (a repeat goes round) or end (the run is over); a 0: before it
+        if (r.rep && ms >= r.v[r.rep.to - 1][1] - eps) {
+            const from = r.rep.from;
+            if (--r.rep.left <= 0) r.rep = null;
+            return { a: from, w: 0, seek: startMs(r, from) };
+        }
+        if (ms >= r.v[r.a1 - 1][1] - eps) return { a: r.a1, w: 0, end: true };
+        if (ms < startMs(r, r.a0)) return { a: r.a0 === 1 ? 0 : r.a0, w: 0 };
+        const a = Math.max(r.a0, locate(r.v, ms) + 1);
+        return { a, w: wordAt(r.v[a - 1], ms) };
+    }
+    const step = (r, a, d) => {         // the ayah before or after a in the run; 0 past its end
+        const b = Math.max(r.a0, a) + d;
+        return b < r.a0 ? r.a0 : b > r.a1 ? 0 : b;
+    };
+    return { EPS, locate, wordAt, run, startMs, repeat, tick, step };
+})();
+// </qsync>
+
+// The recitation player (quran.py's plans): no edge-tts, nothing kept. "chapter" plays the reciter's surah files with
+// Quran.com's timings (QSync), part by part; "ayah" plays one file an ayah (Minshawi Mujawwad, Ghamdi, Muaiqly, or
+// when a surah file or its timings fail). Highlighting goes to the reader (quranReader.mark), where he is to the
+// server (continue listening). A ring pauses it and its announcement resumes it; hands-free, speech over it pauses it.
 const recite = (() => {
     const $ = id => document.getElementById(id);
-    const audio = new Audio(), ahead = new Audio();
-    for (const a of [audio, ahead]) { a.crossOrigin = 'anonymous'; a.preload = 'auto'; }   // CORS: the barge-in tap reads it
-    let plan = null, i = 0, pass = 1, rep = null, onBackup = false, triedBackup = false, pausedBy = null, gen = 0;
-    const cur = () => plan?.items[i] || null;
-    const urlOf = it => (onBackup ? it.backup : it.url);
+    const audio = new Audio(), ahead = new Audio(), preview = new Audio();
+    for (const a of [audio, ahead, preview]) { a.crossOrigin = 'anonymous'; a.preload = 'auto'; }  // CORS: the barge-in tap
+    let plan = null, gen = 0, pausedBy = null, onBackup = false, triedBackup = false, pass = 1;
+    let mode = 'ayah', pi = 0, run = null, inPre = false;     // chapter: the part, its run, its Bismillah file first
+    let i = 0, rep = null;                                    // ayah: the item, a repeat {i0, i1, left}
+    let pos = { s: 0, a: 0, w: 0 }, raf = 0, saveTimer = 0, cards = null, chosen = null, previewing = null;
+    const items = () => (plan ? plan.items : []);
+    const itemAt = (s, a) => items().findIndex(x => x.s === s && x.a === a);
+    const surahOf = s => plan?.surahs?.[String(s)] || {};
 
+    function setPos(s, a, w) {
+        if (pos.s === s && pos.a === a && pos.w === w) return;
+        const moved = pos.s !== s || pos.a !== a;
+        pos = { s, a, w };
+        quranReader.mark(s, a, w, plan?.start || plan?.first);
+        if (moved) { render(); remember(); }
+    }
+    function remember() {               // where he is, for "continue listening": on this Mac (debounced)
+        clearTimeout(saveTimer);
+        if (!plan || !pos.a) return;
+        const body = { listening: { key: `${pos.s}:${pos.a}`, reciter: plan.reciter, first: plan.first, last: plan.last } };
+        saveTimer = setTimeout(() => fetch('/quran/state', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body) }).catch(() => {}), 2000);
+    }
+
+    // ---- the panel
     function render() {
-        const bar = $('recite-bar');
-        if (!plan) { bar.hidden = true; return; }
+        const bar = $('recite-bar'), full = bar.classList.contains('full');
+        bar.hidden = !plan && !full;
+        if (bar.hidden) return;
         hzFonts();
-        bar.hidden = false;
-        const it = cur(), s = plan.surahs[String(it.s)] || {};
-        $('rp-title').textContent = (hzBn() ? s.bn : s.en) || plan.title;
-        $('rp-ar').textContent = s.ar || '';
-        $('rp-ayah').textContent = it.bismillah ? hzT('Bismillah', 'বিসমিল্লাহ')
-            : hzT(`Ayah ${it.a} of ${s.ayahs}`, `আয়াত ${hzNum(it.a)}/${hzNum(s.ayahs)}`);
-        $('rp-reciter').textContent = plan.reciter_name;
-        $('rp-rep').textContent = rep && rep.i === i && rep.left > 1 ? ` · ↻ ${hzNum(rep.left)}`
-            : plan.times > 1 ? hzT(` · round ${pass} of ${plan.times}`, ` · ${hzNum(pass)}/${hzNum(plan.times)} বার`) : '';
-        $('rp-prog').style.width = `${Math.round(100 * (i + 1) / plan.items.length)}%`;
-        const on = !audio.paused;
+        const on = !!plan && !audio.paused && !previewing;
         bar.classList.toggle('playing', on);
         $('rp-play-icon').setAttribute('d', on ? 'M7 5h4v14H7zM13 5h4v14h-4z' : 'M7 4v16l13-8z');
-        $('rp-play').setAttribute('aria-label', on ? 'Pause' : 'Play');
-        $('rp-play').title = on ? 'Pause' : 'Play';
-        $('rp-credit').textContent = `${onBackup ? 'everyayah.com' : 'Quran.com'} · ${plan.reciter_name}`;
-        $('rp-credit').href = onBackup ? 'https://everyayah.com' : `https://quran.com/${it.s}`;
-    }
-    function load(k, start = true) {
-        if (!plan) return;
-        i = Math.max(0, Math.min(k, plan.items.length - 1));
-        triedBackup = false;
-        const g = ++gen, it = cur();
-        audio.src = urlOf(it);
-        if (start) {
-            pausedBy = null;
-            audio.play().catch(() => {
-                if (g !== gen) return;
-                pausedBy = 'blocked';
-                render();
-                showToast(hzT('Click the page once, then ▶, so the recitation can play.', 'তিলাওয়াত শোনাতে পেজে একবার ক্লিক করে ▶ চাপো।'));
-            });
+        $('rp-play').setAttribute('aria-label', on ? hzT('Pause', 'থামাও') : hzT('Play', 'চালাও'));
+        $('rp-play').title = $('rp-play').getAttribute('aria-label');
+        for (const id of ['rp-prev', 'rp-next', 'rp-rep3', 'rp-stop']) $(id).disabled = !plan;
+        $('rp-rec-k').textContent = hzT('Reciter', 'ক্বারী');
+        $('rp-rep-k').textContent = hzT('Repeat for hifz', 'হিফজের জন্য পুনরাবৃত্তি');
+        $('rp-rep-a').textContent = hzT('Ayahs', 'আয়াত');
+        $('rp-rep-to').textContent = hzT('to', 'থেকে');
+        $('rp-rep-go').textContent = hzT('Repeat', 'রিপিট');
+        renderReciters();
+        if (!plan) {
+            const t = quranReader.title();
+            $('rp-title').textContent = t.en || hzT('Choose a surah', 'একটি সূরা বেছে নাও');
+            $('rp-ar').textContent = t.ar || '';
+            $('rp-ayah').textContent = hzT('Ready: pick a reciter, then ▶', 'তৈরি: ক্বারী বেছে ▶ চাপো');
+            $('rp-reciter').textContent = cardOf(chosenId())?.[hzBn() ? 'name_bn' : 'name'] || '';
+            $('rp-rep').textContent = '';
+            $('rp-prog').style.width = '0%';
+            $('rp-credit').textContent = 'Quran.com (Quran Foundation)';
+            $('rp-credit').href = 'https://quran.com';
+            return;
         }
-        const nx = plan.items[i + 1];
-        if (nx) ahead.src = urlOf(nx);      // the next file, fetched while this one plays
+        const s = surahOf(pos.s || plan.first.split(':')[0]);
+        $('rp-title').textContent = (hzBn() ? s.bn : s.en) || plan.title;
+        $('rp-ar').textContent = s.ar || '';
+        $('rp-ayah').textContent = pos.a === 0 ? hzT('Bismillah', 'বিসমিল্লাহ')
+            : hzT(`Ayah ${pos.a} of ${s.ayahs}`, `আয়াত ${hzNum(pos.a)}/${hzNum(s.ayahs)}`);
+        $('rp-reciter').textContent = plan.reciter_name;
+        const r = mode === 'chapter' ? run?.rep : rep;
+        $('rp-rep').textContent = r && r.left > 0 ? ` · ↻ ${hzNum(r.left + 1)}`
+            : plan.times > 1 ? hzT(` · round ${pass} of ${plan.times}`, ` · ${hzNum(pass)}/${hzNum(plan.times)} বার`) : '';
+        const real = items().filter(x => !x.bismillah), k = real.findIndex(x => x.s === pos.s && x.a === pos.a);
+        $('rp-prog').style.width = `${real.length ? Math.round(100 * (k + 1) / real.length) : 0}%`;
+        const ea = onBackup || plan.credit !== 'Quran.com (Quran Foundation)';
+        $('rp-credit').textContent = `${ea ? 'everyayah.com' : 'Quran.com (Quran Foundation)'} · ${plan.reciter_name}`;
+        $('rp-credit').href = ea ? 'https://everyayah.com' : `https://quran.com/${pos.s || ''}`;
+    }
+    async function loadCards() {
+        if (cards) return cards;
+        try {
+            const out = await (await fetch('/quran/reciters')).json();
+            cards = out.reciters;
+            chosen = chosen || out.chosen;
+        } catch { cards = null; }
+        render();
+        return cards;
+    }
+    const cardOf = rid => cards?.find(c => c.id === rid);
+    const chosenId = () => plan?.reciter || chosen || 'husary';
+    function renderReciters() {
+        const box = $('rp-reciters');
+        if (!$('recite-bar').classList.contains('full')) return;
+        if (!cards) { loadCards(); return; }
+        const want = cards.map(c => c.id + (c.id === chosenId() ? '*' : '') + (previewing === c.id ? '>' : '')).join() + hzBn();
+        if (box.dataset.k === want) return;
+        box.dataset.k = want;
+        box.innerHTML = cards.map(c => `<div class="rp-r" role="option" tabindex="0" data-rid="${c.id}" aria-selected="${c.id === chosenId()}">
+            <span><b>${esc(hzBn() ? c.name_bn : c.name)}</b><small>${esc(c.style)} · <i>${c.words ? hzT('word by word', 'শব্দ ধরে') : hzT('ayah by ayah', 'আয়াত ধরে')}</i> · ${c.source === 'qurancom' ? 'Quran.com' : 'everyayah.com'}</small></span>
+            <button type="button" class="rp-pv${previewing === c.id ? ' on' : ''}" data-pv="${c.id}" aria-label="${esc(hzT(`Preview ${c.name}`, `${c.name_bn}: একটু শোনো`))}" title="${esc(hzT('Preview', 'একটু শোনো'))}"><svg viewBox="0 0 24 24" fill="currentColor"><path d="${previewing === c.id ? 'M6 6h12v12H6z' : 'M7 4v16l13-8z'}"/></svg></button></div>`).join('');
+    }
+    function pick(rid) {                // the picker: his reciter from now on; the one playing switches at its ayah
+        chosen = rid;
+        fetch('/quran/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reciter: rid }) }).catch(() => {});
+        if (plan && plan.reciter !== rid) reciter(rid); else render();
+        vitals.event('recite', `${hzT('reciter', 'ক্বারী')}: ${cardOf(rid)?.short || rid}`);
+    }
+    function previewOf(rid) {           // a few seconds of his recitation (Al-Fatiha 1:2); the recitation waits
+        if (previewing === rid) { stopPreview(); return; }
+        const c = cardOf(rid);
+        if (!c) return;
+        stopPreview();
+        if (plan && !audio.paused) pause('preview');
+        previewing = rid;
+        preview.src = c.preview;
+        preview.play().catch(() => stopPreview());
+        clearTimeout(preview._t);
+        preview._t = setTimeout(stopPreview, 8000);
         render();
     }
-    audio.addEventListener('playing', () => { if (hf) tapNow(audio); render(); });
-    audio.addEventListener('pause', render);
+    function stopPreview() {
+        if (!previewing) return;
+        previewing = null;
+        clearTimeout(preview._t);
+        preview.pause();
+        preview.removeAttribute('src');
+        if (pausedBy === 'preview') resume();
+        render();
+    }
+    preview.addEventListener('ended', stopPreview);
+
+    // ---- the engines
+    function startAudio(g) {
+        pausedBy = null;
+        audio.play().then(() => { if (g === gen) startTick(); }).catch(() => {
+            if (g !== gen) return;
+            pausedBy = 'blocked';
+            render();
+            showToast(hzT('Click the page once, then ▶, so the recitation can play.', 'তিলাওয়াত শোনাতে পেজে একবার ক্লিক করে ▶ চাপো।'));
+        });
+    }
+    function loadItem(k, start = true) {        // ayah mode: one file an ayah
+        if (!plan) return;
+        mode = 'ayah';
+        stopTick();
+        i = Math.max(0, Math.min(k, items().length - 1));
+        triedBackup = false;
+        const g = ++gen, it = items()[i];
+        audio.src = onBackup && it.backup ? it.backup : it.url;
+        if (start) startAudio(g);
+        const nx = items()[i + 1];
+        if (nx) ahead.src = onBackup && nx.backup ? nx.backup : nx.url;     // fetched while this one plays
+        setPos(it.s, it.a, 0);
+        render();
+    }
+    async function startPart(k, a) {            // chapter mode: a surah file, from ayah a
+        const g = ++gen, p = plan.parts[k];
+        stopTick();
+        pi = k;
+        mode = 'chapter';
+        if (!p.verses) {
+            try {
+                const r = await fetch(`/quran/timings?reciter=${encodeURIComponent(plan.reciter)}&surah=${p.s}`);
+                if (g !== gen) return;
+                if (r.ok) Object.assign(p, await r.json());
+            } catch {}
+            if (g !== gen) return;
+            if (!p.verses) { fallback(p.s, a); return; }
+        }
+        run = QSync.run(p.verses, p.first, p.last);
+        inPre = !!(p.pre && a === 1 && p.first === 1);
+        if (inPre) {                // his Bismillah first: the surah file starts on its first word
+            audio.src = p.pre;
+            startAudio(g);
+            setPos(p.s, 0, 0);
+            ahead.src = p.url;
+            return;
+        }
+        loadChapter(g, p, a);
+    }
+    function loadChapter(g, p, a) {
+        inPre = false;
+        const at = QSync.startMs(run, a) / 1000;
+        const go = () => { if (g !== gen) return; audio.currentTime = at; startAudio(g); };
+        if (audio.getAttribute('src') === p.url && audio.readyState >= 1) go();
+        else { audio.src = p.url; audio.addEventListener('loadedmetadata', go, { once: true }); }
+        setPos(p.s, a, 0);
+        const nx = plan.parts[pi + 1];
+        if (nx && !nx.verses) fetch(`/quran/timings?reciter=${encodeURIComponent(plan.reciter)}&surah=${nx.s}`)
+            .then(r => (r.ok ? r.json() : null)).then(t => { if (t && plan?.parts[pi + 1] === nx) Object.assign(nx, t); }).catch(() => {});
+    }
+    function fallback(s, a) {       // no surah file or timings: the same ayahs, one file each
+        plan.mode = 'ayah';
+        let k = itemAt(s, a);
+        if (a === 1 && k > 0 && items()[k - 1].bismillah) k--;
+        loadItem(Math.max(0, k));
+    }
+    const startTick = () => { if (!raf && !document.hidden) raf = requestAnimationFrame(tick); };
+    const stopTick = () => { if (raf) cancelAnimationFrame(raf); raf = 0; };
+    function tick() {
+        raf = 0;
+        if (step_()) startTick();
+    }
+    function step_() {              // one look at the time (each frame; timeupdate while the tab is hidden)
+        if (!plan || mode !== 'chapter' || inPre || audio.paused || !run) return false;
+        const r = QSync.tick(run, audio.currentTime * 1000, document.hidden ? 320 : QSync.EPS);
+        const s = plan.parts[pi].s;
+        if (r.seek != null) { audio.currentTime = r.seek / 1000; setPos(s, r.a, 0); render(); return true; }
+        if (r.end) { partDone(); return false; }
+        setPos(s, r.a, r.w);
+        return true;
+    }
+    audio.addEventListener('timeupdate', () => { if (document.hidden) step_(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && plan && !audio.paused) startTick(); });
+    function partDone() {
+        stopTick();
+        if (pi + 1 < plan.parts.length) { startPart(pi + 1, plan.parts[pi + 1].first); return; }
+        if (pass < plan.times) { pass++; begin(...plan.first.split(':').map(Number)); return; }
+        finish();
+    }
+    function begin(s, a) {          // start at surah s, ayah a (its Bismillah first, from a surah's start)
+        if (plan.mode === 'chapter') {
+            const k = plan.parts.findIndex(p => p.s === s && p.first <= a && a <= p.last);
+            if (k >= 0) { startPart(k, a); return; }
+        }
+        let k = itemAt(s, a);
+        if (a === 1 && k > 0 && items()[k - 1].bismillah) k--;
+        loadItem(Math.max(0, k));
+    }
+    audio.addEventListener('playing', () => { if (hf) tapNow(audio); startTick(); render(); });
+    audio.addEventListener('pause', () => { stopTick(); render(); });
     audio.addEventListener('ended', () => {
         if (!plan) return;
-        if (rep && rep.i === i && rep.left > 1) { rep.left--; audio.currentTime = 0; audio.play().catch(() => {}); render(); return; }
-        if (rep && rep.i === i) rep = null;
-        if (i + 1 < plan.items.length) { load(i + 1); return; }
-        if (pass < plan.times) { pass++; load(0); return; }
+        if (mode === 'chapter') {
+            if (inPre) { loadChapter(gen, plan.parts[pi], plan.parts[pi].first); return; }
+            partDone();
+            return;
+        }
+        if (rep && i === rep.i1 && rep.left > 0) { rep.left--; loadItem(rep.i0); return; }
+        if (rep && i === rep.i1) rep = null;
+        if (i + 1 < items().length) { loadItem(i + 1); return; }
+        if (pass < plan.times) { pass++; begin(...plan.first.split(':').map(Number)); return; }
         finish();
     });
     audio.addEventListener('error', () => {
         if (!plan || !audio.getAttribute('src')) return;
-        if (!onBackup && !triedBackup) {    // Quran.com's host failed: the same recording on everyayah.com
+        if (mode === 'chapter') { fallback(pos.s || plan.parts[pi].s, Math.max(1, pos.a)); return; }
+        const it = items()[i];
+        if (!onBackup && !triedBackup && it.backup) {     // its host failed: the same recording elsewhere
             triedBackup = true;
             onBackup = true;
-            audio.src = cur().backup;
+            audio.src = it.backup;
             audio.play().catch(() => {});
             render();
             return;
         }
-        const said = hzT("I can't reach Quran.com's recitation right now, nor everyayah.com.",
+        const said = hzT("I can't reach the recitation right now: Quran.com and everyayah.com aren't answering.",
                          'এখন Quran.com বা everyayah.com-এর তিলাওয়াত পাওয়া যাচ্ছে না।');
         stop();
         showToast(said);
         speechMsg = null;
         speakChunk(said, 'say');
     });
+
+    // ---- what he asks of it
     function finish() {
         const title = plan?.title;
         stop();
         if (title) showToast(hzT(`✓ ${title}: finished.`, `✓ ${title}: শেষ হলো।`));
     }
     function play(cmd) {
-        plan = { ...cmd, times: cmd.times || 1 };
-        pass = 1; rep = null; onBackup = false;
-        load(0);
+        stopPreview();
+        plan = { ...cmd, times: cmd.times || 1, parts: (cmd.parts || []).map(p => ({ ...p })) };
+        chosen = plan.reciter;
+        pass = 1; rep = null; onBackup = false; pos = { s: 0, a: 0, w: 0 };
+        if (run) run.rep = null;
+        begin(...(plan.start || plan.first).split(':').map(Number));
+        quranReader.follow(plan);
         vitals.event('recite', `${cmd.title} · ${cmd.reciter_name}`);
     }
     function pause(by = 'user') {
@@ -7341,74 +7818,127 @@ const recite = (() => {
         audio.pause();
     }
     function resume() {
-        if (!plan) return;
+        if (!plan) { quranReader.listen(); return; }
         pausedBy = null;
-        if (!audio.getAttribute('src')) { load(i); return; }
+        if (!audio.getAttribute('src')) { begin(pos.s, Math.max(1, pos.a)); return; }
         audio.play().catch(() => {});
     }
     function stop() {
         gen++;
-        plan = null; rep = null; pausedBy = null;
+        stopTick();
+        stopPreview();
+        plan = null; rep = null; run = null; pausedBy = null; inPre = false;
         audio.pause();
         audio.removeAttribute('src');
         ahead.removeAttribute('src');
+        pos = { s: 0, a: 0, w: 0 };
+        quranReader.mark(0, 0, 0);
         render();
     }
     function step(d) {
         if (!plan) return;
+        if (mode === 'chapter' && run) {
+            const a = QSync.step(run, pos.a, d);
+            if (!a) { partDone(); return; }
+            run.rep = null;
+            seekTo(a);
+            return;
+        }
         let k = i + d;
-        while (plan.items[k]?.bismillah) k += d;
-        if (k >= plan.items.length) { finish(); return; }
+        while (items()[k]?.bismillah) k += d;
+        if (k >= items().length) { finish(); return; }
         rep = null;
-        load(Math.max(0, k));
+        loadItem(Math.max(0, k));
     }
-    const indexOf = ayah => plan ? plan.items.findIndex(x => x.s === cur().s && x.a === ayah) : -1;
-    function repeat(ayah, times) {
+    function seekTo(a) {            // chapter mode: ayah a of this surah file
+        inPre = false;
+        audio.currentTime = QSync.startMs(run, a) / 1000;
+        setPos(plan.parts[pi].s, a, 0);
+        if (audio.paused) { pausedBy = null; audio.play().catch(() => {}); }
+    }
+    const inRun = a => mode === 'chapter' && run && run.a0 <= a && a <= run.a1;
+    const notHere = a => showToast(hzT(`Ayah ${a} isn't in this recitation.`, `আয়াত ${hzNum(a)} এই তিলাওয়াতে নেই।`));
+    function repeat(from, to, times) {
         if (!plan) return;
-        let k = ayah ? indexOf(ayah) : i;
-        if (k < 0) { showToast(hzT(`Ayah ${ayah} isn't in this recitation.`, `আয়াত ${hzNum(ayah)} এই তিলাওয়াতে নেই।`)); return; }
-        if (plan.items[k].bismillah) k++;
-        rep = { i: k, left: Math.max(1, times) };
-        load(k);
+        const a0 = from || pos.a || 1, a1 = Math.max(a0, to || a0), n = Math.max(1, Math.min(times || 1, 20));
+        if (mode === 'chapter' && run) {
+            if (!inRun(a0) || !inRun(a1)) { notHere(inRun(a0) ? a1 : a0); return; }
+            inPre = false;
+            audio.currentTime = QSync.repeat(run, a0, a1, n) / 1000;
+            setPos(plan.parts[pi].s, a0, 0);
+            if (audio.paused) { pausedBy = null; audio.play().catch(() => {}); }
+            render();
+            return;
+        }
+        const s = pos.s || Number(plan.first.split(':')[0]), k0 = itemAt(s, a0), k1 = itemAt(s, a1);
+        if (k0 < 0 || k1 < 0) { notHere(k0 < 0 ? a0 : a1); return; }
+        rep = n > 1 ? { i0: k0, i1: k1, left: n - 1 } : null;
+        loadItem(k0);
     }
-    function seek(ayah) {
-        const k = indexOf(ayah);
-        if (k < 0) { showToast(hzT(`Ayah ${ayah} isn't in this recitation.`, `আয়াত ${hzNum(ayah)} এই তিলাওয়াতে নেই।`)); return; }
+    function seek(a) {
+        if (!plan) return;
+        if (mode === 'chapter' && run) { if (inRun(a)) { run.rep = null; seekTo(a); } else notHere(a); return; }
+        const k = itemAt(pos.s || Number(plan.first.split(':')[0]), a);
+        if (k < 0) { notHere(a); return; }
         rep = null;
-        load(k);
+        loadItem(k);
     }
-    async function reciter(rid) {
-        if (!plan) return;
-        const at = cur().key;
+    async function newPlan(body) {
         try {
-            const r = await fetch('/quran/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ keys: [plan.first, plan.last], reciter: rid }) });
-            if (!r.ok) return;
-            const next = await r.json();
-            plan = { ...next, title: plan.title, times: plan.times };
-            onBackup = false;
-            const k = plan.items.findIndex(x => x.key === at);
-            load(k >= 0 ? k : 0);
-        } catch {}
+            const r = await fetch('/quran/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!r.ok) { showToast((await r.json().catch(() => ({}))).detail || hzT('Nothing to play.', 'চালানোর মতো কিছু নেই।')); return null; }
+            return await r.json();
+        } catch { return null; }
+    }
+    async function reciter(rid) {   // the same ayahs, another reciter, from the ayah he's on
+        if (!plan) { chosen = rid; render(); return; }
+        const at = pos.a ? `${pos.s}:${pos.a}` : (plan.start || plan.first);
+        const next = await newPlan({ keys: [plan.first, plan.last], reciter: rid, start: at });
+        if (!next) return;
+        const times = plan.times, title = plan.title;
+        play({ ...next, title, times, start: at });
+    }
+    async function playView(view, start, times = 1) {     // the reader's ▶ and a tapped ayah: its portion, from there
+        stopSpeech();
+        const body = view.kind === 'range' ? { keys: [view.first, view.last] } : { portions: [{ kind: view.kind, n: view.n }] };
+        const next = await newPlan({ ...body, reciter: chosenId(), start: start || undefined });
+        if (next) play({ ...next, times });
     }
     function apply(cmd) {
         ({ play, pause: () => pause('user'), resume, stop, next: () => step(1), prev: () => step(-1),
-           repeat: () => repeat(cmd.ayah, cmd.times || 1), seek: () => seek(cmd.ayah),
-           reciter: () => reciter(cmd.reciter) })[cmd.action]?.(cmd);
+           repeat: () => repeat(cmd.ayah, cmd.to, cmd.times || 1), seek: () => seek(cmd.ayah),
+           reciter: () => { chosen = cmd.reciter; reciter(cmd.reciter); } })[cmd.action]?.(cmd);
     }
     function state() {
         if (!plan) return null;
-        const it = cur();
-        return { active: true, playing: !audio.paused, key: it.key, surah: it.s, ayah: it.a, reciter: plan.reciter,
-                 title: plan.title, first: plan.first, last: plan.last };
+        return { active: true, playing: !audio.paused, key: `${pos.s}:${pos.a}`, surah: pos.s, ayah: pos.a, reciter: plan.reciter,
+                 title: plan.title, first: plan.first, last: plan.last, mode };
     }
-    $('rp-play').addEventListener('click', () => (audio.paused ? resume() : pause('user')));
+    $('rp-play').addEventListener('click', () => (!plan ? quranReader.listen() : audio.paused ? resume() : pause('user')));
     $('rp-next').addEventListener('click', () => step(1));
     $('rp-prev').addEventListener('click', () => step(-1));
-    $('rp-rep3').addEventListener('click', () => repeat(null, 3));
+    $('rp-rep3').addEventListener('click', () => repeat(pos.a || null, null, 3));
     $('rp-stop').addEventListener('click', stop);
-    return { apply, state, pause, resume, stop, render, isPlaying: () => !!plan && !audio.paused,
-             pausedBy: () => pausedBy, audio };
+    $('rp-reciters').addEventListener('click', e => {
+        const pv = e.target.closest('[data-pv]');
+        if (pv) { previewOf(pv.dataset.pv); return; }
+        const row = e.target.closest('[data-rid]');
+        if (row) pick(row.dataset.rid);
+    });
+    $('rp-reciters').addEventListener('keydown', e => {
+        const row = e.target.closest('[data-rid]');
+        if (row && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); pick(row.dataset.rid); }
+    });
+    $('rp-rep-go').addEventListener('click', async () => {
+        const a0 = Number($('rp-from').value), a1 = Number($('rp-to').value) || a0, n = Number($('rp-times').value) || 3;
+        if (!a0) { $('rp-from').focus(); return; }
+        if (plan && (inRun(a0) || mode === 'ayah')) { repeat(a0, a1, n); return; }
+        const v = quranReader.viewOf(a0, a1);
+        if (!v) { showToast(hzT('Open a surah first.', 'আগে একটি সূরা খোলো।')); return; }
+        playView(v, null, n);
+    });
+    return { apply, state, pause, resume, stop, render, playView, pick, loadCards, seek, isPlaying: () => !!plan && !audio.paused,
+             pausedBy: () => pausedBy, plan: () => plan, chosen: rid => { chosen = rid; render(); }, audio };
 })();
 
 // A soft rising bell for a revision reminder: not the timers' chime, so it's known for what it is.
@@ -7431,10 +7961,368 @@ function hifzChime() {
     } catch { /* no audio until the page has been clicked */ }
 }
 
+// The reader (the Hifz view's Read tab): the surah list and its search (GET /quran/surahs), a surah, a juz or a
+// stretch from this Mac (GET /quran/read: Tanzil's text, Saheeh International's and Muhiuddin Khan's translations),
+// three ways to read (Arabic only, with a translation, the hifz test), the player's highlight, and where he left off
+// (POST /quran/state). The text is shown as it comes, escaped; nothing here is spoken.
+const quranReader = (() => {
+    const $ = id => document.getElementById(id);
+    const FONT = [22, 25, 28, 31, 34, 38, 42, 47, 53];         // the Arabic's size, A− / A+
+    const END = String.fromCharCode(0x06DD);                     // the ayah's end mark; Amiri Quran sets the number in it
+    const arNum = n => String(n).replace(/\d/g, d => String.fromCharCode(0x0660 + Number(d)));
+    const bnNum = n => String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]);
+    let rows = null, juz = null, saved = {}, view = null, data = null, idx = new Map(), order = new Map();
+    let tr = 'en', test = false, font = 4, itab = 'surah', opening = 0, lit = null, litWord = null, sel = null;
+    let userScrollAt = 0, autoScroll = 0, saveTimer = 0, searchTimer = 0, lastOpenMs = null, retry = 0;
+
+    function viewTitle(v = view, d = data) {
+        if (!v || !d?.parts?.length) return { en: '', ar: '' };
+        const p = d.parts[0];
+        if (v.kind === 'juz') return { en: hzT(`Juz ${v.n}`, `পারা ${hzNum(v.n)}`), ar: '' };
+        if (v.kind === 'surah') return { en: hzBn() ? p.bn : p.en, ar: p.ar };
+        const last = d.parts[d.parts.length - 1];
+        const a1 = p.verses[0].a, a2 = last.verses[last.verses.length - 1].a;
+        return { en: d.parts.length > 1 ? `${p.en} ${a1} – ${last.en} ${a2}` : `${hzBn() ? p.bn : p.en} ${hzNum(a1)}–${hzNum(a2)}`, ar: p.ar };
+    }
+    const isOpen = () => !!view && !$('hifz').hidden && !$('hz-pane-read').hidden;
+
+    // ---- the index
+    async function loadIndex() {
+        if (rows) return;
+        try {
+            const out = await (await fetch('/quran/surahs')).json();
+            rows = out.surahs;
+            juz = out.juz;
+            saved = out.state || {};
+            if (saved.translation) tr = saved.translation;
+            if (Number.isInteger(saved.font)) font = saved.font;
+            if (typeof saved.test === 'boolean') test = saved.test;
+            if (saved.reciter) recite.chosen(saved.reciter);
+            applyModes();
+            renderIndex();
+        } catch { $('qr-list').innerHTML = `<div class="qr-none">${esc(hzT('The surah list needs the server.', 'সূরার তালিকার জন্য সার্ভার লাগবে।'))}</div>`; }
+    }
+    const starSvg = `<svg viewBox="0 0 100 100" aria-hidden="true"><path d="${STAR_D}"/></svg>`;
+    function renderIndex(list = null) {
+        if (!rows) return;
+        const box = $('qr-list');
+        const cur = view?.kind === 'surah' ? view.n : null;
+        document.querySelectorAll('.qr-itabs button').forEach(b => b.setAttribute('aria-selected', String(b.dataset.it === itab)));
+        if (itab === 'juz' && !list) {
+            box.innerHTML = juz.map(j => `<button type="button" role="listitem" class="qr-row${view?.kind === 'juz' && view.n === j.n ? ' on' : ''}" data-juz="${j.n}">
+                <span class="n">${starSvg}<span>${hzNum(j.n)}</span></span>
+                <span><b>${esc(hzT(`Juz ${j.n}`, `পারা ${hzNum(j.n)}`))}</b><small>${esc(hzBn() ? j.span_bn : j.span)}</small></span>
+                <small>${hzNum(j.ayahs)}</small></button>`).join('');
+        } else {
+            const show = list || rows;
+            box.innerHTML = show.length ? show.map(r => `<button type="button" role="listitem" class="qr-row${cur === r.n ? ' on' : ''}" data-s="${r.n}">
+                <span class="n">${starSvg}<span>${hzNum(r.n)}</span></span>
+                <span><b>${esc(hzBn() ? r.bn : r.en)}</b><small>${esc(hzBn() ? r.en : r.bn)} · ${esc(hzT(`${r.ayahs} ayahs`, `${hzNum(r.ayahs)} আয়াত`))} · ${esc(/^(meccan|makki|makkah|mecca)/i.test(r.type) ? hzT('Makki', 'মাক্কি') : hzT('Madani', 'মাদানি'))} · ${esc(hzT('juz', 'পারা'))} ${hzNum(r.juz[0])}${r.juz[1] !== r.juz[0] ? '–' + hzNum(r.juz[1]) : ''}</small></span>
+                <span class="ar" lang="ar">${esc(r.ar)}</span></button>`).join('')
+                : `<div class="qr-none">${esc(hzT('No surah by that name or number.', 'এই নামে বা নম্বরে কোনো সূরা নেই।'))}</div>`;
+        }
+        const cont = [];
+        if (saved.reading) cont.push(`<button type="button" data-cont="reading"><small>${esc(hzT('Continue reading', 'যেখানে পড়া থেমেছিল'))}</small>${esc(keyLabel(saved.reading.key))}</button>`);
+        if (saved.listening) cont.push(`<button type="button" data-cont="listening"><small>${esc(hzT('Continue listening', 'যেখানে শোনা থেমেছিল'))}</small>${esc(keyLabel(saved.listening.key))}</button>`);
+        $('qr-cont').innerHTML = cont.join('');
+        $('qr-q').placeholder = hzT('Number or name: 18, Kahf, الكهف, কাহফ', 'নম্বর বা নাম: ১৮, কাহফ, Kahf, الكهف');
+    }
+    function keyLabel(k) {
+        const [s, a] = k.split(':').map(Number), r = rows?.[s - 1];
+        return r ? hzT(`${r.en}, ayah ${a}`, `${r.bn}, আয়াত ${hzNum(a)}`) : k;
+    }
+    async function search(q) {
+        if (!q.trim()) { renderIndex(); return; }
+        try {
+            const out = await (await fetch(`/quran/surahs?q=${encodeURIComponent(q)}`)).json();
+            if ($('qr-q').value === q) renderIndex(out.surahs);
+        } catch {}
+    }
+
+    // ---- reading
+    async function open(v, start = null) {
+        hzFonts();
+        loadIndex();
+        const g = ++opening, t0 = performance.now();
+        const q = v.kind === 'surah' ? `surah=${v.n}` : v.kind === 'juz' ? `juz=${v.n}` : `first=${v.first}&last=${v.last}`;
+        try {
+            const r = await fetch(`/quran/read?${q}&tr=en,bn`);
+            if (g !== opening) return;
+            if (r.status === 503) {     // still downloading to this Mac: try again in a moment
+                welcome(hzT('The Quran’s text is downloading to this Mac (once). It opens by itself in a moment.',
+                            'কুরআনের পাঠ এই ম্যাকে নামছে (একবারই)। একটু পরেই নিজে থেকে খুলবে।'));
+                clearTimeout(retry);
+                retry = setTimeout(() => open(v, start), 3000);
+                return;
+            }
+            if (!r.ok) { showToast((await r.json().catch(() => ({}))).detail || 'Not found.'); return; }
+            data = await r.json();
+        } catch { welcome(hzT('The reader needs the server.', 'পড়ার জন্য সার্ভার লাগবে।')); return; }
+        view = data.view;
+        render();
+        setIndexOpen(false);
+        const target = start && idx.get(start);
+        autoScroll = Date.now();
+        if (target) target.scrollIntoView({ block: 'start' }); else $('qr-scroll').scrollTop = 0;
+        if (target) select(target);
+        lastOpenMs = Math.round(performance.now() - t0);
+        vitals.event('hifz', `${viewTitle().en} · ${hzT('opened', 'খোলা')} ${lastOpenMs} ms`);
+        if (!$('qr-q').value.trim()) renderIndex();
+        const pl = recite.state();
+        if (pl) mark(pl.surah, pl.ayah, 0, recite.plan()?.start || recite.plan()?.first);
+        remember(start || data.parts[0].verses[0].k);
+        recite.render();
+    }
+    function welcome(text) {
+        data = null;
+        idx = new Map();
+        $('qr-text').innerHTML = `<div class="qr-welcome"><b>${esc(hzT('Read & listen', 'পড়ো ও শোনো'))}</b>${esc(text)}</div>`;
+        $('qr-bar2').hidden = true;
+        $('qr-title').textContent = hzT('Read & listen', 'পড়ো ও শোনো');
+        $('qr-credits').innerHTML = '';
+    }
+    function render() {
+        const html = [];
+        idx = new Map();
+        order = new Map();
+        let n = 0;
+        for (const p of data.parts) {
+            if (p.verses[0].a === 1 || data.parts.length > 1) {
+                html.push(`<div class="qr-surah"><span lang="ar">${esc(p.ar)}</span><b>${esc(hzBn() ? p.bn : p.en)}</b>
+                    <small>${esc(hzT(`Surah ${p.s} · ${p.ayahs} ayahs`, `সূরা ${hzNum(p.s)} · ${hzNum(p.ayahs)} আয়াত`))}</small></div>`);
+            }
+            if (p.bismillah) html.push(`<div class="qr-basmala" lang="ar" dir="rtl" data-k="${p.s}:0">${esc(data.bismillah_text)}</div>`);
+            for (const v of p.verses) {
+                const words = v.w.map(([t, w]) => (w ? `<span class="w" data-w="${w}">${esc(t)}</span>` : `<span class="mk">${esc(t)}</span>`)).join(' ');
+                const en = v.tr?.en ? `<p class="qa-tr" lang="en"><span class="qa-n">${p.s}:${v.a}</span>${esc(v.tr.en)}</p>` : '';
+                const bn = v.tr?.bn ? `<p class="qa-tr" lang="bn"><span class="qa-n">${bnNum(p.s)}:${bnNum(v.a)}</span>${esc(v.tr.bn)}</p>` : '';
+                html.push(`<div class="qa" data-k="${v.k}"><div class="qa-ar" lang="ar" dir="rtl">${words}&nbsp;<span class="qa-end">${END}${arNum(v.a)}</span></div>${en}${bn}<span class="qa-hint">${esc(hzT('tap to reveal', 'দেখতে চাপো'))}</span></div>`);
+            }
+        }
+        $('qr-text').innerHTML = html.join('');
+        for (const el of $('qr-text').querySelectorAll('[data-k]')) { idx.set(el.dataset.k, el); order.set(el.dataset.k, n++); }
+        lit = litWord = sel = null;
+        const t = viewTitle();
+        $('qr-title').innerHTML = `${esc(t.en)}${t.ar ? `<span lang="ar">${esc(t.ar)}</span>` : ''}<small>${esc(hzT(`${data.count} ayahs`, `${hzNum(data.count)} আয়াত`))}</small>`;
+        $('qr-bar2').hidden = false;
+        $('qr-listen').querySelector('span').textContent = hzT('Listen', 'শোনো');
+        $('qr-log').querySelector('span').textContent = hzT('Revised:', 'রিভাইস হলো:');
+        const words = { strong: hzT('Strong', 'পাকা'), okay: hzT('Okay', 'মোটামুটি'), weak: hzT('Weak', 'কাঁচা') };
+        $('qr-log').querySelectorAll('button').forEach(b => { b.textContent = words[b.dataset.st]; });
+        const c = data.credits;
+        $('qr-credits').innerHTML = hzT(
+            `Text: <a href="https://tanzil.net" target="_blank" rel="noopener">${esc(c.ar.name)}</a> (CC BY 3.0). Translations: ${esc(c.en.name)} and ${esc(c.bn.name)}, via <a href="https://tanzil.net/trans/" target="_blank" rel="noopener">Tanzil</a>. Recitations and their timings: <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> (Quran Foundation), and everyayah.com. All of it on this Mac; nothing here is read by a model.`,
+            `পাঠ: <a href="https://tanzil.net" target="_blank" rel="noopener">${esc(c.ar.name_bn)}</a> (CC BY 3.0)। অনুবাদ: ${esc(c.en.name_bn)} আর ${esc(c.bn.name_bn)}, <a href="https://tanzil.net/trans/" target="_blank" rel="noopener">Tanzil</a> থেকে। তিলাওয়াত ও সময়: <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> (Quran Foundation) আর everyayah.com।`);
+        applyModes();
+    }
+    function applyModes() {
+        const t = $('qr-text');
+        t.classList.remove('tr-off', 'tr-en', 'tr-bn', 'tr-both');
+        t.classList.add(`tr-${tr}`);
+        t.classList.toggle('test', test);
+        t.style.setProperty('--qa-size', `${FONT[font]}px`);
+        document.querySelectorAll('#qr-tr button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.tr === tr)));
+        $('qr-tr').querySelector('[data-tr="off"]').textContent = hzT('Arabic', 'আরবি');
+        $('qr-tr').querySelector('[data-tr="both"]').textContent = hzT('Both', 'দুটোই');
+        $('qr-test').setAttribute('aria-pressed', String(test));
+        $('qr-test').textContent = hzT('Hifz test', 'হিফজ টেস্ট');
+        $('qr-font-down').disabled = font <= 0;
+        $('qr-font-up').disabled = font >= FONT.length - 1;
+        if (!test) idx.forEach(el => el.classList.remove('shown'));
+        $('qr-note').textContent = test ? hzT('Tap an ayah, or say “show”, to reveal it.', 'আয়াতে চাপো, বা বলো “দেখাও”।') : '';
+    }
+    function setTr(m, save = true) {
+        if (!['off', 'en', 'bn', 'both'].includes(m)) return;
+        tr = m;
+        applyModes();
+        if (save) savePrefs({ translation: m });
+    }
+    function setTest(on, save = true) {
+        test = !!on;
+        applyModes();
+        if (save) savePrefs({ test });
+    }
+    function setFont(i) {
+        font = Math.max(0, Math.min(FONT.length - 1, i));
+        const keep = firstVisible();
+        applyModes();
+        if (keep && idx.get(keep)) { autoScroll = Date.now(); idx.get(keep).scrollIntoView({ block: 'start' }); }
+        savePrefs({ font });
+    }
+    const savePrefs = body => fetch('/quran/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+    function remember(k) {          // where he's reading, for "continue reading" (debounced)
+        if (!view || !k) return;
+        clearTimeout(saveTimer);
+        saveTimer = setTimeout(() => {
+            saved.reading = { key: k, view };
+            savePrefs({ reading: { key: k, view } });
+            renderIndex();
+        }, 1500);
+    }
+    function firstVisible() {
+        const box = $('qr-scroll'), top = box.getBoundingClientRect().top + 8;
+        for (const [k, el] of idx) if (!k.endsWith(':0') && el.getBoundingClientRect().bottom > top) return k;
+        return null;
+    }
+
+    // ---- the player's highlight: the ayah being recited, its word, the ones already recited
+    function mark(s, a, w, fromKey) {
+        if (!data || !s) {
+            lit?.classList.remove('now'); litWord?.classList.remove('now');
+            idx.forEach(el => el.classList.remove('done'));
+            lit = litWord = null;
+            return;
+        }
+        const el = idx.get(`${s}:${a}`) || null;
+        if (lit !== el) {
+            lit?.classList.remove('now');
+            el?.classList.add('now');
+            lit = el;
+            const here = order.get(`${s}:${a}`), from = order.get(fromKey) ?? 0;
+            if (here != null) for (const [k, e] of idx) {
+                const o = order.get(k);
+                e.classList.toggle('done', o >= from && o < here && !k.endsWith(':0'));
+            }
+            if (el && Date.now() - userScrollAt > 5000) {
+                autoScroll = Date.now();
+                el.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+            }
+        }
+        const we = w && el ? el.querySelector(`.w[data-w="${w}"]`) : null;
+        if (litWord !== we) { litWord?.classList.remove('now'); we?.classList.add('now'); litWord = we; }
+    }
+    function select(el) {
+        sel?.classList.remove('sel');
+        sel = el;
+        el.classList.add('sel');
+        const a = Number(el.dataset.k.split(':')[1]);
+        if (a) { $('rp-from').value = a; $('rp-to').value = a; }
+    }
+    function reveal(what) {
+        if (!data) return;
+        if (!test) setTest(true);
+        if (what === 'all') idx.forEach(el => el.classList.add('shown'));
+        else if (what === 'none') idx.forEach(el => el.classList.remove('shown'));
+        else {
+            const next = [...idx.values()].find(el => el.classList.contains('qa') && !el.classList.contains('shown'));
+            if (next) { next.classList.add('shown'); autoScroll = Date.now(); next.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+            else showToast(hzT('All shown, MashaAllah.', 'সব খোলা হয়েছে, মাশাআল্লাহ।'));
+        }
+    }
+    function viewOf(a0, a1) {           // the repeat box with nothing playing: those ayahs of the open surah
+        if (!data) return null;
+        const p = data.parts.find(x => x.verses.some(v => v.a === a0)) || data.parts[0];
+        const last = Math.min(Math.max(a0, a1 || a0), p.ayahs);
+        if (a0 < 1 || a0 > p.ayahs) return null;
+        return { kind: 'range', first: `${p.s}:${a0}`, last: `${p.s}:${last}` };
+    }
+    function listen() {                 // ▶: the open portion, from the ayah he tapped (else its start)
+        if (!view) { showToast(hzT('Open a surah first.', 'আগে একটি সূরা খোলো।')); return; }
+        recite.playView(view, sel?.dataset.k && !sel.dataset.k.endsWith(':0') ? sel.dataset.k : null);
+    }
+    function log(strength) {
+        if (!view || !data) return;
+        let p;
+        if (view.kind !== 'range') p = { kind: view.kind, n: view.n };
+        else {
+            const [s1, a1] = view.first.split(':').map(Number), [s2, a2] = view.last.split(':').map(Number);
+            if (s1 !== s2) { showToast(hzT('Log one surah or juz at a time.', 'একবারে একটি সূরা বা পারা লগ করো।')); return; }
+            p = { kind: 'surah', n: s1, a1, a2 };
+        }
+        hifzUI.logPortion([p], strength);
+    }
+    function apply(ev) {                // the server's word (a voice command): open, translation, test, reveal, reciter
+        if (ev.reciter) recite.chosen(ev.reciter);
+        if (ev.translation) setTr(ev.translation, false);
+        if ('test' in ev) setTest(ev.test, false);
+        if (ev.open) { hifzUI.open('read'); open(ev.open, ev.start || null); }
+        else if (ev.open_last) {
+            hifzUI.open('read');
+            if (saved.reading) open(saved.reading.view || { kind: 'surah', n: Number(saved.reading.key.split(':')[0]) }, saved.reading.key);
+        }
+        if (ev.reveal) reveal(ev.reveal);
+    }
+    async function show() {             // the Read tab came up: the list, and the last place read (or a welcome)
+        await loadIndex();
+        if (view || opening) return;      // a voice command or a click is already opening one
+        if (saved.reading) open(saved.reading.view || { kind: 'surah', n: Number(saved.reading.key.split(':')[0]) }, saved.reading.key);
+        else welcome(hzT('Choose a surah or a juz on the left, or say “read Surah Al-Mulk with translation”.',
+                         'বাঁ দিক থেকে একটি সূরা বা পারা বেছে নাও, অথবা বলো “সূরা মুলক অনুবাদসহ পড়ো”।'));
+    }
+    function setIndexOpen(on) {
+        $('hz-pane-read').classList.toggle('idx-open', on);
+        $('qr-idx-btn').setAttribute('aria-expanded', String(on));
+        $('qr-idx-btn').textContent = hzT('☰ Surahs', '☰ সূরা');
+        if (on) setTimeout(() => $('qr-q').focus(), 50);
+    }
+    function state() {
+        return { open: isOpen(), test, translation: tr, view, key: isOpen() ? firstVisible() : null };
+    }
+    function follow(plan) {         // a recitation started while reading something else: the reader opens it
+        const start = plan.start || plan.first;
+        if (!isOpen() || idx.has(start)) return;
+        const [s1, a1] = plan.first.split(':').map(Number), [s2, a2] = plan.last.split(':').map(Number);
+        const whole = s1 === s2 && a1 === 1 && a2 === (rows?.[s1 - 1]?.ayahs ?? -1);
+        const long = plan.items.filter(x => !x.bismillah).length > 650;      // more than the reader shows at once
+        open(whole || long ? { kind: 'surah', n: whole ? s1 : Number(start.split(':')[0]) }
+                           : { kind: 'range', first: plan.first, last: plan.last }, start);
+    }
+
+    // ---- clicks and keys
+    $('qr-list').addEventListener('click', e => {
+        const b = e.target.closest('[data-s], [data-juz]');
+        if (!b) return;
+        open(b.dataset.s ? { kind: 'surah', n: Number(b.dataset.s) } : { kind: 'juz', n: Number(b.dataset.juz) });
+    });
+    $('qr-cont').addEventListener('click', e => {
+        const b = e.target.closest('[data-cont]');
+        if (!b) return;
+        if (b.dataset.cont === 'reading') {
+            const r = saved.reading;
+            open(r.view || { kind: 'surah', n: Number(r.key.split(':')[0]) }, r.key);
+        } else {
+            const l = saved.listening, s = Number(l.key.split(':')[0]);
+            recite.chosen(l.reciter);
+            open({ kind: 'surah', n: s }, l.key).then(() => recite.playView({ kind: 'surah', n: s }, l.key));
+        }
+    });
+    document.querySelectorAll('.qr-itabs button').forEach(b => b.addEventListener('click', () => { itab = b.dataset.it; $('qr-q').value = ''; renderIndex(); }));
+    $('qr-q').addEventListener('input', () => { clearTimeout(searchTimer); const q = $('qr-q').value; searchTimer = setTimeout(() => search(q), 120); });
+    $('qr-q').addEventListener('keydown', e => {
+        if (e.key === 'Enter') { const first = $('qr-list').querySelector('[data-s], [data-juz]'); if (first) first.click(); }
+    });
+    $('qr-tr').addEventListener('click', e => { const b = e.target.closest('[data-tr]'); if (b) setTr(b.dataset.tr); });
+    $('qr-test').addEventListener('click', () => setTest(!test));
+    $('qr-font-down').addEventListener('click', () => setFont(font - 1));
+    $('qr-font-up').addEventListener('click', () => setFont(font + 1));
+    $('qr-idx-btn').addEventListener('click', () => setIndexOpen(!$('hz-pane-read').classList.contains('idx-open')));
+    $('qr-listen').addEventListener('click', listen);
+    $('qr-log').addEventListener('click', e => { const b = e.target.closest('button[data-st]'); if (b) log(b.dataset.st); });
+    $('qr-text').addEventListener('click', e => {
+        if (e.target.closest('a')) return;
+        const el = e.target.closest('.qa');
+        if (!el) return;
+        if (test && !el.classList.contains('shown')) { el.classList.add('shown'); return; }   // the test: reveal it
+        select(el);
+        const k = el.dataset.k, a = Number(k.split(':')[1]), s = Number(k.split(':')[0]);
+        const pl = recite.plan();
+        const inPlan = pl && pl.items.some(x => x.s === s && x.a === a);
+        if (inPlan && recite.state()?.surah === s) recite.seek(a);       // tap an ayah: play from there
+        else recite.playView(view, k);
+    });
+    $('qr-scroll').addEventListener('scroll', () => {
+        if (Date.now() - autoScroll > 900) userScrollAt = Date.now();
+        clearTimeout($('qr-scroll')._t);
+        $('qr-scroll')._t = setTimeout(() => { if (Date.now() - userScrollAt < 2000) remember(firstVisible()); }, 400);
+    }, { passive: true });
+    return { open, show, mark, apply, state, follow, listen, viewOf, title: () => viewTitle(), reveal, setTr, setTest,
+             setIndexOpen, lastOpenMs: () => lastOpenMs, refreshIndex: () => renderIndex(), isOpen };
+})();
+
 const hifzUI = (() => {
     const $ = id => document.getElementById(id);
     const view = $('hifz');
-    let data = null, sel = null, ringAlert = null;
+    let data = null, sel = null, ringAlert = null, tab = 'today';
     const STATE_WORD = { fresh: ['fresh', 'তাজা'], steady: ['steady', 'ঠিক আছে'], soon: ['due soon', 'শিগগির দরকার'],
                          over: ['past its cycle', 'চক্র পেরিয়েছে'], never: ['not yet', 'এখনো না'] };
     const unit = n => (data.unit === 'juz' ? hzT(`Juz ${n}`, `পারা ${hzNum(n)}`) : hzT(`Manzil ${n}`, `মঞ্জিল ${hzNum(n)}`));
@@ -7484,7 +8372,7 @@ const hifzUI = (() => {
                 { strong: hzT('Strong', 'পাকা'), okay: hzT('Okay', 'মোটামুটি'), weak: hzT('Weak', 'কাঁচা') }[st]}</button>`).join('') + '</div>';
     }
     function listenButton(attrs) {
-        const r = data.reciter === 'alafasy' ? 'Alafasy' : 'Husary';
+        const r = esc(data.reciter_short || 'Husary');
         return `<button class="hz-btn" type="button" ${attrs}><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>${hzT('Listen', 'শোনো')} · ${r}</button>`;
     }
     function renderView() {
@@ -7566,20 +8454,45 @@ const hifzUI = (() => {
             <span>${esc(ago(u.days))}${due ? ' · ' + esc(due) : ''}</span>
             <span class="hz-tip-acts">${listenButton(`data-play="${u.n}"`)}${logButtons(`data-unit="${u.n}"`)}</span>`;
     }
-    function open() {
+    function open(which) {
         hzFonts();
+        const was = !view.hidden;
         view.hidden = false;
         document.body.classList.add('hifz-open');
         setPanels(false);
+        setTab(which || tab);
         render();
         refresh();
-        $('hz-close').focus();
+        if (!was) $('hz-close').focus();
     }
     function close() {
         view.hidden = true;
         document.body.classList.remove('hifz-open');
+        quranReader.setIndexOpen(false);
+        placePlayer();
         $('hifz-btn').focus();
     }
+    function setTab(t) {            // Today (the tracker) or Read & listen (the reader)
+        tab = t === 'read' ? 'read' : 'today';
+        $('hz-pane-today').hidden = tab !== 'today';
+        $('hz-pane-read').hidden = tab !== 'read';
+        $('hz-tab-today').setAttribute('aria-selected', String(tab === 'today'));
+        $('hz-tab-read').setAttribute('aria-selected', String(tab === 'read'));
+        $('hz-tab-today').textContent = hzT('Today', 'আজ');
+        $('hz-tab-read').textContent = hzT('Read & listen', 'পড়ো ও শোনো');
+        placePlayer();
+        if (tab === 'read') quranReader.show();
+    }
+    // The player sits in the page's flow wherever it shows, so it never covers anything: under the header on the main
+    // page, at the view's foot in Today, beside the text in Read (the full panel, with the reciters and the repeat).
+    function placePlayer() {
+        const bar = $('recite-bar');
+        const slot = view.hidden ? $('main-dock') : tab === 'read' ? $('qr-side') : $('hz-dock');
+        if (bar.parentElement !== slot) slot.appendChild(bar);
+        bar.classList.toggle('full', slot.id === 'qr-side');
+        recite.render();
+    }
+    function logPortion(portions, strength) { return log({ portions, strength }); }
     async function log(body) {
         try {
             const r = await fetch('/hifz/log', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -7625,6 +8538,7 @@ const hifzUI = (() => {
         if (star) { sel = Number(star.dataset.n) === sel ? null : Number(star.dataset.n); renderView(); }
     });
     $('hz-close').addEventListener('click', close);
+    document.querySelectorAll('.hz-tabs [data-tab]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tab)));
     $('hifz-btn').addEventListener('click', () => (view.hidden ? open() : close()));
     $('hifz-open').addEventListener('click', open);
     $('hz-undo').addEventListener('click', async () => {
@@ -7647,11 +8561,13 @@ const hifzUI = (() => {
     document.addEventListener('keydown', e => {
         if (e.key !== 'Escape' || view.hidden) return;
         e.stopImmediatePropagation();      // closing the view doesn't stop Javid or the recitation
+        if ($('hz-pane-read').classList.contains('idx-open')) { quranReader.setIndexOpen(false); return; }
         close();
     }, true);
     setInterval(refresh, 60000);
     refresh();
-    return { refresh, open, close, ring };
+    placePlayer();
+    return { refresh, open, close, ring, placePlayer, logPortion, tab: () => tab };
 })();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────

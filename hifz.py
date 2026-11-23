@@ -1414,7 +1414,8 @@ def status_json() -> dict:
     recent = list(reversed([e for e in s["entries"] if e["kind"] == "log"]))[:8]     # newest first, as written
     return {
         "unit": kind, "count": s["count"], "daily": s["daily"], "cycle": cycle, "weak_days": cfg["weak_days"],
-        "reciter": cfg["reciter"], "started": s["started"], "today_date": s["today"].isoformat(),
+        "reciter": quran.default_reciter(), "reciter_short": quran.RECITERS[quran.default_reciter()]["short"],
+        "started": s["started"], "today_date": s["today"].isoformat(),
         "today": [{"kind": kind, "n": u["n"], "label": _unit_word(kind, "en", u["n"]),
                    "label_bn": _unit_word(kind, "bn", u["n"]), "span": _span_of(s, u["n"], "en", False),
                    "span_bn": _span_of(s, u["n"], "bn", False), "behind": u["behind"],

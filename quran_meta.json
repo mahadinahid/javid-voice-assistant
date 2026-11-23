@@ -1,6 +1,6 @@
 {
  "source": "Structure from Tanzil Quran metadata 1.0 (tanzil.net, (C) 2008-2009 Tanzil.info, Creative Commons Attribution 3.0); the English and Bangla names people say were written for Javid. Checked against Quran.com with `python quran.py --check`, never copied from it.",
- "checked": {"date": "2026-11-22", "against": "api.quran.com/api/v4", "what": "the ayah counts and pages of all 114 surahs, the 30 juz, the 7 manzils, and where the reciters' ayah files are"},
+ "checked": {"date": "2026-11-23", "against": "api.quran.com/api/v4", "what": "the ayah counts and pages of all 114 surahs, the 30 juz, the 7 manzils, where the reciters' ayah files are, and each surah-file reciter's timings for Al-Mulk"},
  "ayahs": 6236,
  "surahs": [
   {"n": 1, "ar": "الفاتحة", "en": "Al-Fatihah", "bn": "আল-ফাতিহা", "meaning": "The Opening", "ayahs": 7, "type": "meccan", "aka": ["al hamd", "alhamd", "alhamdu", "fateha", "fatiha"], "aka_bn": ["আলহামদ", "আলহামদু", "ফাতিহা"]},

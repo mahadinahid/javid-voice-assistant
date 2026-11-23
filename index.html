@@ -36,8 +36,9 @@ try {
     };
 })();
 // The saved theme applies before the first paint: Orbit (the default), Glass, Overdrive, or a colour theme from themes/,
-// which is the Glass look in its own colours (the ones it had last time, 'javid-theme-vars', go on <html> now; the
-// main script refreshes them from /themes). 'aurora' and 'classic', saved by older versions, mean Glass.
+// which is the Glass look in its own colours (the ones it had last time, 'javid-theme-vars', go on <html> now, with
+// data-tone="light" for a light one and data-roles for a palette or light one; the main script refreshes them from
+// /themes). 'aurora' and 'classic', saved by older versions, mean Glass.
 try {
     const saved = localStorage.getItem('javid-theme') || 'orbit';
     const theme = saved === 'overdrive' || saved === 'orbit' ? saved : 'glass';
@@ -51,6 +52,8 @@ try {
                 }
             }
             document.documentElement.dataset.palette = saved;
+            if (cached.tone === 'light') document.documentElement.dataset.tone = 'light';
+            if (cached.roles) document.documentElement.setAttribute('data-roles', '');
         }
     }
     if (theme === 'overdrive') {
@@ -62,6 +65,21 @@ try {
         const font = Object.assign(document.createElement('link'), { id: 'orbit-font', rel: 'stylesheet',
             href: 'https://fonts.googleapis.com/css2?family=Orbitron:wght@500;600;700;800&family=Share+Tech+Mono&display=swap' });
         document.head.appendChild(font);
+    }
+} catch {}
+// The Hifz page's own theme (hifzTheme in the main script), if it isn't Hifz Classic: the variables it had last time,
+// in the one stylesheet rule the main script keeps up to date.
+try {
+    const hz = JSON.parse(localStorage.getItem('javid-hifz-theme-vars') || 'null');
+    if (hz && hz.tokens && hz.id === localStorage.getItem('javid-hifz-theme')) {
+        const sheet = document.head.appendChild(Object.assign(document.createElement('style'), { id: 'hz-theme-vars' })).sheet;
+        sheet.insertRule('html[data-hz-theme] .hz-scope {}');
+        for (const [name, value] of Object.entries(hz.tokens)) {
+            if (/^--hz-[a-z0-9-]+$/.test(name) && typeof value === 'string' && !/[;{}<>\\]/.test(value)) {
+                sheet.cssRules[0].style.setProperty(name, value);
+            }
+        }
+        document.documentElement.dataset.hzTheme = hz.id;
     }
 } catch {}
 </script>
@@ -135,6 +153,8 @@ try {
     --shadow-sm: 0 4px 14px rgba(0, 0, 0, .3);
     --shadow: 0 14px 40px rgba(0, 0, 0, .45);
     --ring-focus: 0 0 0 3px rgba(74, 222, 159, .3);
+    --ink-rgb: 255, 255, 255;                   /* the faint fills and edges of rows, chips and fields (a light colour */
+    --field-rgb: 0, 0, 0;                       /* theme's are dark ink), and the text fields' fill (a light one's white) */
     --r-xl: 20px;
     --r-lg: 16px;
     --r: 12px;
@@ -221,7 +241,7 @@ header {
     flex-shrink: 0;
     border-radius: 50%;
     background: radial-gradient(circle at 34% 28%, #fff 0 7%, #c9bfff 16%, #8b7cff 34%, #4a6dff 58%, #141a46 86%);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 0 18px rgba(var(--violet-rgb), 0.55);
+    box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.08), 0 0 18px rgba(var(--violet-rgb), 0.55);
 }
 header h1 {
     font-family: var(--font-display);
@@ -241,7 +261,7 @@ header h1 {
     padding: 4px 11px 4px 9px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     font-size: 11.5px;
     color: var(--text-3);
     white-space: nowrap;
@@ -268,7 +288,7 @@ header h1 {
     padding: 7px 14px;
     border-radius: 999px;
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     color: var(--text-2);
     font: 500 12.5px var(--font);
     cursor: pointer;
@@ -287,7 +307,7 @@ header h1 {
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #FFD166;
+    background: var(--alert-dot, #FFD166);
     box-shadow: 0 0 0 2px var(--bg), 0 0 8px rgba(255, 209, 102, 0.8);
 }
 html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pending .mem-card) .panels-btn::after { content: ''; }
@@ -300,7 +320,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 3px;
     border-radius: 999px;
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     overflow: hidden;
 }
 .lang-toggle button {
@@ -323,14 +343,24 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     flex-shrink: 0;
     border-radius: 50%;
     background: linear-gradient(135deg, var(--sw-bg) 0 50%, var(--sw-accent) 50% 100%);
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.3);
+    box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.3);
 }
+.theme-strip {           /* a theme in the list: its colours side by side, like a palette card (themes.py's swatches) */
+    display: inline-flex;
+    flex-shrink: 0;
+    width: 63px;
+    height: 14px;
+    border-radius: 4px;
+    overflow: hidden;
+    box-shadow: 0 0 0 1px rgba(var(--ink-rgb), 0.3);
+}
+.theme-strip i { flex: 1; }
 .theme-menu {
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
     z-index: 30;
-    width: 272px;
+    width: 288px;
     max-height: min(72vh, 560px);
     overflow-y: auto;
     padding: 6px;
@@ -349,7 +379,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     color: var(--text-3);
 }
 .theme-row { display: flex; align-items: center; border-radius: var(--r-sm); }
-.theme-row:hover { background: rgba(255, 255, 255, 0.06); }
+.theme-row:hover { background: rgba(var(--ink-rgb), 0.06); }
 .theme-choose {
     flex: 1;
     min-width: 0;
@@ -379,7 +409,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     font-size: 13px;
     cursor: pointer;
 }
-.theme-edit:hover { color: var(--text); background: rgba(255, 255, 255, 0.08); }
+.theme-edit:hover { color: var(--text); background: rgba(var(--ink-rgb), 0.08); }
 .theme-new {
     width: 100%;
     margin-top: 6px;
@@ -424,7 +454,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 8px 10px;
     border-radius: var(--r-sm);
     border: 1px solid var(--line-strong);
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(var(--field-rgb), 0.3);
     color: var(--text);
     font: 13px var(--font);
     outline: none;
@@ -437,11 +467,13 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 2px;
     border-radius: var(--r-sm);
     border: 1px solid var(--line-strong);
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(var(--field-rgb), 0.3);
     cursor: pointer;
 }
 .te-field input[type="color"]:disabled { opacity: 0.5; cursor: default; }
-.te-glows { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.te-glows,
+.te-roles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.te-roles[hidden] { display: none; }
 .te-check { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--text-2); cursor: pointer; }
 .te-check input,
 .te-range input { accent-color: var(--violet); }
@@ -457,7 +489,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     margin-top: 6px;
     padding: 10px 12px;
     border-radius: var(--r);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     font-size: 11.5px;
     color: var(--text-2);
     font-variant-numeric: tabular-nums;
@@ -500,7 +532,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 12px 10px;
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+    scrollbar-color: var(--thumb, rgba(var(--ink-rgb), 0.08)) transparent;
     border: 1px solid var(--line-strong);
     border-radius: var(--r-lg);
     background: var(--bg-elev);
@@ -602,7 +634,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 1px 6px;
     border-radius: 6px;
     border: 1px solid rgba(var(--violet-rgb), 0.55);
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(var(--field-rgb), 0.3);
     color: var(--text);
     font: inherit;
     outline: none;
@@ -631,7 +663,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 8px 11px;
     border-radius: var(--r-sm);
     border: 1px solid var(--line);
-    background: rgba(0, 0, 0, 0.22);
+    background: rgba(var(--field-rgb), 0.22);
     color: var(--text);
     font: 12.5px var(--font);
     outline: none;
@@ -664,13 +696,13 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 }
 .mem-card .mc-label { margin-bottom: 5px; font-size: 11px; color: var(--violet-soft); }
 .mem-card .mc-text { padding: 3px 5px; border-radius: 6px; white-space: pre-wrap; overflow-wrap: anywhere; outline: none; }
-.mem-card .mc-text[contenteditable="true"] { background: rgba(0, 0, 0, 0.25); box-shadow: inset 0 0 0 1px rgba(var(--violet-rgb), 0.6); }
+.mem-card .mc-text[contenteditable="true"] { background: rgba(var(--field-rgb), 0.25); box-shadow: inset 0 0 0 1px rgba(var(--violet-rgb), 0.6); }
 .mem-card .mc-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
 .mem-card button {
     padding: 5px 12px;
     border-radius: 999px;
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     color: var(--text-2);
     font: 500 11.5px var(--font);
     cursor: pointer;
@@ -678,10 +710,10 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 }
 .mem-card button.approve { border-color: transparent; background: var(--grad); color: #fff; }
 .mem-card button:hover { filter: brightness(1.15); }
-.mem-card.done { opacity: 0.7; }
+.mem-card.done { opacity: max(0.7, var(--fade-floor, 0)); }
 .mem-card.done .mc-actions { display: none; }
 .mem-card.act-card { border-color: rgba(255, 170, 60, 0.5); background: linear-gradient(135deg, rgba(255, 170, 60, 0.12), rgba(var(--violet-rgb), 0.05)); }
-.mem-card.act-card .mc-label { color: #f3b85a; }
+.mem-card.act-card .mc-label { color: var(--warn-text, #f3b85a); }
 
 /* Skills and agents: compact chips (the description is the tooltip), glowing while one works */
 #skills-list,
@@ -692,13 +724,13 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 6px 11px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     font-size: 12px;
     color: var(--text-2);
     cursor: help;
     transition: border-color 0.2s, background 0.2s, box-shadow 0.2s;
 }
-.skill-item:hover { border-color: var(--line-strong); background: rgba(255, 255, 255, 0.07); }
+.skill-item:hover { border-color: var(--line-strong); background: rgba(var(--ink-rgb), 0.07); }
 .skill-item .skill-name { color: var(--text); font-weight: 500; }
 .skill-item .skill-name::before { content: '⚡ '; color: var(--amber); }
 .agent-item .skill-name::before { content: '◆ '; color: var(--violet); }
@@ -769,14 +801,14 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     min-width: 58px;
     font: 600 13px var(--mono);
     font-variant-numeric: tabular-nums;
-    background: linear-gradient(90deg, var(--amber), #ff9a6b);
+    background: linear-gradient(90deg, var(--amber), var(--warn-text-2, #ff9a6b));
     -webkit-background-clip: text;
             background-clip: text;
     color: transparent;
 }
 .timer-item.reminder .timer-left { font-size: 11.5px; font-weight: 500; background: none; color: var(--cyan-soft); }
 .timer-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.timer-item .del-btn { opacity: 0.6; }
+.timer-item .del-btn { opacity: max(0.6, var(--fade-floor, 0)); }
 .timer-item .del-btn:hover { opacity: 1; }
 
 /* Watching: prices, news and rain Javid keeps an eye on (watches.py); a watch that fires rings like a timer */
@@ -833,7 +865,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     background: rgba(14, 16, 27, 0.94);
     box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6);
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+    scrollbar-color: var(--thumb, rgba(var(--ink-rgb), 0.08)) transparent;
 }
 .modal-head { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 .modal-head h2 {
@@ -848,7 +880,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 7px 13px;
     border-radius: 999px;
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     color: var(--text-2);
     font: 500 12px var(--font);
     cursor: pointer;
@@ -866,7 +898,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 14px;
     border-radius: var(--r-lg);
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(var(--ink-rgb), 0.03);
     font-size: 12px;
     color: var(--text-2);
 }
@@ -889,37 +921,37 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     white-space: nowrap;
     color: var(--text-2);
 }
-.pill.serving { color: #8ff5d0; border-color: rgba(var(--mint-rgb), 0.45); background: rgba(var(--mint-rgb), 0.08); }
+.pill.serving { color: var(--ok-text, #8ff5d0); border-color: rgba(var(--mint-rgb), 0.45); background: rgba(var(--mint-rgb), 0.08); }
 .pill.ready { color: var(--cyan-soft); border-color: rgba(var(--cyan-rgb), 0.4); background: rgba(var(--cyan-rgb), 0.07); }
 .pill.reserve { color: var(--violet-soft); border-color: rgba(var(--violet-rgb), 0.45); background: rgba(var(--violet-rgb), 0.08); }
-.pill.cooling { color: #ffd38a; border-color: rgba(255, 190, 85, 0.4); background: rgba(255, 190, 85, 0.08); }
-.pill.off { color: #ff9cab; border-color: rgba(255, 92, 122, 0.4); background: rgba(255, 92, 122, 0.08); }
+.pill.cooling { color: var(--warn-text, #ffd38a); border-color: rgba(255, 190, 85, 0.4); background: rgba(255, 190, 85, 0.08); }
+.pill.off { color: var(--bad-text, #ff9cab); border-color: rgba(255, 92, 122, 0.4); background: rgba(255, 92, 122, 0.08); }
 .prov-kind { margin: 18px 0 10px; font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--text-3); }
 #prov-cards > .prov-kind:first-child { margin-top: 0; }
 #prov-cards .model-cards { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }   /* a lone card keeps its width */
 .models-off { margin-top: 6px; font-size: 11px; line-height: 1.45; color: var(--text-4); }
-.unverified { color: #ffd38a; }
+.unverified { color: var(--warn-text, #ffd38a); }
 .mc-dim { color: var(--text-4); }
-.src-via { font-size: 10px; opacity: 0.6; }
+.src-via { font-size: 10px; opacity: max(0.6, var(--fade-floor, 0)); }
 .mc-state { font-size: 12.5px; color: var(--text); }
 .meter-label { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 4px; font-size: 11px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .meter-label b { font-weight: 600; color: var(--text); }
-.meter { height: 6px; overflow: hidden; border-radius: 3px; background: rgba(255, 255, 255, 0.06); }
+.meter { height: 6px; overflow: hidden; border-radius: 3px; background: rgba(var(--ink-rgb), 0.06); }
 .meter > i { display: block; height: 100%; border-radius: 3px; background: var(--grad); }
 .meter > i.warn { background: var(--amber); }
 .meter > i.crit { background: var(--red); }
 .mc-line { font-size: 11.5px; line-height: 1.45; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .mc-line b { font-weight: 600; color: var(--text-2); }
-.mc-err { font-size: 11px; line-height: 1.4; color: #ffb36b; word-break: break-word; }
-.mc-ping.ok { color: #8ff5d0; }
-.mc-ping.bad { color: #ff9cab; }
+.mc-err { font-size: 11px; line-height: 1.4; color: var(--warn-text-2, #ffb36b); word-break: break-word; }
+.mc-ping.ok { color: var(--ok-text, #8ff5d0); }
+.mc-ping.bad { color: var(--bad-text, #ff9cab); }
 .models-controls { margin-top: 4px; }
 .models-controls code,
 .mc-state code {
     padding: 1px 6px;
     border-radius: 5px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     font: 11px var(--mono);
     color: var(--text-2);
 }
@@ -929,7 +961,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     height: 22px;
     border-radius: 6px;
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(var(--ink-rgb), 0.03);
     color: var(--text-2);
     font-size: 11px;
     line-height: 1;
@@ -946,7 +978,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 8px 11px;
     border-radius: var(--r-sm);
     border: 1px solid var(--line-strong);
-    background: rgba(0, 0, 0, 0.3);
+    background: rgba(var(--field-rgb), 0.3);
     color: var(--text);
     font: 12px var(--font);
 }
@@ -959,8 +991,8 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 .key-name { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; margin-bottom: 6px; font-size: 12.5px; font-weight: 600; color: var(--text); }
 .key-name small { font-size: 11px; font-weight: 400; color: var(--text-3); }
 .key-msg { margin-top: 4px; font-size: 11.5px; line-height: 1.45; }
-.key-msg.ok { color: #8ff5d0; }
-.key-msg.bad { color: #ff9cab; }
+.key-msg.ok { color: var(--ok-text, #8ff5d0); }
+.key-msg.bad { color: var(--bad-text, #ff9cab); }
 .modal-foot { margin-top: 14px; font-size: 11px; line-height: 1.55; color: var(--text-4); }
 .lat-table { width: 100%; margin: 12px 0 18px; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
 .lat-table th { padding: 0 10px 8px 0; text-align: left; font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-3); }
@@ -972,7 +1004,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
 .lat-row { display: grid; grid-template-columns: minmax(0, 220px) minmax(0, 1fr) 56px; gap: 10px; align-items: center; padding: 6px 0; border-top: 1px solid var(--line); }
 .lat-label { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 11.5px; color: var(--text-2); }
 .lat-label small { margin-right: 6px; color: var(--text-4); font-variant-numeric: tabular-nums; }
-.lat-track { position: relative; height: 14px; overflow: hidden; border-radius: 4px; background: rgba(255, 255, 255, 0.04); }
+.lat-track { position: relative; height: 14px; overflow: hidden; border-radius: 4px; background: rgba(var(--ink-rgb), 0.04); }
 .lat-seg { position: absolute; top: 0; bottom: 0; min-width: 1px; }
 .lat-seg.thin { top: 4px; bottom: 4px; }
 .lat-tick { position: absolute; top: -2px; bottom: -2px; width: 2px; background: #fff; }
@@ -1095,7 +1127,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 5px 14px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.04);
+    background: rgba(var(--ink-rgb), 0.04);
     font-size: 10.5px;
     font-weight: 600;
     letter-spacing: 0.18em;
@@ -1130,7 +1162,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 9px 13px 10px;
     border: 1px solid var(--line);
     border-radius: 14px;
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(var(--ink-rgb), 0.03);
     font: 11px/1.45 var(--vit-font, 'JetBrains Mono', ui-monospace, monospace);
     letter-spacing: 0.03em;
     color: var(--text-2);
@@ -1246,7 +1278,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 12px 18px;
     border-radius: 999px;
     border: 1px solid var(--line-strong);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     color: var(--text-2);
     font: 500 13.5px var(--font);
     cursor: pointer;
@@ -1260,7 +1292,7 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     border-radius: 999px;
     border: 1px solid rgba(255, 93, 115, 0.5);
     background: rgba(255, 93, 115, 0.08);
-    color: #ff8a9b;
+    color: var(--bad-text, #ff8a9b);
     font: 600 13.5px var(--font);
     cursor: pointer;
     transition: background 0.2s;
@@ -1286,12 +1318,12 @@ html:has(#timers-panel:not([hidden]), #watches-panel:not([hidden]), #memory-pend
     padding: 18px 10px 8px 4px;
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+    scrollbar-color: var(--thumb, rgba(var(--ink-rgb), 0.08)) transparent;
     -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
             mask-image: linear-gradient(to bottom, transparent 0, #000 28px);
 }
 .chat::-webkit-scrollbar { width: 4px; }
-.chat::-webkit-scrollbar-thumb { border-radius: 2px; background: rgba(255, 255, 255, 0.08); }
+.chat::-webkit-scrollbar-thumb { border-radius: 2px; background: var(--thumb, rgba(var(--ink-rgb), 0.08)); }
 
 /* Side by side (2026-11-02): when the main area has room for both (main.side, set by the script), the voice ball and
    the talk buttons take its left and the conversation its right, so replies don't scroll up under the ball. The
@@ -1420,7 +1452,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 14px 16px;
     border-radius: var(--r-lg);
     border: 1px solid var(--line);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    background: linear-gradient(180deg, rgba(var(--ink-rgb), 0.05), rgba(var(--ink-rgb), 0.02));
     box-shadow: var(--shadow-sm);
     font-size: 13px;
     line-height: 1.55;
@@ -1521,7 +1553,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 4px 11px 4px 4px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     color: var(--text-2);
     text-decoration: none;
     white-space: nowrap;
@@ -1547,7 +1579,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 4px 8px 4px 6px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     color: var(--text-2);
     font-size: 11.5px;
     white-space: nowrap;
@@ -1565,7 +1597,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 0 2px;
 }
 .file-chip .fc-x:hover { color: var(--text); }
-.file-chip.uploading { opacity: 0.6; }
+.file-chip.uploading { opacity: max(0.6, var(--fade-floor, 0)); }
 .attach-btn {
     flex-shrink: 0;
     width: 36px;
@@ -1581,7 +1613,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     transition: color 0.2s, background 0.2s;
 }
 .attach-btn svg { width: 18px; height: 18px; }
-.attach-btn:hover, .attach-btn.has { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.attach-btn:hover, .attach-btn.has { color: var(--text); background: rgba(var(--ink-rgb), 0.06); }
 .attach-btn:disabled { opacity: 0.5; cursor: default; }
 .drop-hint {
     display: none;
@@ -1617,9 +1649,9 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     border: 1px solid rgba(255, 190, 85, 0.25);
     background: rgba(255, 190, 85, 0.08);
     font-size: 11px;
-    color: #ffd38a;
+    color: var(--warn-text, #ffd38a);
 }
-.message.interrupted .msg-bubble { opacity: 0.75; border-style: dashed; }
+.message.interrupted .msg-bubble { opacity: max(0.75, var(--fade-floor, 0)); border-style: dashed; }
 .interrupted-note { padding: 0 4px; font-size: 11px; color: var(--amber); }
 
 .chat-divider {
@@ -1643,7 +1675,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 6px 14px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.03);
+    background: rgba(var(--ink-rgb), 0.03);
     color: var(--text-3);
     font: 500 11.5px var(--font);
     cursor: pointer;
@@ -1670,7 +1702,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 7px 13px;
     border-radius: 999px;
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     color: var(--text-2);
     font: 500 12.5px var(--font);
     cursor: pointer;
@@ -1748,7 +1780,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 9px 12px;
     border-radius: var(--r);
     border: 1px solid var(--line);
-    background: rgba(255, 255, 255, 0.035);
+    background: rgba(var(--ink-rgb), 0.035);
     color: var(--text);
     font: 500 13px var(--font);
     text-align: left;
@@ -1771,7 +1803,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 8px 10px 8px 32px;
     border-radius: 10px;
     border: 1px solid var(--line);
-    background: rgba(0, 0, 0, 0.22) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237d84a0' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 10px center;
+    background: rgba(var(--field-rgb), 0.22) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%237d84a0' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='7'/%3E%3Cpath d='m20 20-3.5-3.5'/%3E%3C/svg%3E") no-repeat 10px center;
     color: var(--text);
     font: 12.5px var(--font);
     outline: none;
@@ -1784,7 +1816,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     padding: 0 4px;
     overflow-y: auto;
     scrollbar-width: thin;
-    scrollbar-color: rgba(255, 255, 255, 0.08) transparent;
+    scrollbar-color: var(--thumb, rgba(var(--ink-rgb), 0.08)) transparent;
 }
 .chats-group {
     padding: 14px 10px 6px;
@@ -1805,7 +1837,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
 }
-.chat-item:hover { background: rgba(255, 255, 255, 0.045); color: var(--text); }
+.chat-item:hover { background: rgba(var(--ink-rgb), 0.045); color: var(--text); }
 .chat-item.active { background: var(--grad-soft); color: var(--text); box-shadow: inset 2px 0 0 var(--violet); }
 .chat-item .chat-title { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; outline: none; }
 .chat-item .chat-title.untitled { font-style: italic; color: var(--text-3); }
@@ -1824,7 +1856,7 @@ html:not([data-theme="orbit"]) .main.side .orb-wrapper { zoom: 1.35; }
 .chat-item:hover button,
 .chat-item button:focus-visible,
 .chat-item .pin-btn.pinned { opacity: 1; }
-.chat-item button:hover { color: var(--text); background: rgba(255, 255, 255, 0.06); }
+.chat-item button:hover { color: var(--text); background: rgba(var(--ink-rgb), 0.06); }
 .chat-item .del-chat.confirm { opacity: 1; color: var(--red); font-size: 10.5px; font-weight: 600; }
 @media (hover: none) { .chat-item button { opacity: 1; } }
 .chats-empty { padding: 10px; font-size: 12px; font-style: italic; color: var(--text-4); }
@@ -1976,7 +2008,7 @@ html:is([data-theme="glass"], [data-theme="orbit"]) header h1 { background: none
 html:is([data-theme="glass"], [data-theme="orbit"]) .brand-mark,
 html:is([data-theme="glass"], [data-theme="orbit"]) .message.javid .msg-who::before {
     background: radial-gradient(circle at 34% 28%, var(--orb-1) 0%, var(--orb-2) 12%, var(--orb-3) 38%, var(--orb-4) 72%, var(--orb-5) 100%);
-    box-shadow: inset 0 -2px 5px rgba(var(--orb-shade-rgb), 0.5), 0 0 0 1px rgba(255, 255, 255, 0.1);
+    box-shadow: inset 0 -2px 5px rgba(var(--orb-shade-rgb), 0.5), 0 0 0 1px rgba(var(--ink-rgb), 0.1);
 }
 html:is([data-theme="glass"], [data-theme="orbit"]) :is(.panel-title, .mem-section, .chats-group, .prov-kind, .ctl-block h3) {
     font-size: 11px;
@@ -2012,7 +2044,7 @@ html:is([data-theme="glass"], [data-theme="orbit"]) .skill-item.running {
     animation: none;
 }
 html:is([data-theme="glass"], [data-theme="orbit"]) .lang-toggle button.on {
-    background: rgba(255, 255, 255, 0.14);
+    background: rgba(var(--ink-rgb), 0.14);
     color: var(--text);
     box-shadow: inset 0 0 0 1px rgba(var(--violet-rgb), 0.5);
 }
@@ -2081,8 +2113,8 @@ html:is([data-theme="glass"], [data-theme="orbit"]) .ring { box-shadow: 0 16px 5
 
 /* — Readable when dimmed: past events and switched-off providers keep 4.5:1 — */
 html:is([data-theme="glass"], [data-theme="orbit"]) .event-item.past { opacity: 1; color: var(--label); }
-html:is([data-theme="glass"], [data-theme="orbit"]) .event-item.past .event-time { background: rgba(255, 255, 255, 0.05); color: var(--label); }
-html:is([data-theme="glass"], [data-theme="orbit"]) :is(.model-card.missing, .model-card.disabled, .model-card.nokey) { opacity: 0.8; }
+html:is([data-theme="glass"], [data-theme="orbit"]) .event-item.past .event-time { background: rgba(var(--ink-rgb), 0.05); color: var(--label); }
+html:is([data-theme="glass"], [data-theme="orbit"]) :is(.model-card.missing, .model-card.disabled, .model-card.nokey) { opacity: max(0.8, var(--fade-floor, 0)); }
 
 /* — Dialogs: a solid card over a dark scrim (no blur: only the panels above have one) — */
 html:is([data-theme="glass"], [data-theme="orbit"]) .modal { background: var(--scrim); -webkit-backdrop-filter: none; backdrop-filter: none; }
@@ -2100,6 +2132,19 @@ html:is([data-theme="glass"], [data-theme="orbit"]) :is(.text-input, .chats-sear
     html:is([data-theme="glass"], [data-theme="orbit"]) *::before,
     html:is([data-theme="glass"], [data-theme="orbit"]) *::after { animation: none !important; transition: none !important; }
 }
+
+/* — A light colour theme (themes.py: a background from about #C4C4C4 up; the page sets html[data-tone="light"]). Its
+   variables already turn the faint fills and edges above to dark ink (--ink-rgb, --field-rgb); this block gives the
+   browser's own controls their light look, softens the shadows the rules above make black, and colours the Hifz mark
+   in a gold that shows on light glass. Nothing here applies to a dark theme or a look. — */
+html[data-tone="light"] { color-scheme: light; }
+html[data-tone="light"] .sidebar { box-shadow: 0 24px 60px -16px var(--drop), inset 0 1px 0 rgba(255, 255, 255, 0.6); }
+html[data-tone="light"] :is(.theme-editor, .modal-card) { box-shadow: 0 24px 60px -12px var(--drop); }
+html[data-tone="light"] .hifz-btn svg { color: var(--hifz-mark); }
+html[data-tone="light"] .hifz-btn .hz-dot-due { background: var(--hifz-mark); box-shadow: none; }
+html[data-tone="light"] .panels-btn::after { box-shadow: 0 0 0 2px var(--bg); }
+/* A palette (roles) or light theme: the chats search's hint in the theme's muted text (the browser's grey elsewhere) */
+html[data-roles] .chats-search::placeholder { color: var(--label); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    ORBIT (the default since 2026-11-02): a sci-fi look on Glass's structure.
@@ -3015,6 +3060,33 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     --hz-ar: 'Amiri', 'Amiri Quran', 'Geeza Pro', 'Noto Naskh Arabic', serif;
     --hz-head: 'Amiri', Georgia, 'Times New Roman', serif;
     --hz-pattern: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 56 56'%3E%3Cg fill='none' stroke='%23E9C46A' stroke-width='0.8' stroke-opacity='0.13'%3E%3Cpath d='M28 11L33 16L40 16L40 23L45 28L40 33L40 40L33 40L28 45L23 40L16 40L16 33L11 28L16 23L16 16L23 16Z'/%3E%3Cpath d='M0 -17L5 -12L12 -12L12 -5L17 0L12 5L12 12L5 12L0 17L-5 12L-12 12L-12 5L-17 0L-12 -5L-12 -12L-5 -12Z'/%3E%3Cpath d='M0 39L5 44L12 44L12 51L17 56L12 61L12 68L5 68L0 73L-5 68L-12 68L-12 61L-17 56L-12 51L-12 44L-5 44Z'/%3E%3Cpath d='M56 -17L61 -12L68 -12L68 -5L73 0L68 5L68 12L61 12L56 17L51 12L44 12L44 5L39 0L44 -5L44 -12L51 -12Z'/%3E%3Cpath d='M56 39L61 44L68 44L68 51L73 56L68 61L68 68L61 68L56 73L51 68L44 68L44 61L39 56L44 51L44 44L51 44Z'/%3E%3Cpath d='M28 20.4L30.2 22.6L33.4 22.6L33.4 25.8L35.6 28L33.4 30.2L33.4 33.4L30.2 33.4L28 35.6L25.8 33.4L22.6 33.4L22.6 30.2L20.4 28L22.6 25.8L22.6 22.6L25.8 22.6Z'/%3E%3Cpath d='M28 0V11M28 45V56M0 28H11M45 28H56'/%3E%3C/g%3E%3C/svg%3E");
+    /* What the rules below once wrote as fixed colours, named so a colour theme can recolour the page (themes.py's
+       HIFZ_CLASSIC holds the same values: a test keeps the two in step). --hz-over-text is "past its cycle" as text,
+       a shade lighter than the stars' --hz-over so it reads at 4.5:1 on the cards. */
+    --hz-gold-rgb: 233, 196, 106;
+    --hz-shade-rgb: 2, 19, 15;
+    --hz-deep-rgb: 4, 33, 26;
+    --hz-drop-rgb: 0, 0, 0;
+    --hz-ivory-rgb: 246, 238, 216;
+    --hz-star-ink: #1E1606;
+    --hz-star-ink-rgb: 30, 22, 6;
+    --hz-weak-rgb: 255, 122, 107;
+    --hz-weak-text: #FFB2A8;
+    --hz-over-text: #E18D62;
+    --hz-done: #B9C7BB;
+    --hz-btn-1: #F1D27F;
+    --hz-btn-2: #D6A84C;
+    --hz-view-1: #062B21;
+    --hz-view-2: #031914;
+    --hz-view-3: #02130F;
+    --hz-dash-1: #0B3F31;
+    --hz-bar-1: #0C4334;
+    --hz-bar-2: #052A20;
+    --hz-ring-1: #0E4A39;
+    --hz-ring-2: #05281F;
+    --hz-drawer: #03201A;
+    --hz-hl-edge: rgba(233, 196, 106, 0.5);
+    --hz-today-star: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill='%23E9C46A' d='M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z'/%3E%3C/svg%3E");
     color: var(--hz-ivory);
     font-family: var(--font, Inter, system-ui, sans-serif);
 }
@@ -3022,6 +3094,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-scope button { font-family: inherit; }
 .hz-scope :focus-visible { outline: 2px solid var(--hz-gold); outline-offset: 2px; }
 .hz-star-svg path { fill: currentColor; }
+.hz-pl-art circle, .hz-ring-top circle { fill: var(--hz-bg); }      /* the centre of the player's and reminder's star */
 
 /* the header's button */
 .hifz-btn { display: inline-flex; align-items: center; gap: 6px; }
@@ -3036,8 +3109,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     padding: 14px 14px 12px;
     border-radius: 16px;
     border: 1px solid var(--hz-line-2);
-    background: var(--hz-pattern) center / 56px, linear-gradient(160deg, #0B3F31, #04211A 70%);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(233, 196, 106, 0.12);
+    background: var(--hz-pattern) center / 56px, linear-gradient(160deg, var(--hz-dash-1), var(--hz-bg) 70%);
+    box-shadow: 0 10px 30px rgba(var(--hz-drop-rgb), 0.35), inset 0 1px 0 rgba(var(--hz-gold-rgb), 0.12);
     overflow: hidden;
 }
 .hz-dash-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
@@ -3045,14 +3118,14 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-dash-head .hz-k { font-size: 10.5px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-muted); }
 .hz-dash-head button {
     margin-left: auto; padding: 4px 11px; border-radius: 999px; border: 1px solid var(--hz-line-2);
-    background: rgba(233, 196, 106, 0.1); color: var(--hz-gold); font-size: 11px; font-weight: 600; cursor: pointer;
+    background: rgba(var(--hz-gold-rgb), 0.1); color: var(--hz-gold); font-size: 11px; font-weight: 600; cursor: pointer;
 }
-.hz-dash-head button:hover { background: rgba(233, 196, 106, 0.2); }
+.hz-dash-head button:hover { background: rgba(var(--hz-gold-rgb), 0.2); }
 .hz-dash-today { font: 700 17px var(--hz-head); color: var(--hz-ivory); }
 .hz-dash-span { margin-top: 2px; font-size: 12px; color: var(--hz-text-2); }
 .hz-mini { display: grid; grid-template-columns: repeat(10, 1fr); gap: 3px; margin: 10px 0 8px; }
 .hz-mini.m7 { grid-template-columns: repeat(7, 1fr); }
-.hz-mini i { height: 9px; border-radius: 2px; background: rgba(233, 196, 106, 0.08); outline: 1px solid var(--hz-line); }
+.hz-mini i { height: 9px; border-radius: 2px; background: rgba(var(--hz-gold-rgb), 0.08); outline: 1px solid var(--hz-line); }
 .hz-mini i.s-fresh { background: var(--hz-fresh); outline: none; }
 .hz-mini i.s-steady { background: var(--hz-steady); outline: none; }
 .hz-mini i.s-soon { background: var(--hz-soon); outline: none; }
@@ -3071,40 +3144,68 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     display: flex;
     flex-direction: column;
     overflow: hidden;
-    background: var(--hz-pattern) center / 56px, radial-gradient(1100px 520px at 50% -10%, rgba(233, 196, 106, 0.16), transparent 70%),
-                linear-gradient(180deg, #062B21, #031914 60%, #02130F);
+    background: var(--hz-pattern) center / 56px, radial-gradient(1100px 520px at 50% -10%, rgba(var(--hz-gold-rgb), 0.16), transparent 70%),
+                linear-gradient(180deg, var(--hz-view-1), var(--hz-view-2) 60%, var(--hz-view-3));
     animation: hz-in 0.35s ease-out;
 }
 .hz-view[hidden] { display: none; }
 @keyframes hz-in { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: none; } }
-.hz-top { flex: none; border-bottom: 1px solid var(--hz-line); background: rgba(2, 19, 15, 0.55); }
+.hz-top { flex: none; border-bottom: 1px solid var(--hz-line); background: rgba(var(--hz-shade-rgb), 0.55); }
 .hz-top .hz-head { max-width: 1480px; margin: 0 auto; padding: 12px 22px; }
 .hz-body { flex: 1; min-height: 0; display: flex; }
 .hz-pane { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; }
 .hz-pane[hidden] { display: none; }
 .hz-inner { max-width: 1040px; margin: 0 auto; padding: 18px 22px 28px; }
 .hz-dock { flex: none; display: flex; justify-content: center; padding: 10px 18px 12px; border-top: 1px solid var(--hz-line);
-           background: rgba(2, 19, 15, 0.7); }
+           background: rgba(var(--hz-shade-rgb), 0.7); }
 .hz-dock:not(:has(> .hz-player:not([hidden]))) { display: none; }
 .hz-head { display: flex; align-items: center; gap: 16px; }
 .hz-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-left: auto; border-radius: 999px; border: 1px solid var(--hz-line-2);
-           background: rgba(4, 33, 26, 0.6); }
+           background: rgba(var(--hz-deep-rgb), 0.6); }
 .hz-tabs button { padding: 8px 16px; border-radius: 999px; border: none; background: none; color: var(--hz-text-2);
                   font-size: 13.5px; font-weight: 600; cursor: pointer; }
 .hz-tabs button:hover { color: var(--hz-ivory); }
-.hz-tabs button[aria-selected="true"] { background: linear-gradient(135deg, #F1D27F, #D6A84C); color: var(--hz-ink); }
-.hz-mark { width: 54px; height: 54px; color: var(--hz-gold); filter: drop-shadow(0 0 14px rgba(233, 196, 106, 0.45)); }
+.hz-tabs button[aria-selected="true"] { background: linear-gradient(135deg, var(--hz-btn-1), var(--hz-btn-2)); color: var(--hz-ink); }
+.hz-mark { width: 54px; height: 54px; color: var(--hz-gold); filter: drop-shadow(0 0 14px rgba(var(--hz-gold-rgb), 0.45)); }
 .hz-mark svg { width: 100%; height: 100%; }
-.hz-mark .hz-mark-in { fill: #04211A; }
+.hz-mark .hz-mark-in { fill: var(--hz-bg); }
 .hz-titles { flex: 1; min-width: 0; }
 .hz-title { margin: 0; display: flex; align-items: baseline; gap: 12px; font: 700 30px var(--hz-head); color: var(--hz-ivory); letter-spacing: 0.01em; }
 .hz-title [lang="ar"] { font-size: 34px; color: var(--hz-gold); }
 .hz-line { margin: 2px 0 0; font: italic 400 15px var(--hz-head); color: var(--hz-text-2); }
 .hz-x {
-    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.7);
+    width: 38px; height: 38px; border-radius: 50%; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.7);
     color: var(--hz-ivory); font-size: 16px; cursor: pointer;
 }
 .hz-x:hover { border-color: var(--hz-gold); color: var(--hz-gold); }
+/* the Hifz page's own theme (hifzTheme in the script; separate from the main page's): the header's button, showing the
+   theme's colours, and the list it opens */
+.hz-theme-pick { position: relative; flex-shrink: 0; }
+.hz-theme-btn {
+    display: inline-flex; align-items: center; gap: 8px; height: 38px; padding: 0 14px 0 11px; border-radius: 999px;
+    border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.7); color: var(--hz-ivory);
+    font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.hz-theme-btn:hover, .hz-theme-btn[aria-expanded="true"] { border-color: var(--hz-gold); color: var(--hz-gold); }
+.hz-strip { display: inline-flex; flex-shrink: 0; width: 40px; height: 14px; border-radius: 4px; overflow: hidden; box-shadow: 0 0 0 1px var(--hz-line-2); }
+.hz-strip i { flex: 1; }
+.hz-theme-menu {
+    position: absolute; top: calc(100% + 8px); right: 0; z-index: 20; width: 264px; max-height: min(70vh, 560px);
+    overflow-y: auto; padding: 6px; border-radius: 16px; border: 1px solid var(--hz-line-2); background: var(--hz-drawer);
+    box-shadow: 0 18px 40px rgba(var(--hz-drop-rgb), 0.45);
+}
+.hz-theme-menu[hidden] { display: none; }
+.hz-theme-group { padding: 8px 8px 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-gold); }
+.hz-theme-row {
+    display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border: none; border-radius: 10px;
+    background: none; color: var(--hz-text-2); font-size: 13px; font-weight: 500; text-align: left; cursor: pointer;
+}
+.hz-theme-row:hover { background: rgba(var(--hz-gold-rgb), 0.08); color: var(--hz-ivory); }
+.hz-theme-row[aria-pressed="true"] { color: var(--hz-ivory); font-weight: 700; }
+.hz-theme-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hz-theme-row .tick { color: var(--hz-gold); visibility: hidden; }
+.hz-theme-row[aria-pressed="true"] .tick { visibility: visible; }
+.hz-theme-note { padding: 6px 8px 4px; font-size: 11px; line-height: 1.45; color: var(--hz-muted); }
 .hz-rule { height: 14px; margin: 16px 0 18px; position: relative;
     background: linear-gradient(90deg, transparent, var(--hz-line-2) 46%, transparent 46%, transparent 54%, var(--hz-line-2) 54%, transparent) center / 100% 1px no-repeat; }
 .hz-rule::after { content: '۞'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -54%); color: var(--hz-gold); font-size: 15px; line-height: 1; }
@@ -3115,40 +3216,40 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     border-radius: 20px;
     border: 1px solid var(--hz-line-2);
     background: linear-gradient(160deg, var(--hz-card-2), var(--hz-card));
-    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(233, 196, 106, 0.14);
+    box-shadow: 0 18px 40px rgba(var(--hz-drop-rgb), 0.35), inset 0 1px 0 rgba(var(--hz-gold-rgb), 0.14);
 }
 .hz-today { padding: 22px 24px 20px; overflow: hidden; }
 .hz-today::before {      /* a faint star behind the portion */
     content: ''; position: absolute; right: -40px; top: -40px; width: 220px; height: 220px; opacity: 0.08;
-    background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath fill='%23E9C46A' d='M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z'/%3E%3C/svg%3E");
+    background: center / contain no-repeat var(--hz-today-star);
 }
 .hz-k2 { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); }
 .hz-today-n { margin-top: 6px; font: 700 40px/1.05 var(--hz-head); color: var(--hz-ivory); }
 .hz-today-n small { font-size: 18px; color: var(--hz-text-2); font-weight: 400; }
 .hz-today-span { margin-top: 6px; font-size: 15px; color: var(--hz-text-2); }
 .hz-today-span [lang="ar"] { font-size: 19px; color: var(--hz-gold); margin: 0 4px; }
-.hz-today-late { margin-top: 6px; font-size: 12.5px; color: var(--hz-over); font-weight: 600; }
+.hz-today-late { margin-top: 6px; font-size: 12.5px; color: var(--hz-over-text); font-weight: 600; }
 .hz-today-weak { margin-top: 4px; font-size: 12.5px; color: var(--hz-text-2); }
 .hz-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 18px; }
 .hz-btn {
     display: inline-flex; align-items: center; gap: 8px; padding: 10px 18px; border-radius: 999px; cursor: pointer;
-    border: 1px solid var(--hz-gold); background: linear-gradient(135deg, #F1D27F, #D6A84C); color: var(--hz-ink);
-    font-size: 14px; font-weight: 700; box-shadow: 0 6px 18px rgba(233, 196, 106, 0.25);
+    border: 1px solid var(--hz-gold); background: linear-gradient(135deg, var(--hz-btn-1), var(--hz-btn-2)); color: var(--hz-ink);
+    font-size: 14px; font-weight: 700; box-shadow: 0 6px 18px rgba(var(--hz-gold-rgb), 0.25);
 }
 .hz-btn:hover { filter: brightness(1.06); }
 .hz-btn svg { width: 14px; height: 14px; }
-.hz-btn.ghost { background: rgba(233, 196, 106, 0.08); color: var(--hz-gold); box-shadow: none; border-color: var(--hz-line-2); }
+.hz-btn.ghost { background: rgba(var(--hz-gold-rgb), 0.08); color: var(--hz-gold); box-shadow: none; border-color: var(--hz-line-2); }
 .hz-log { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .hz-log span { font-size: 12px; color: var(--hz-muted); margin-right: 2px; }
 .hz-log button {
-    padding: 8px 13px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.55);
+    padding: 8px 13px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.55);
     color: var(--hz-ivory); font-size: 13px; font-weight: 600; cursor: pointer;
 }
 .hz-log button:hover { border-color: var(--hz-gold); }
 .hz-log button[data-st="strong"] { color: var(--hz-gold); }
-.hz-log button[data-st="weak"] { color: #FFB2A8; }
+.hz-log button[data-st="weak"] { color: var(--hz-weak-text); }
 .hz-done { display: flex; align-items: center; gap: 10px; margin-top: 10px; font: 700 26px var(--hz-head); color: var(--hz-gold); }
-.hz-done svg { width: 30px; height: 30px; flex-shrink: 0; filter: drop-shadow(0 0 8px rgba(233, 196, 106, 0.5)); }
+.hz-done svg { width: 30px; height: 30px; flex-shrink: 0; filter: drop-shadow(0 0 8px rgba(var(--hz-gold-rgb), 0.5)); }
 .hz-done svg path { fill: currentColor; }
 
 .hz-stats { display: grid; grid-template-rows: repeat(3, 1fr); gap: 12px; }
@@ -3173,7 +3274,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-map.m7 { grid-template-columns: repeat(7, minmax(0, 1fr)); }
 .hz-star {
     position: relative; aspect-ratio: 1; padding: 0; border: none; background: none; cursor: pointer;
-    color: rgba(233, 196, 106, 0.07); transition: transform 0.15s;
+    color: rgba(var(--hz-gold-rgb), 0.07); transition: transform 0.15s;
 }
 .hz-star:hover { transform: scale(1.07); }
 .hz-star svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
@@ -3181,13 +3282,13 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-star .hz-n { position: relative; display: grid; place-items: center; height: 100%; font: 700 clamp(13px, 1.6vw, 18px) var(--hz-head); color: var(--hz-ivory); }
 .hz-star.s-fresh { color: var(--hz-fresh); } .hz-star.s-steady { color: var(--hz-steady); }
 .hz-star.s-soon { color: var(--hz-soon); } .hz-star.s-over { color: var(--hz-over); }
-.hz-star:is(.s-fresh, .s-steady, .s-soon, .s-over) svg path { stroke: rgba(30, 22, 6, 0.25); }
-.hz-star:is(.s-fresh, .s-steady, .s-soon, .s-over) .hz-n { color: var(--hz-ink); }
-.hz-star .hz-w { position: absolute; right: 6%; top: 6%; width: 22%; height: 22%; border-radius: 50%; background: var(--hz-weak); border: 2px solid #04211A; }
-.hz-star.today svg { filter: drop-shadow(0 0 7px rgba(246, 238, 216, 0.9)); }
+.hz-star:is(.s-fresh, .s-steady, .s-soon, .s-over) svg path { stroke: rgba(var(--hz-star-ink-rgb), 0.25); }
+.hz-star:is(.s-fresh, .s-steady, .s-soon, .s-over) .hz-n { color: var(--hz-star-ink); }
+.hz-star .hz-w { position: absolute; right: 6%; top: 6%; width: 22%; height: 22%; border-radius: 50%; background: var(--hz-weak); border: 2px solid var(--hz-bg); }
+.hz-star.today svg { filter: drop-shadow(0 0 7px rgba(var(--hz-ivory-rgb), 0.9)); }
 .hz-star.today svg path { stroke: var(--hz-ivory); stroke-width: 4; }
 .hz-star.today::after {
-    content: ''; position: absolute; inset: -6%; border-radius: 50%; border: 1.5px dashed rgba(246, 238, 216, 0.55);
+    content: ''; position: absolute; inset: -6%; border-radius: 50%; border: 1.5px dashed rgba(var(--hz-ivory-rgb), 0.55);
     animation: hz-turn 18s linear infinite;
 }
 @keyframes hz-turn { to { transform: rotate(360deg); } }
@@ -3201,12 +3302,12 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 
 .hz-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .hz-list { list-style: none; margin: 0; padding: 0; }
-.hz-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(233, 196, 106, 0.1); font-size: 13.5px; color: var(--hz-text-2); }
+.hz-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid rgba(var(--hz-gold-rgb), 0.1); font-size: 13.5px; color: var(--hz-text-2); }
 .hz-list li:last-child { border-bottom: none; }
 .hz-list li b { color: var(--hz-ivory); font-weight: 600; }
-.hz-list .hz-pill { margin-left: auto; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(233, 196, 106, 0.12); color: var(--hz-gold); }
-.hz-list .hz-pill.weak { background: rgba(255, 122, 107, 0.16); color: #FFB2A8; }
-.hz-list .hz-pill.strong { background: rgba(233, 196, 106, 0.22); }
+.hz-list .hz-pill { margin-left: auto; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; background: rgba(var(--hz-gold-rgb), 0.12); color: var(--hz-gold); }
+.hz-list .hz-pill.weak { background: rgba(var(--hz-weak-rgb), 0.16); color: var(--hz-weak-text); }
+.hz-list .hz-pill.strong { background: rgba(var(--hz-gold-rgb), 0.2); }
 .hz-empty { color: var(--hz-muted); font-size: 13px; }
 .hz-foot { margin-top: 18px; text-align: center; font-size: 11.5px; color: var(--hz-muted); line-height: 1.6; }
 .hz-foot a { color: var(--hz-gold); }
@@ -3219,8 +3320,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-player {
     position: relative; display: flex; flex-direction: column; gap: 6px; width: min(760px, 100%); padding: 9px 12px 8px 10px;
     border-radius: 18px; border: 1px solid var(--hz-line-2);
-    background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0C4334, #052A20);
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 0 30px rgba(233, 196, 106, 0.10);
+    background: var(--hz-pattern) center / 56px, linear-gradient(135deg, var(--hz-bar-1), var(--hz-bar-2));
+    box-shadow: 0 10px 30px rgba(var(--hz-drop-rgb), 0.35), 0 0 30px rgba(var(--hz-gold-rgb), 0.10);
 }
 .hz-player[hidden] { display: none; }
 .hz-pl-main { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -3232,7 +3333,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-pl-title [lang="ar"] { font-size: 17px; color: var(--hz-gold); font-weight: 400; }
 .hz-pl-sub { margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--hz-text-2); }
 .hz-pl-sub .rep { color: var(--hz-gold); font-weight: 700; }
-.hz-pl-prog { height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(233, 196, 106, 0.15); overflow: hidden; }
+.hz-pl-prog { height: 3px; margin-top: 6px; border-radius: 2px; background: rgba(var(--hz-gold-rgb), 0.15); overflow: hidden; }
 .hz-pl-prog span { display: block; height: 100%; width: 0; background: var(--hz-gold); transition: width 0.4s; }
 .hz-pl-ctl { display: flex; gap: 4px; flex-shrink: 0; }
 .hz-pl-ctl button {
@@ -3250,7 +3351,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 /* the full panel (Read): the title and controls stacked, then the reciters and the repeat */
 .hz-player.full { width: 100%; padding: 0; gap: 16px; border: none; border-radius: 0; background: none; box-shadow: none; }
 .hz-player.full .hz-pl-main { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 10px 12px; padding: 14px;
-    border-radius: 18px; border: 1px solid var(--hz-line-2); background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0C4334, #052A20); }
+    border-radius: 18px; border: 1px solid var(--hz-line-2); background: var(--hz-pattern) center / 56px, linear-gradient(135deg, var(--hz-bar-1), var(--hz-bar-2)); }
 .hz-player.full .hz-pl-ctl { grid-column: 1 / -1; justify-content: center; gap: 8px; }
 .hz-player.full .hz-pl-ctl button { width: 40px; height: 40px; }
 .hz-player.full .hz-pl-ctl #rp-play { width: 50px; height: 50px; }
@@ -3260,9 +3361,9 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-player.full .hz-pl-credit { align-self: auto; text-align: center; }
 .rp-reciters { display: flex; flex-direction: column; gap: 4px; }
 .rp-r { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 7px 8px 7px 12px;
-        border-radius: 12px; border: 1px solid transparent; background: rgba(4, 33, 26, 0.5); cursor: pointer; color: var(--hz-ivory); text-align: left; }
+        border-radius: 12px; border: 1px solid transparent; background: rgba(var(--hz-deep-rgb), 0.5); cursor: pointer; color: var(--hz-ivory); text-align: left; }
 .rp-r:hover { border-color: var(--hz-line-2); }
-.rp-r[aria-selected="true"] { border-color: var(--hz-gold); background: rgba(233, 196, 106, 0.12); }
+.rp-r[aria-selected="true"] { border-color: var(--hz-gold); background: rgba(var(--hz-gold-rgb), 0.12); }
 .rp-r b { display: block; font-size: 13px; font-weight: 600; }
 .rp-r small { display: block; margin-top: 1px; font-size: 11px; color: var(--hz-muted); }
 .rp-r small i { font-style: normal; color: var(--hz-gold); }
@@ -3271,7 +3372,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .rp-pv svg { width: 12px; height: 12px; }
 .rp-pv.on { background: var(--hz-gold); color: var(--hz-ink); }
 .rp-rep { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12.5px; color: var(--hz-text-2); }
-.rp-rep input { width: 58px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.7);
+.rp-rep input { width: 58px; padding: 6px 8px; border-radius: 10px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.7);
                 color: var(--hz-ivory); font-size: 13px; }
 .rp-rep .hz-btn { padding: 7px 14px; font-size: 12.5px; }
 .rp-idle { font-size: 13px; color: var(--hz-text-2); line-height: 1.5; }
@@ -3280,14 +3381,14 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-pane { --qr-ar: 'Amiri Quran', 'Amiri', 'Geeza Pro', serif; position: relative; flex: 1; min-width: 0; min-height: 0;
            display: grid; grid-template-columns: 300px minmax(0, 1fr) 340px; }
 .qr-pane[hidden] { display: none; }
-.qr-index { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--hz-line); background: rgba(2, 19, 15, 0.5); }
+.qr-index { min-width: 0; min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--hz-line); background: rgba(var(--hz-shade-rgb), 0.5); }
 .qr-search { padding: 12px 12px 8px; }
-.qr-search input { width: 100%; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.75);
+.qr-search input { width: 100%; padding: 10px 14px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.75);
                    color: var(--hz-ivory); font-size: 13.5px; }
 .qr-search input::placeholder { color: var(--hz-muted); }
 .qr-cont { display: flex; flex-direction: column; gap: 6px; padding: 0 12px 8px; }
 .qr-cont:empty { display: none; }
-.qr-cont button { text-align: left; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--hz-line-2); background: rgba(233, 196, 106, 0.07);
+.qr-cont button { text-align: left; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-gold-rgb), 0.07);
                   color: var(--hz-ivory); font-size: 12.5px; cursor: pointer; }
 .qr-cont button:hover { border-color: var(--hz-gold); }
 .qr-cont small { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-gold); }
@@ -3298,8 +3399,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 8px 12px; }
 .qr-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 10px; width: 100%; padding: 7px 8px;
           border: none; border-radius: 12px; background: none; color: var(--hz-ivory); text-align: left; cursor: pointer; }
-.qr-row:hover { background: rgba(233, 196, 106, 0.07); }
-.qr-row.on { background: rgba(233, 196, 106, 0.14); }
+.qr-row:hover { background: rgba(var(--hz-gold-rgb), 0.07); }
+.qr-row.on { background: rgba(var(--hz-gold-rgb), 0.14); }
 .qr-row .n { position: relative; display: grid; place-items: center; width: 32px; height: 32px; font-size: 11.5px; font-weight: 700; color: var(--hz-gold); }
 .qr-row .n svg { position: absolute; inset: 0; width: 100%; height: 100%; }
 .qr-row .n svg path { fill: none; stroke: var(--hz-line-2); stroke-width: 4; }
@@ -3310,8 +3411,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-none { padding: 14px; font-size: 13px; color: var(--hz-muted); }
 .qr-reader { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .qr-bar { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 18px; border-bottom: 1px solid var(--hz-line);
-          background: rgba(2, 19, 15, 0.4); }
-.qr-idx-btn { display: none; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(4, 33, 26, 0.6);
+          background: rgba(var(--hz-shade-rgb), 0.4); }
+.qr-idx-btn { display: none; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.6);
               color: var(--hz-ivory); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .qr-title { min-width: 0; margin-right: auto; font: 700 18px var(--hz-head); color: var(--hz-ivory); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qr-title [lang="ar"] { margin-left: 8px; font-family: var(--qr-ar); font-size: 21px; font-weight: 400; color: var(--hz-gold); }
@@ -3320,7 +3421,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-seg { display: inline-flex; border: 1px solid var(--hz-line-2); border-radius: 999px; overflow: hidden; }
 .qr-seg button { padding: 6px 11px; border: none; background: none; color: var(--hz-text-2); font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .qr-seg button + button { border-left: 1px solid var(--hz-line); }
-.qr-seg button[aria-pressed="true"] { background: rgba(233, 196, 106, 0.2); color: var(--hz-gold); }
+.qr-seg button[aria-pressed="true"] { background: rgba(var(--hz-gold-rgb), 0.2); color: var(--hz-gold); }
 .qr-chip { padding: 6px 12px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: none; color: var(--hz-text-2);
            font-size: 12.5px; font-weight: 600; cursor: pointer; }
 .qr-chip[aria-pressed="true"] { border-color: var(--hz-gold); background: var(--hz-gold); color: var(--hz-ink); }
@@ -3340,10 +3441,10 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-surah small { display: block; margin-top: 2px; font-size: 11.5px; color: var(--hz-muted); }
 .qr-basmala { margin: 6px 0 4px; padding: 6px 10px; border-radius: 14px; text-align: center; font-family: var(--qr-ar);
               font-size: calc(var(--qa-size) * 0.9); line-height: 2; color: var(--hz-gold); transition: background 0.25s; }
-.qr-basmala.now { background: rgba(233, 196, 106, 0.14); }
+.qr-basmala.now { background: rgba(var(--hz-gold-rgb), 0.14); }
 .qa { position: relative; margin: 2px 0; padding: 10px 16px; border-radius: 16px; border: 1px solid transparent; cursor: pointer;
       transition: background 0.25s, border-color 0.25s; }
-.qa:hover { background: rgba(233, 196, 106, 0.05); }
+.qa:hover { background: rgba(var(--hz-gold-rgb), 0.05); }
 .qa-ar { font-family: var(--qr-ar); font-size: var(--qa-size); line-height: 2.15; direction: rtl; text-align: right; color: var(--hz-ivory); }
 .qa-ar .w { transition: color 0.15s, text-shadow 0.15s; }
 .qa-end { margin-inline: 0.2em; color: var(--hz-gold); white-space: nowrap; }
@@ -3351,27 +3452,27 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qa-tr + .qa-tr { margin-top: 6px; }
 .qa-tr .qa-n { margin-right: 6px; font-size: 11.5px; font-weight: 700; color: var(--hz-gold); }
 .qr-text.tr-off .qa-tr, .qr-text.tr-en .qa-tr[lang="bn"], .qr-text.tr-bn .qa-tr[lang="en"] { display: none; }
-.qa.now { border-color: rgba(233, 196, 106, 0.5); background: linear-gradient(100deg, rgba(233, 196, 106, 0.17), rgba(233, 196, 106, 0.05)); }
-.qa.done .qa-ar { color: #B9C7BB; }
-.qa-ar .w.now { color: var(--hz-gold); text-shadow: 0 0 16px rgba(233, 196, 106, 0.6); }
+.qa.now { border-color: var(--hz-hl-edge); background: linear-gradient(100deg, rgba(var(--hz-gold-rgb), 0.17), rgba(var(--hz-gold-rgb), 0.05)); }
+.qa.done .qa-ar { color: var(--hz-done); }
+.qa-ar .w.now { color: var(--hz-gold); text-shadow: 0 0 16px rgba(var(--hz-gold-rgb), 0.6); }
 .qa.sel { border-color: var(--hz-line-2); }
 .qr-text.test .qa:not(.shown) .qa-ar { filter: blur(11px); opacity: 0.5; user-select: none; }
 .qr-text.test .qa:not(.shown) .qa-hint { display: block; }
 .qa-hint { display: none; position: absolute; left: 16px; top: 12px; font-size: 11px; color: var(--hz-muted); }
 .qr-credits { max-width: 980px; margin: 22px auto 0; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--hz-muted); }
 .qr-credits a { color: var(--hz-gold); }
-.qr-side { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; border-left: 1px solid var(--hz-line); background: rgba(2, 19, 15, 0.5); }
+.qr-side { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; border-left: 1px solid var(--hz-line); background: rgba(var(--hz-shade-rgb), 0.5); }
 
 /* the revision reminder: stays until you log it, choose later, or dismiss it */
 .hz-ring {
     position: fixed; top: 18px; left: 50%; z-index: 99; transform: translateX(-50%);
     width: min(620px, calc(100vw - 32px)); padding: 16px 18px; border-radius: 20px; border: 1px solid var(--hz-gold);
-    background: var(--hz-pattern) center / 56px, linear-gradient(135deg, #0E4A39, #05281F);
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 50px rgba(233, 196, 106, 0.28);
+    background: var(--hz-pattern) center / 56px, linear-gradient(135deg, var(--hz-ring-1), var(--hz-ring-2));
+    box-shadow: 0 20px 60px rgba(var(--hz-drop-rgb), 0.6), 0 0 50px rgba(var(--hz-gold-rgb), 0.28);
     animation: hz-glow 2.4s ease-in-out 3;
 }
 .hz-ring[hidden] { display: none; }
-@keyframes hz-glow { 50% { box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6), 0 0 80px rgba(233, 196, 106, 0.55); } }
+@keyframes hz-glow { 50% { box-shadow: 0 20px 60px rgba(var(--hz-drop-rgb), 0.6), 0 0 80px rgba(var(--hz-gold-rgb), 0.55); } }
 .hz-ring-top { display: flex; align-items: flex-start; gap: 14px; }
 .hz-ring-top svg { width: 40px; height: 40px; flex-shrink: 0; color: var(--hz-gold); }
 .hz-ring-k { font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); }
@@ -3382,8 +3483,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 
 @media (max-width: 1279px) {      /* the index becomes a drawer over the reader, opened by "☰ Surahs" */
     .qr-pane { grid-template-columns: minmax(0, 1fr) 320px; }
-    .qr-index { position: absolute; z-index: 6; left: 0; top: 0; bottom: 0; width: min(330px, 92%); background: #03201A;
-                transform: translateX(-105%); transition: transform 0.25s; box-shadow: 20px 0 50px rgba(0, 0, 0, 0.5); }
+    .qr-index { position: absolute; z-index: 6; left: 0; top: 0; bottom: 0; width: min(330px, 92%); background: var(--hz-drawer);
+                transform: translateX(-105%); transition: transform 0.25s; box-shadow: 20px 0 50px rgba(var(--hz-drop-rgb), 0.5); }
     .qr-pane.idx-open .qr-index { transform: none; }
     .qr-pane:not(.idx-open) .qr-index { visibility: hidden; }
     .qr-idx-btn { display: inline-flex; }
@@ -3412,6 +3513,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     .hz-today-n { font-size: 32px; }
     .hz-player:not(.full) .hz-pl-ctl #rp-rep3, .hz-player:not(.full) .hz-pl-ctl #rp-prev { display: none; }
     .hz-mark, .hz-titles { display: none; }
+    .hz-theme-btn { padding: 0 11px; }
+    .hz-theme-btn .lbl { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
     .hz-view, .hz-ring, .hz-star.today::after, .hz-player.playing .hz-pl-art svg { animation: none !important; }
@@ -3658,6 +3761,11 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
                 <button type="button" role="tab" id="hz-tab-today" data-tab="today" aria-selected="true" aria-controls="hz-pane-today">Today</button>
                 <button type="button" role="tab" id="hz-tab-read" data-tab="read" aria-selected="false" aria-controls="hz-pane-read">Read &amp; listen</button>
             </div>
+            <div class="hz-theme-pick">
+                <button class="hz-theme-btn" id="hz-theme-btn" type="button" aria-haspopup="dialog" aria-expanded="false"
+                        aria-controls="hz-theme-menu"></button>
+                <div class="hz-theme-menu" id="hz-theme-menu" role="dialog" aria-label="Hifz themes" hidden></div>
+            </div>
             <button class="hz-x" id="hz-close" type="button" aria-label="Close the Hifz view">✕</button>
         </div>
     </div>
@@ -3812,6 +3920,15 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
             <label class="te-field">Glow, top left <input id="te-glow1" type="color"></label>
             <label class="te-field">Bottom right <input id="te-glow2" type="color"></label>
             <label class="te-field">Top <input id="te-glow3" type="color"></label>
+        </div>
+        <label class="te-check te-wide"><input id="te-roles" type="checkbox"> Palette roles: set the panels, border and text</label>
+        <div class="te-roles te-wide" id="te-roles-grid" hidden>
+            <label class="te-field">Panel <input id="te-panel" type="color"></label>
+            <label class="te-field">Raised panel <input id="te-raised" type="color"></label>
+            <label class="te-field">Border <input id="te-border" type="color"></label>
+            <label class="te-field">Text <input id="te-text" type="color"></label>
+            <label class="te-field">Muted text <input id="te-muted" type="color"></label>
+            <label class="te-field">Text on accent <input id="te-on-accent" type="color"></label>
         </div>
         <label class="te-field">Blur <span class="te-range"><input id="te-blur" type="range" min="0" max="28" step="1"><output id="te-blur-out"></output></span></label>
         <label class="te-field">Glass tint <span class="te-range"><input id="te-tint" type="range" min="40" max="85" step="1"><output id="te-tint-out"></output></span></label>
@@ -6938,18 +7055,24 @@ document.querySelectorAll('.lang-toggle button').forEach(b => b.addEventListener
 
 // ── Themes. The looks are this page's CSS: Orbit (the default), Glass and Overdrive. Colour themes are
 // the files in themes/ (GET /themes: each a palette on the Glass look, its colours worked out and contrast-checked by
-// themes.py), whose variables go on <html>. The header's theme button opens the list; "+ New theme" and ✎ open the
-// editor, which shows its colours on the whole page as you pick and saves through POST/PUT /themes. The choice is saved
-// per browser ('javid-theme'; a colour theme's variables in 'javid-theme-vars', which the head script paints before
+// themes.py), whose variables go on <html>, with data-tone="light" for a light one. The header's theme button opens
+// the list, each theme a strip of its colours; "+ New theme", ⧉ (a new theme from that one) and ✎ open the editor,
+// which shows its colours on the whole page as you pick and saves through POST/PUT /themes. The choice is saved per
+// browser ('javid-theme'; a colour theme's variables in 'javid-theme-vars', which the head script paints before
 // /themes answers) ──
 const LOOKS = [
-    { id: 'orbit', name: 'Orbit', bg: '#03070F', accent: '#38E1FF' },
-    { id: 'glass', name: 'Glass', bg: '#06120E', accent: '#4ADE9F' },
-    { id: 'overdrive', name: 'Overdrive', bg: '#050404', accent: '#FF2A2A' },
+    { id: 'orbit', name: 'Orbit', bg: '#03070F', accent: '#38E1FF',
+      swatches: ['#03070F', '#0A1322', '#112E7E', '#462389', '#8EA4BF', '#EAF4FF', '#38E1FF'] },
+    { id: 'glass', name: 'Glass', bg: '#06120E', accent: '#4ADE9F',
+      swatches: ['#06120E', '#0B1C16', '#0C6E4D', '#1B7D6F', '#9CB5AA', '#ECF7F2', '#4ADE9F'] },
+    { id: 'overdrive', name: 'Overdrive', bg: '#050404', accent: '#FF2A2A',
+      swatches: ['#050404', '#2E0C0C', '#5C1010', '#A5807C', '#F4E8E6', '#FF2A2A'] },
 ];
 const NEW_THEME = { name: 'My theme', background: '#06120E', accent: '#4ADE9F', blur: 18, tint: 0.58 };   // Glass's colours
 const GLOW_VARS = ['--glow-1', '--glow-2', '--glow-3'];
-let colourThemes = [];        // from /themes: [{id, name, background, accent, glows?, blur, tint, tokens, checks}]
+const ROLE_KEYS = ['panel', 'raised', 'border', 'text', 'muted', 'on_accent'];   // a palette's own roles (themes.py)
+let colourThemes = [];        // from /themes: [{id, name, background, accent, glows?, panel?…, blur, tint, tokens, tone,
+                              // checks, swatches, preset, hifz: {tokens, checks, ok, swatches}}]
 let themeProblems = [];       // theme files that couldn't be used, and why
 let themesLoaded = false;     // until /themes answers, a saved colour theme keeps the head script's colours
 const themeBtn = document.getElementById('theme-btn');
@@ -6998,6 +7121,27 @@ function swatch(bg, accent) {
     return dot;
 }
 
+function swatchStrip(colours, className = 'theme-strip') {      // a theme's colours side by side, like a palette card
+    const strip = document.createElement('span');
+    strip.className = className;
+    strip.setAttribute('aria-hidden', 'true');
+    for (const colour of colours) {
+        const cell = document.createElement('i');
+        cell.style.background = colour;
+        strip.append(cell);
+    }
+    return strip;
+}
+
+// A light colour theme gets data-tone="light" (dark ink, the browser's light controls: the CSS's light block); a palette
+// (roles) or light one data-roles too (the few rules themes.py can't reach through a variable)
+function setTone(tone, roles) {
+    const root = document.documentElement;
+    if (tone === 'light') root.dataset.tone = 'light';
+    else delete root.dataset.tone;
+    root.toggleAttribute('data-roles', !!roles);
+}
+
 function showThemeButton(theme) {
     themeBtn.replaceChildren(swatch(theme.bg || theme.background, theme.accent), document.createTextNode(theme.name));
     themeBtn.classList.toggle('on', theme.id === 'overdrive');
@@ -7021,6 +7165,7 @@ function applyTheme(id, { save = true } = {}) {
     root.dataset.theme = look;
     if (theme.tokens) root.dataset.palette = theme.id;
     else delete root.dataset.palette;
+    setTone(theme.tone, theme.roles);
     setThemeVars(theme.tokens);
     if (look === 'overdrive' && !document.getElementById('od-font')) {
         document.head.appendChild(Object.assign(document.createElement('link'), { id: 'od-font', rel: 'stylesheet',
@@ -7039,7 +7184,8 @@ function applyTheme(id, { save = true } = {}) {
         localStorage.setItem('javid-theme', theme.id);
         if (theme.tokens) {
             localStorage.setItem('javid-theme-vars', JSON.stringify({ id: theme.id, name: theme.name,
-                background: theme.background, accent: theme.accent, tokens: theme.tokens }));
+                background: theme.background, accent: theme.accent, tone: theme.tone, roles: !!theme.roles,
+                tokens: theme.tokens }));
         } else {
             localStorage.removeItem('javid-theme-vars');
         }
@@ -7065,13 +7211,18 @@ function themeRow(theme, editable) {
     const name = document.createElement('span');
     name.className = 'theme-row-name';
     name.textContent = theme.name;
-    choose.append(swatch(theme.bg || theme.background, theme.accent), name);
+    choose.append(swatchStrip(theme.swatches || [theme.bg || theme.background, theme.accent]), name);
     const tick = Object.assign(document.createElement('span'), { className: 'theme-tick', textContent: '✓' });
     tick.setAttribute('aria-hidden', 'true');
     choose.append(tick);
     choose.addEventListener('click', () => { applyTheme(theme.id); closeThemeMenu(true); });
     row.append(choose);
     if (editable) {
+        const copy = Object.assign(document.createElement('button'), { type: 'button', className: 'theme-edit', textContent: '⧉' });
+        copy.title = `Start a new theme from ${theme.name}`;
+        copy.setAttribute('aria-label', copy.title);
+        copy.addEventListener('click', () => { closeThemeMenu(false); openThemeEditor(null, theme); });
+        row.append(copy);
         const edit = Object.assign(document.createElement('button'), { type: 'button', className: 'theme-edit', textContent: '✎' });
         edit.title = `Edit ${theme.name}`;
         edit.setAttribute('aria-label', edit.title);
@@ -7121,39 +7272,75 @@ function closeThemeMenu(refocus) {
 }
 
 // — The editor: a panel beside the page, which takes the theme's colours as you pick them —
-const te = Object.fromEntries(['title', 'name', 'bg', 'accent', 'auto', 'glow1', 'glow2', 'glow3', 'blur', 'blurOut',
-    'tint', 'tintOut', 'summary', 'checks', 'file', 'delete', 'cancel', 'save', 'close']
+const te = Object.fromEntries(['title', 'name', 'bg', 'accent', 'auto', 'glow1', 'glow2', 'glow3', 'roles', 'rolesGrid',
+    'panel', 'raised', 'border', 'text', 'muted', 'onAccent', 'blur', 'blurOut', 'tint', 'tintOut', 'summary', 'checks',
+    'file', 'delete', 'cancel', 'save', 'close']
     .map(k => [k, document.getElementById('te-' + k.replace(/[A-Z]/g, c => '-' + c.toLowerCase()))]));
 const teGlows = [te.glow1, te.glow2, te.glow3];
+const teRoles = { panel: te.panel, raised: te.raised, border: te.border, text: te.text, muted: te.muted, on_accent: te.onAccent };
 let editing = null;           // the colour theme being edited (null: a new one)
 let editorReturn = 'glass';   // the theme to go back to on Cancel
 let previewSeq = 0;
 let previewTimer = null;
 let previewOk = false;
+let previewTokens = null;     // the last preview's worked-out colours: ticking "Palette roles" starts from them
+let rolesFilled = false;      // the role pickers hold a theme's roles (or ones already started from the preview)
 
 const rgbHex = value => {     // "rgba(29, 78, 216, 0.24)" → "#1d4ed8": a worked-out glow, shown in its picker
     const m = String(value).match(/(\d+),\s*(\d+),\s*(\d+)/);
     return m ? '#' + m.slice(1, 4).map(n => (+n).toString(16).padStart(2, '0')).join('') : '#000000';
 };
 
+const hexMix = (a, b, share) => '#' + [1, 3, 5].map(i => Math.round(parseInt(a.slice(i, i + 2), 16) * (1 - share)
+    + parseInt(b.slice(i, i + 2), 16) * share).toString(16).padStart(2, '0')).join('');
+
 function themeSeed() {
     const seed = { name: te.name.value.trim(), background: te.bg.value.toUpperCase(), accent: te.accent.value.toUpperCase(),
                    blur: Number(te.blur.value), tint: Number(te.tint.value) / 100 };
     if (!te.auto.checked) seed.glows = teGlows.map(input => input.value.toUpperCase());
+    if (te.roles.checked) for (const key of ROLE_KEYS) seed[key] = teRoles[key].value.toUpperCase();
     return seed;
+}
+
+// The role pickers, filled from a theme's own roles, or from what themes.py worked out for it (what the page shows)
+function fillRoles(theme, tokens) {
+    const t = tokens || {};
+    const raised = (t['--bg-elev'] || '#0B1C16').toLowerCase();
+    const muted = (t['--label'] || '#9CB5AA').toLowerCase();
+    const worked = { panel: t['--glass'] ? rgbHex(t['--glass']) : '#081611', raised, border: hexMix(raised, muted, 0.3),
+                     text: t['--text'] || '#ECF7F2', muted, on_accent: t['--accent-ink'] || '#06120E' };
+    for (const key of ROLE_KEYS) teRoles[key].value = String((theme && theme[key]) || worked[key]).toLowerCase();
 }
 
 function showRanges() {
     te.blurOut.textContent = `${te.blur.value} px`;
     te.tintOut.textContent = `${te.tint.value}%`;
     for (const input of teGlows) input.disabled = te.auto.checked;
+    te.rolesGrid.hidden = !te.roles.checked;
 }
 
 function updateThemeSave() {
     te.save.disabled = !previewOk || !te.name.value.trim();
 }
 
-function showThemeChecks(checks, error) {
+// What to change for a check that fails: which colour, and which way (lighter on a dark theme, darker on a light one)
+const ROLE_HINTS = { 'Text on glass': 'text', 'Text on menus and dialogs': 'text', 'Secondary text': 'text',
+                     'Text in your bubble': 'text', 'Labels': 'muted text', 'Button text': 'ink',
+                     'Accent text': 'accent', 'Highlights': 'accent', 'Buttons stand out': 'accent',
+                     'Warnings and errors': 'panels' };
+function themeHint(weak, tone) {
+    const light = tone === 'light';
+    if (!te.roles.checked) {
+        return light ? 'try a darker accent, a lighter background or softer glows'
+                     : 'try a lighter accent, a darker background or softer glows';
+    }
+    const words = { text: `${light ? 'darker' : 'lighter'} text`, 'muted text': `${light ? 'darker' : 'lighter'} muted text`,
+                    accent: `a ${light ? 'darker' : 'lighter'} accent`, panels: `${light ? 'lighter' : 'darker'} panels`,
+                    ink: 'a text on the accent that differs more from it' };
+    return 'try ' + [...new Set(weak.map(c => ROLE_HINTS[c.what] || 'accent'))].map(k => words[k]).join(', ');
+}
+
+function showThemeChecks(checks, error, tone) {
     te.checks.replaceChildren();
     te.summary.classList.toggle('bad', !checks || checks.some(c => !c.ok));
     if (!checks) {
@@ -7162,7 +7349,7 @@ function showThemeChecks(checks, error) {
     }
     const weak = checks.filter(c => !c.ok);
     te.summary.textContent = weak.length
-        ? `${weak.length === 1 ? 'One check is' : `${weak.length} checks are`} too low: try a lighter accent, a darker background or softer glows.`
+        ? `${weak.length === 1 ? 'One check is' : `${weak.length} checks are`} too low: ${themeHint(weak, tone)}.`
         : 'All text is readable and the buttons stand out.';
     for (const c of checks) {
         const ratio = Object.assign(document.createElement('span'), { className: c.ok ? 'ok' : 'bad',
@@ -7210,19 +7397,24 @@ async function previewTheme() {
     orbitGlobe.stop();                          // a colour theme is Glass in its own colours
     root.dataset.theme = 'glass';
     root.dataset.palette = editing?.id || 'preview';
+    setTone(data.tone, data.roles);
     setThemeVars(data.tokens);
     lookChanged();
+    previewTokens = data.tokens;
     if (te.auto.checked) GLOW_VARS.forEach((name, i) => { teGlows[i].value = rgbHex(data.tokens[name]); });
     previewOk = data.checks.every(c => c.ok);
-    showThemeChecks(data.checks);
+    showThemeChecks(data.checks, null, data.tone);
     updateThemeSave();
 }
 
-function openThemeEditor(theme) {
+// theme: the colour theme to edit (null: a new one); from: the theme a new one starts from (⧉), else the colour theme
+// you're on ("+ New theme"), else Glass's colours
+function openThemeEditor(theme, from = null) {
     if (themeEditor.hidden) editorReturn = currentThemeId();
     editing = theme;
     const current = findTheme(editorReturn);
-    const base = theme || (current?.tokens ? { ...current, name: `${current.name} copy`.slice(0, 24) } : NEW_THEME);
+    const start = from || (current?.tokens ? current : null);
+    const base = theme || (start ? { ...start, name: `${start.name} copy`.slice(0, 24) } : NEW_THEME);
     te.title.textContent = theme ? `Edit ${theme.name}` : 'New theme';
     te.name.value = base.name;
     te.bg.value = base.background.toLowerCase();
@@ -7230,6 +7422,10 @@ function openThemeEditor(theme) {
     te.auto.checked = !base.glows;
     const glows = base.glows || (base.tokens ? GLOW_VARS.map(name => rgbHex(base.tokens[name])) : ['#10B981', '#2DD4BF', '#84CC16']);
     teGlows.forEach((input, i) => { input.value = glows[i].toLowerCase(); });
+    te.roles.checked = ROLE_KEYS.some(key => base[key]);
+    rolesFilled = te.roles.checked;
+    fillRoles(base, base.tokens);
+    previewTokens = base.tokens || null;
     te.blur.value = base.blur ?? 18;
     te.tint.value = Math.round((base.tint ?? 0.58) * 100);
     te.delete.hidden = !theme;
@@ -7296,10 +7492,18 @@ document.addEventListener('keydown', e => {
     if (!themeMenu.hidden) closeThemeMenu(true);
     else if (!themeEditor.hidden) closeThemeEditor(true);
 });
-for (const input of [te.bg, te.accent, ...teGlows, te.blur, te.tint]) {
+for (const input of [te.bg, te.accent, ...teGlows, ...Object.values(teRoles), te.blur, te.tint]) {
     input.addEventListener('input', () => { showRanges(); schedulePreview(); });
 }
 te.auto.addEventListener('change', () => { showRanges(); schedulePreview(); });
+te.roles.addEventListener('change', () => {
+    if (te.roles.checked && !rolesFilled) {          // the first time: the colours the page shows now
+        fillRoles(null, previewTokens);
+        rolesFilled = true;
+    }
+    showRanges();
+    schedulePreview();
+});
 te.name.addEventListener('input', updateThemeSave);
 te.name.addEventListener('keydown', e => { if (e.key === 'Enter') saveTheme(); });
 te.save.addEventListener('click', saveTheme);
@@ -7308,7 +7512,8 @@ te.close.addEventListener('click', () => closeThemeEditor(true));
 te.delete.addEventListener('click', deleteTheme);
 
 applyTheme(savedThemeId());                     // the looks at once; a colour theme once /themes has answered
-loadThemes().then(ok => { if (ok && themeEditor.hidden) applyTheme(savedThemeId()); });
+const themesReady = loadThemes();
+themesReady.then(ok => { if (ok && themeEditor.hidden) applyTheme(savedThemeId()); });
 
 // ── Timers & reminders ────────────────────────────────────────────────────
 // The server keeps them (timers.json); this page counts down and rings them: a chime, the banner, then the
@@ -7482,6 +7687,113 @@ const hzBn = () => replyLang === 'bn';
 const hzT = (en, bn) => (hzBn() ? bn : en);
 const hzNum = n => (hzBn() ? String(n).replace(/\d/g, d => '০১২৩৪৫৬৭৮৯'[d]) : String(n));
 const hzCap = t => t.charAt(0).toUpperCase() + t.slice(1);
+
+// The Hifz page's own theme (2026-11-23), separate from the main page's: Hifz Classic (the green and gold of the CSS
+// above) or a colour preset mapped onto the page's roles by themes.py (each theme's `hifz`: its variables, checks and
+// swatches; a preset is offered only when all its Hifz checks pass). Saved per browser ('javid-hifz-theme', its
+// variables in 'javid-hifz-theme-vars', which the head script paints before /themes answers). The variables go in one
+// stylesheet rule, html[data-hz-theme] .hz-scope, so they reach the view, its Dashboard card, the player wherever it's
+// docked and the reminder, and whatever of them is drawn later.
+const hifzTheme = (() => {
+    const btn = document.getElementById('hz-theme-btn');
+    const menu = document.getElementById('hz-theme-menu');
+    const CLASSIC = { id: 'classic', name: 'Hifz Classic', swatches: ['#031914', '#0D4032', '#E9C46A', '#F6EED8'], tokens: null };
+    let current = CLASSIC;
+    const offered = () => [CLASSIC, ...colourThemes.filter(t => t.preset && t.hifz?.ok)
+        .map(t => ({ id: t.id, name: t.name, swatches: t.hifz.swatches, tokens: t.hifz.tokens }))];
+    function savedId() {
+        try { return localStorage.getItem('javid-hifz-theme') || 'classic'; } catch { return 'classic'; }
+    }
+    function rule() {
+        const el = document.getElementById('hz-theme-vars')
+            || document.head.appendChild(Object.assign(document.createElement('style'), { id: 'hz-theme-vars' }));
+        if (!el.sheet.cssRules.length) el.sheet.insertRule('html[data-hz-theme] .hz-scope {}');
+        return el.sheet.cssRules[0];
+    }
+    function paint(theme) {
+        const style = rule().style;
+        for (const name of Array.from(style)) style.removeProperty(name);
+        for (const [name, value] of Object.entries(theme.tokens || {})) style.setProperty(name, value);
+        if (theme.tokens) document.documentElement.dataset.hzTheme = theme.id;
+        else delete document.documentElement.dataset.hzTheme;
+    }
+    function label() {
+        const text = Object.assign(document.createElement('span'), { className: 'lbl', textContent: hzT('Theme', 'থিম') });
+        btn.replaceChildren(swatchStrip(current.swatches, 'hz-strip'), text);
+        btn.title = hzT(`Hifz theme: ${current.name}. Javid’s own theme stays as it is`,
+                        `হিফজের থিম: ${current.name}। জাভিদের নিজের থিম যেমন আছে তেমনই থাকে`);
+        btn.setAttribute('aria-label', btn.title);
+    }
+    function apply(id, { save = true } = {}) {
+        let theme = offered().find(t => t.id === id);
+        if (!theme && !themesLoaded && id !== 'classic') {      // /themes hasn't answered: the head script's colours stay
+            try {
+                const cached = JSON.parse(localStorage.getItem('javid-hifz-theme-vars') || 'null');
+                if (cached?.id === id) { current = cached; label(); }
+            } catch {}
+            return;
+        }
+        current = theme || CLASSIC;
+        paint(current);
+        label();
+        if (!save) return;
+        try {
+            localStorage.setItem('javid-hifz-theme', current.id);
+            if (current.tokens) {
+                localStorage.setItem('javid-hifz-theme-vars', JSON.stringify({ id: current.id, name: current.name,
+                    swatches: current.swatches, tokens: current.tokens }));
+            } else {
+                localStorage.removeItem('javid-hifz-theme-vars');
+            }
+        } catch {}
+    }
+    function row(theme) {
+        const choose = Object.assign(document.createElement('button'), { type: 'button', className: 'hz-theme-row' });
+        choose.dataset.hzThemeId = theme.id;
+        choose.setAttribute('aria-pressed', String(theme.id === current.id));
+        const tick = Object.assign(document.createElement('span'), { className: 'tick', textContent: '✓' });
+        tick.setAttribute('aria-hidden', 'true');
+        choose.append(swatchStrip(theme.swatches, 'hz-strip'),
+                      Object.assign(document.createElement('span'), { className: 'nm', textContent: theme.name }), tick);
+        choose.addEventListener('click', () => { apply(theme.id); close(true); });
+        return choose;
+    }
+    function render() {
+        const text = (className, words) => Object.assign(document.createElement('div'), { className, textContent: words });
+        const themes = offered().slice(1);
+        menu.replaceChildren(text('hz-theme-group', hzT('Hifz', 'হিফজ')), row(CLASSIC),
+            text('hz-theme-group', hzT('Colour themes', 'রঙের থিম')), ...themes.map(row),
+            text('hz-theme-note', themes.length ? hzT('Only this page changes: Javid’s own theme stays as it is.',
+                                                      'শুধু এই পাতা বদলায়: জাভিদের নিজের থিম যেমন আছে তেমনই থাকে।')
+                                                : hzT('Couldn’t load the themes folder: restart Javid’s server.',
+                                                      'থিমের ফোল্ডার খোলা গেল না: জাভিদের সার্ভার আবার চালু করো।')));
+    }
+    function open() {
+        render();
+        menu.hidden = false;
+        btn.setAttribute('aria-expanded', 'true');
+        (menu.querySelector('[aria-pressed="true"]') || menu.querySelector('button'))?.focus();
+        const listed = () => JSON.stringify(offered().map(t => [t.id, t.name, t.swatches]));
+        const before = listed();
+        loadThemes().then(() => {           // a preset changed by hand shows up without a reload
+            if (menu.hidden || listed() === before) return;
+            const focused = document.activeElement?.dataset?.hzThemeId;
+            render();
+            if (focused) menu.querySelector(`[data-hz-theme-id="${CSS.escape(focused)}"]`)?.focus();
+        });
+    }
+    function close(refocus) {
+        if (menu.hidden) return;
+        menu.hidden = true;
+        btn.setAttribute('aria-expanded', 'false');
+        if (refocus) btn.focus();
+    }
+    btn.addEventListener('click', () => (menu.hidden ? open() : close(true)));
+    document.addEventListener('click', e => { if (!menu.hidden && !e.target.closest('.hz-theme-pick')) close(false); });
+    apply(savedId(), { save: false });
+    themesReady.then(ok => { if (ok) apply(savedId()); });    // its colours as /themes has them now, saved again
+    return { close, label, isOpen: () => !menu.hidden };
+})();
 
 // <qsync> The player's timing logic, pure: given Quran.com's timings for one reciter's surah file ([from, to, words
 // fit, words] per ayah, in ms; words are [position, from, to]) and the audio's current time, which ayah and word are
@@ -8461,11 +8773,13 @@ const hifzUI = (() => {
         document.body.classList.add('hifz-open');
         setPanels(false);
         setTab(which || tab);
+        hifzTheme.label();
         render();
         refresh();
         if (!was) $('hz-close').focus();
     }
     function close() {
+        hifzTheme.close(false);
         view.hidden = true;
         document.body.classList.remove('hifz-open');
         quranReader.setIndexOpen(false);
@@ -8561,6 +8875,7 @@ const hifzUI = (() => {
     document.addEventListener('keydown', e => {
         if (e.key !== 'Escape' || view.hidden) return;
         e.stopImmediatePropagation();      // closing the view doesn't stop Javid or the recitation
+        if (hifzTheme.isOpen()) { hifzTheme.close(true); return; }
         if ($('hz-pane-read').classList.contains('idx-open')) { quranReader.setIndexOpen(false); return; }
         close();
     }, true);

@@ -1,0 +1,14 @@
+{
+  "name": "Olive",
+  "background": "#0F1F17",
+  "panel": "#1E3A2E",
+  "raised": "#3D4337",
+  "border": "#3E5A3F",
+  "text": "#C7CBB8",
+  "muted": "#A9B7A6",
+  "accent": "#7B9076",
+  "on_accent": "#0F1F17",
+  "glows": ["#3D4337", "#1E3A2E", "#3E5A3F"],
+  "blur": 18,
+  "tint": 0.72
+}

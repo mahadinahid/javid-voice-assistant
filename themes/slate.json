@@ -1,0 +1,14 @@
+{
+  "name": "Slate",
+  "background": "#06141B",
+  "panel": "#11212D",
+  "raised": "#253745",
+  "border": "#4A5C6A",
+  "text": "#CCD0CF",
+  "muted": "#9BA8AB",
+  "accent": "#9BA8AB",
+  "on_accent": "#06141B",
+  "glows": ["#253745", "#11212D", "#4A5C6A"],
+  "blur": 18,
+  "tint": 0.72
+}

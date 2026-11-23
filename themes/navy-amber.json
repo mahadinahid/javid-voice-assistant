@@ -1,0 +1,14 @@
+{
+  "name": "Navy Amber",
+  "background": "#0B132B",
+  "panel": "#1C2541",
+  "raised": "#263450",
+  "border": "#3A506B",
+  "text": "#F4D6B0",
+  "muted": "#5BC0DE",
+  "accent": "#D97706",
+  "on_accent": "#0B132B",
+  "glows": ["#263450", "#1C2541", "#3A506B"],
+  "blur": 18,
+  "tint": 0.72
+}

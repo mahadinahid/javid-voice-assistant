@@ -1,0 +1,14 @@
+{
+  "name": "Mist",
+  "background": "#F1F7F7",
+  "panel": "#D5E5E5",
+  "raised": "#DDD3D3",
+  "border": "#B0D7D8",
+  "text": "#3B4646",
+  "muted": "#535F5F",
+  "accent": "#A8585A",
+  "on_accent": "#FFFFFF",
+  "glows": ["#F7CBCA", "#B0D7D8", "#DDD3D3"],
+  "blur": 18,
+  "tint": 0.62
+}

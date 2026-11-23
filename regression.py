@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 192 cases. The default run never calls a real API: 128 of them script the
+Regression check for Javid's agent behaviour: 258 cases. The default run never calls a real API: 194 of them script the
 model's part and replay recorded fixtures for every provider; the other 64 send prompts through the real LLM and tool
 loop and only run with --llm.
 
@@ -2273,48 +2273,122 @@ def theme_scratch():
         themes.THEMES_DIR = real
 
 
+THEME_FIXTURES = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures", "themes")
+
+
+def theme_presets():
+    """The fourteen presets Javid ships (themes/, read only) all load and pass every check; every colour in their files
+    is a #RRGGBB hex; Mist is the light one and the other thirteen are dark; and the first four (Ember, Graphite, Ocean,
+    Orchid) work out exactly as they did before palette roles and light themes existed (fixtures/themes)."""
+    problems = []
+    listed = themes.listing()
+    if listed["problems"]:
+        problems.append(f"presets: {listed['problems']}")
+    by_id = {t["id"]: t for t in listed["themes"]}
+    if sorted(by_id) != sorted(themes.PRESETS):
+        problems.append(f"presets listed: {sorted(by_id)}")
+    files = {}
+    for theme_id in themes.PRESETS:
+        with open(os.path.join(themes.THEMES_DIR, theme_id + ".json"), encoding="utf-8") as f:
+            files[theme_id] = raw = json.load(f)
+        colours = [v for k, v in raw.items() if k not in ("name", "blur", "tint", "glows")] + raw.get("glows", [])
+        bad = [c for c in colours if not (isinstance(c, str) and re.fullmatch(r"#[0-9A-Fa-f]{6}", c))]
+        if bad or set(raw) - set(themes.FIELDS) or len(raw.get("glows", [0, 0, 0])) != 3:
+            problems.append(f"{theme_id}.json: {bad or sorted(set(raw) - set(themes.FIELDS)) or 'glows'}")
+        theme = by_id.get(theme_id)
+        if not theme:
+            continue
+        weak = [f"{c['what']} {c['ratio']}:1" for c in theme["checks"] if not c["ok"]]
+        if weak:
+            problems.append(f"{theme_id}: {weak}")
+        want = "light" if theme_id == "mist" else "dark"
+        if theme["tone"] != want or themes.tone(raw["background"]) != want:
+            problems.append(f"{theme_id} is {theme['tone']}, not {want}")
+        values = list(theme["tokens"].values()) + list(theme["hifz"]["tokens"].values())
+        if any(re.search(r"[;{}<>\\]", v) for v in values):
+            problems.append(f"{theme_id}: an unsafe value")
+        if not all(re.fullmatch(r"#[0-9A-F]{6}", c) for c in theme["swatches"] + theme["hifz"]["swatches"]):
+            problems.append(f"{theme_id}: swatches {theme['swatches']}")
+        if not theme["preset"]:
+            problems.append(f"{theme_id} isn't marked as a preset")
+    mist = by_id.get("mist", {}).get("tokens", {})
+    if mist.get("--ink-rgb") in (None, "255, 255, 255") or mist.get("--field-rgb") != "255, 255, 255":
+        problems.append(f"Mist's fills: ink {mist.get('--ink-rgb')}, fields {mist.get('--field-rgb')}")
+    for theme in listed["themes"]:                 # fills tinted with a palette's own border; Glass's white without one
+        want = themes._triple(themes._rgb(theme["border"])) if theme.get("border") else None
+        if theme["id"] != "mist" and (theme["tone"] == "light" or theme["tokens"].get("--ink-rgb") != want):
+            problems.append(f"{theme['id']}'s fills are tinted {theme['tokens'].get('--ink-rgb')}, not {want}")
+    with open(os.path.join(THEME_FIXTURES, "presets_2026-10-26.json"), encoding="utf-8") as f:
+        before = json.load(f)
+    if sorted(before) != ["ember", "graphite", "ocean", "orchid"]:
+        problems.append(f"the snapshot holds {sorted(before)}")
+    for theme_id, old in before.items():
+        new = themes.derive(themes.clean(files[theme_id]))
+        if new["tokens"] != old["tokens"] or new["checks"] != old["checks"]:
+            changed = sorted(k for k in set(new["tokens"]) | set(old["tokens"])
+                             if new["tokens"].get(k) != old["tokens"].get(k))
+            problems.append(f"{theme_id} works out differently: {changed or 'its checks'}")
+    return {"problems": problems}
+
+
 def theme_contrast():
-    """The presets in themes/ (read only) all load; and for any dark background, accent and glows, every text colour a
-    theme gets reads at 4.5:1 on its glass and pills. Only "buttons stand out" may fail, and such a theme isn't saved."""
+    """For any dark background (up to about #303030) or light one (from about #C4C4C4), accent and glows, every text
+    colour a theme gets reads at 4.5:1 on its glass and pills; only "buttons stand out" may fail, and such a theme
+    isn't saved. A palette's own roles are checked as given; a light theme gets dark ink for its fills and edges."""
     import random
     problems = []
-    real = themes.listing()
-    if real["problems"]:
-        problems.append(f"presets: {real['problems']}")
-    names = sorted(t["name"] for t in real["themes"])
-    if not {"Ember", "Graphite", "Ocean", "Orchid"} <= set(names):
-        problems.append(f"presets listed: {names}")
     rng = random.Random(20261026)
-    colour = lambda top=256: "#" + "".join(f"{rng.randrange(top):02X}" for _ in range(3))
-    tried = 0
-    for _ in range(400):
-        seed = {"name": "Probe", "background": colour(56), "accent": colour(), "blur": rng.randrange(29),
-                "tint": round(rng.uniform(0.4, 0.85), 2)}
+    colour = lambda low=0, top=256: "#" + "".join(f"{rng.randrange(low, top):02X}" for _ in range(3))
+    tried = {"dark": 0, "light": 0}
+    for n in range(700):
+        light = n >= 400
+        seed = {"name": "Probe", "background": colour(196) if light else colour(0, 56), "accent": colour(),
+                "blur": rng.randrange(29), "tint": round(rng.uniform(0.4, 0.85), 2)}
         if rng.random() < 0.5:
             seed["glows"] = [colour(), colour(), colour()]
         try:
             cleaned = themes.clean(seed)
         except themes.ThemeError:
-            continue                                   # a background lighter than the rules allow
-        tried += 1
+            continue                                   # a background between the two ranges
         derived = themes.derive(cleaned)
+        tried[derived["tone"]] += 1
+        if derived["tone"] != ("light" if light else "dark"):
+            problems.append(f"{seed['background']} is {derived['tone']}")
         problems += [f"{seed}: {c['what']} {c['ratio']}:1" for c in derived["checks"]
                      if not c["ok"] and c["what"] != "Buttons stand out"]
         problems += [f"{seed}: unsafe value {v!r}" for v in derived["tokens"].values() if re.search(r"[;{}<>\\]", v)]
-    if tried < 300:
-        problems.append(f"only {tried} of 400 random themes had a dark enough background")
+        if light and derived["tokens"].get("--ink-rgb", "255, 255, 255") == "255, 255, 255":
+            problems.append(f"{seed}: a light theme with white ink")
+    if tried["dark"] < 300 or tried["light"] < 200:
+        problems.append(f"only {tried} of 400 dark and 300 light random themes were in range")
+    # A palette's roles are used as given and checked: its text on the raised panel too
+    slate = {"name": "Probe", "background": "#06141B", "panel": "#11212D", "raised": "#253745", "border": "#4A5C6A",
+             "muted": "#9BA8AB", "text": "#CCD0CF", "accent": "#9BA8AB", "on_accent": "#06141B"}
+    derived = themes.derive(themes.clean(slate))
+    tokens = derived["tokens"]
+    if (tokens["--text"], tokens["--label"], tokens["--accent-ink"], tokens["--bg-elev"]) != \
+            ("#CCD0CF", "#9BA8AB", "#06141B", "#253745") or "Text on menus and dialogs" not in \
+            [c["what"] for c in derived["checks"]] or tokens["--line"] != "rgba(74, 92, 106, 0.45)":
+        problems.append(f"a palette's roles weren't used as given: {[tokens[k] for k in ('--text', '--label', '--line')]}")
+    dim = themes.derive(themes.clean({**slate, "raised": "#9AA7AA"}))      # its text can't be read on that panel
+    if [c["ok"] for c in dim["checks"] if c["what"] == "Text on menus and dialogs"] != [False]:
+        problems.append("text on a raised panel that's too light wasn't caught")
     return {"problems": problems[:6]}
 
 
 def theme_refusals():
-    """Checked before anything is saved: a light background, malformed colours or numbers, CSS slipped into a colour,
-    a missing name; an accent the buttons vanish into; ids that aren't a theme file's (path tricks, the looks' own
-    names); and hand-made files that are dim, broken or misnamed are reported, not used."""
+    """Checked before anything is saved: a mid-grey background (neither dark nor light), malformed colours or numbers,
+    CSS slipped into a colour or a role, a missing name; an accent the buttons vanish into, a palette's text that can't
+    be read; ids that aren't a theme file's (path tricks, the looks' own names); and hand-made files that are dim,
+    broken or misnamed are reported, not used."""
     problems = []
     ok = {"name": "Probe", "background": "#06101C", "accent": "#5AB2FF"}
-    bad = {"a light background": {**ok, "background": "#F5F5F5"}, "a grey background": {**ok, "background": "#404040"},
+    bad = {"a mid-grey background": {**ok, "background": "#808080"}, "a grey background": {**ok, "background": "#404040"},
+           "a pale grey background": {**ok, "background": "#B8B8B8"},
            "a named colour": {**ok, "accent": "red"}, "a short hex": {**ok, "accent": "#5AF"},
            "CSS in a colour": {**ok, "accent": "#5AB2FF; background: url(https://example.com/x)"},
+           "CSS in a role": {**ok, "panel": "#11212D}body{display:none"}, "a role as a number": {**ok, "text": 1234567},
+           "a short role": {**ok, "muted": "#9BA"},
            "two glows": {**ok, "glows": ["#1D4ED8", "#06B6D4"]}, "a blur of 80": {**ok, "blur": 80},
            "a tint as text": {**ok, "tint": "0.5"}, "a blur of true": {**ok, "blur": True},
            "a blank name": {**ok, "name": "  "}, "a 25-letter name": {**ok, "name": "x" * 25}, "a list": ["#06101C"]}
@@ -2326,13 +2400,17 @@ def theme_refusals():
             pass
     if themes.clean({**ok, "name": " Sea\x07 "})["name"] != "Sea":
         problems.append("a control character stayed in a name")
+    if themes.clean({**ok, "background": "#F5F5F5"})["background"] != "#F5F5F5":
+        problems.append("a light background wasn't kept")
     with theme_scratch() as folder:
-        try:
-            themes.create({**ok, "accent": "#0A1A2E"})
-            problems.append("an accent the buttons vanish into was saved")
-        except themes.ThemeError as e:
-            if "buttons stand out" not in str(e):
-                problems.append(f"the refusal doesn't say why: {e}")
+        for label, seed, why in (("an accent the buttons vanish into", {**ok, "accent": "#0A1A2E"}, "buttons stand out"),
+                                 ("a palette's text the glass hides", {**ok, "text": "#1A2433"}, "text on glass")):
+            try:
+                themes.create(seed)
+                problems.append(f"{label} was saved")
+            except themes.ThemeError as e:
+                if why not in str(e):
+                    problems.append(f"the refusal doesn't say why: {e}")
         for theme_id in ("../ocean", "Ocean", "orbit", "glass", "aurora", "overdrive", "classic", "preview", "a/b", "",
                          "x" * 33):
             for name, call in (("delete", themes.delete), ("update", lambda i: themes.update(i, ok))):
@@ -2350,8 +2428,76 @@ def theme_refusals():
         listed = themes.listing()
         if [t["id"] for t in listed["themes"]] != ["good"] or len(listed["problems"]) != 4:
             problems.append(f"listed {[t['id'] for t in listed['themes']]}, problems {listed['problems']}")
+        if listed["themes"] and listed["themes"][0]["preset"]:
+            problems.append("a file of one's own was marked a preset")
         if os.listdir(folder) != sorted(os.listdir(folder)) and len(os.listdir(folder)) != 5:
             problems.append(f"the folder changed: {os.listdir(folder)}")
+    return {"problems": problems}
+
+
+def theme_hifz():
+    """The Hifz page's themes: Hifz Classic (the page's own CSS, which themes.HIFZ_CLASSIC must match) and every preset
+    mapped onto the page's roles pass the Hifz checks: the Arabic text and the translation everywhere, the ayah
+    highlight (its Arabic, the word being recited, its edge), the buttons, and each of the six juz statuses against its
+    card with its number readable; the six stay apart (CIEDE2000 10 or more) and weak furthest (11 or more). A dark
+    preset keeps Classic's status colours, Mist's move together; each theme sets every colour the Hifz rules read."""
+    problems = []
+    with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html"), encoding="utf-8") as f:
+        page = f.read()
+    block = re.search(r"\n\.hz-scope \{\n(.*?)\n\}", page, re.S)
+    css = dict(re.findall(r"^\s*(--hz-[a-z0-9-]+):\s*(.+?);\s*(?:/\*.*)?$", block.group(1), re.M)) if block else {}
+
+    def same(a, b):
+        if a.startswith("url(") or b.startswith("url("):
+            return a == b
+        if a.startswith(("#", "rgba(")):
+            (ra, aa), (rb, ab) = themes._colour(a), themes._colour(b)
+            return [round(x) for x in ra] == [round(x) for x in rb] and abs(aa - ab) < 1e-9
+        return [float(x) for x in a.split(",")] == [float(x) for x in b.split(",")]
+    for name, value in themes.HIFZ_CLASSIC.items():
+        if name not in css or not same(value, css[name]):
+            problems.append(f"Classic's {name} is {value} in themes.py, {css.get(name)} in the page")
+    used = set(re.findall(r"var\((--hz-[a-z0-9-]+)\)", page))
+    if used - set(css):
+        problems.append(f"the page reads Hifz variables it never sets: {sorted(used - set(css))}")
+    colours = used - {"--hz-ar", "--hz-head"}                     # the rest are colours (and the pattern)
+    classic = themes.hifz_classic()
+    problems += [f"Classic: {c['what']} {c['ratio']}" for c in classic["checks"] if not c["ok"]]
+    need = {"Arabic text", "Translation text", "Highlighted ayah: its Arabic", "Highlighted ayah: the word being recited",
+            "Highlighted ayah: its edge", "Not yet: the juz number", "Weak: against the card", "Weak: against its ring",
+            "Statuses apart", "Weak stands out",
+            *[f"{w}: {x}" for w in ("Fresh", "Steady", "Due soon", "Past its cycle")
+              for x in ("against the card", "the juz number on it")]}
+    if need - {c["what"].split(" (")[0] for c in classic["checks"]}:
+        problems.append(f"no check for {sorted(need - {c['what'].split(' (')[0] for c in classic['checks']})}")
+    listed = themes.listing()
+    if listed["hifz_classic"]["checks"] != classic["checks"]:
+        problems.append("GET /themes doesn't carry Classic's checks")
+    seen = 0
+    for theme in listed["themes"]:
+        if theme["id"] not in themes.PRESETS:
+            continue
+        seen += 1
+        h = theme["hifz"]
+        if colours - set(h["tokens"]):
+            problems.append(f"{theme['id']} leaves {sorted(colours - set(h['tokens']))} at Classic's")
+        weak = [f"{c['what']} {c['ratio']}" for c in h["checks"] if not c["ok"]]
+        if weak or not h["ok"]:
+            problems.append(f"{theme['id']}: {weak}")
+        fills = {k: themes._rgb(h["tokens"][f"--hz-{k}"]) for k in themes.HZ_STATUSES}
+        base = {k: themes._rgb(themes.HIFZ_CLASSIC[f"--hz-{k}"]) for k in themes.HZ_STATUSES}
+        if theme["tone"] == "dark" and fills != base:
+            problems.append(f"{theme['id']} moved Classic's status colours: {h['tokens']['--hz-fresh']}…")
+        if theme["tone"] == "light":
+            shifts = [themes._lab(fills[k])[0] - themes._lab(base[k])[0] for k in themes.HZ_STATUSES]
+            if max(shifts) > -5 or max(shifts) - min(shifts) > 1.5:
+                problems.append(f"{theme['id']}'s statuses didn't move together: {[round(s, 1) for s in shifts]}")
+        apart = [themes.delta_e(fills[a], fills[b]) for a, b in itertools.combinations(fills, 2)]
+        weakest = min(themes.delta_e(fills["weak"], fills[k]) for k in fills if k != "weak")
+        if min(apart) < themes.MIN_APART or weakest < themes.MIN_WEAK_APART:
+            problems.append(f"{theme['id']}: statuses {min(apart):.1f} apart, weak {weakest:.1f}")
+    if seen != len(themes.PRESETS):
+        problems.append(f"only {seen} presets have Hifz colours")
     return {"problems": problems}
 
 
@@ -2377,8 +2523,11 @@ def theme_routes():
         if preview.status_code != 200 or "--accent" not in preview.json().get("tokens", {}) or os.listdir(folder):
             problems.append(f"preview: {preview.status_code}, folder {os.listdir(folder)}")
         light = client.post("/themes/preview", json={**seed, "background": "#EEEEEE"}, headers=local)
-        if light.status_code != 400 or "too light" not in light.json().get("detail", ""):
+        if light.status_code != 200 or light.json().get("tone") != "light" or os.listdir(folder):
             problems.append(f"a light preview: {light.status_code} {light.text[:100]}")
+        grey = client.post("/themes/preview", json={**seed, "background": "#808080"}, headers=local)
+        if grey.status_code != 400 or "in between" not in grey.json().get("detail", ""):
+            problems.append(f"a mid-grey preview: {grey.status_code} {grey.text[:100]}")
         made = client.post("/themes", json=seed, headers=local).json()
         again = client.post("/themes", json=seed, headers=local).json()
         if (made.get("id"), again.get("id")) != ("deep-sea", "deep-sea-2"):
@@ -2389,8 +2538,21 @@ def theme_routes():
                 problems.append("the file isn't the theme as given")
         if oct(os.stat(path).st_mode & 0o777) != "0o644":
             problems.append(f"the file's mode is {oct(os.stat(path).st_mode & 0o777)}")
-        if [t["id"] for t in client.get("/themes", headers=KEYED).json()["themes"]] != ["deep-sea", "deep-sea-2"]:
+        listed = client.get("/themes", headers=KEYED).json()
+        if [t["id"] for t in listed["themes"]] != ["deep-sea", "deep-sea-2"]:
             problems.append("GET /themes doesn't list both")
+        first = listed["themes"][0] if listed["themes"] else {}
+        if (first.get("tone") != "dark" or not first.get("swatches") or first.get("preset") is not False
+                or not first.get("hifz", {}).get("tokens") or not listed.get("hifz_classic", {}).get("ok")):
+            problems.append(f"GET /themes lacks the tone, swatches or Hifz colours: {sorted(first)}")
+        palette = {"name": "Mist Two", "background": "#F1F7F7", "panel": "#D5E5E5", "raised": "#DDD3D3",
+                   "border": "#B0D7D8", "text": "#3B4646", "muted": "#535F5F", "accent": "#A8585A",
+                   "on_accent": "#FFFFFF", "glows": ["#F7CBCA", "#B0D7D8", "#DDD3D3"], "blur": 18, "tint": 0.62}
+        made_light = client.post("/themes", json=palette, headers=local)
+        with open(os.path.join(folder, "mist-two.json")) as f:
+            if made_light.status_code != 200 or json.load(f) != palette or made_light.json().get("tone") != "light":
+                problems.append(f"a palette theme wasn't saved with its roles: {made_light.status_code}")
+        os.remove(os.path.join(folder, "mist-two.json"))
         if client.put("/themes/deep-sea", json={**seed, "name": "X"}, headers=KEYED).status_code != 403:
             problems.append("a theme was changed without the page's Origin")
         renamed = client.put("/themes/deep-sea", json={**seed, "name": "Abyss"}, headers=local)
@@ -2414,6 +2576,21 @@ def theme_routes():
     page = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "index.html")).read()
     if 'aria-controls="theme-menu"' not in page or "/themes/preview" not in page or "javid-theme-vars" not in page:
         problems.append("the page has no theme list, editor or saved colours")
+    boot = page[page.index('<script id="theme-boot">'):page.index("</script>")]
+    for marker, where, what in (("theme-strip", page, "the list's palette strips"),
+                                ("openThemeEditor(null, theme)", page, "a new theme from one in the list"),
+                                ('id="te-roles"', page, "the editor's palette roles"),
+                                ('id="hz-theme-btn"', page, "the Hifz page's theme button"),
+                                ("cached.tone === 'light'", boot, "a light theme's tone before the first paint"),
+                                ("cached.roles", boot, "a palette theme's mark before the first paint"),
+                                ("var(--fade-floor, 0)", page, "fades held to the muted text's 4.5:1"),
+                                ("javid-hifz-theme-vars", boot, "the Hifz theme before the first paint"),
+                                ('html[data-tone="light"] {', page, "the light block")):
+        if marker not in where:
+            problems.append(f"the page has no {what}")
+    root = page[page.index(":root {"):page.index("}", page.index(":root {"))]
+    if "--ink-rgb: 255, 255, 255;" not in root or "--field-rgb: 0, 0, 0;" not in root:
+        problems.append("the looks' fills aren't white ink and black fields by default")
     return {"problems": problems}
 
 
@@ -6818,10 +6995,14 @@ CASES += [
     Case("voice: the Providers panel shows ElevenLabs' characters a day; no page uses the browser's voice", [],
          [drive_ok], drive=voice_backup_panel, script=[]),
     # ---------- colour themes (2026-10-26): files in themes/, checked and worked out by themes.py ----------
-    Case("themes: the presets load, and any dark theme's text reads at 4.5:1 on its glass and pills", [],
-         [drive_ok, model_requests(0)], drive=theme_contrast, script=[]),
-    Case("themes: light, malformed or vanishing themes and path tricks are refused; broken files are reported", [],
+    Case("themes: all 14 presets pass every check, their colours are valid hex, Mist is light; the first four unchanged",
+         [], [drive_ok, model_requests(0)], drive=theme_presets, script=[]),
+    Case("themes: any dark or light theme's text reads at 4.5:1 on its glass and pills; a palette's roles are checked",
+         [], [drive_ok, model_requests(0)], drive=theme_contrast, script=[]),
+    Case("themes: mid-grey, malformed or vanishing themes and path tricks are refused; broken files are reported", [],
          [drive_ok, model_requests(0)], drive=theme_refusals, script=[]),
+    Case("themes: Hifz Classic and every preset pass on the Hifz page, Arabic, highlight and six statuses kept apart",
+         [], [drive_ok, model_requests(0)], drive=theme_hifz, script=[]),
     Case("themes: only the page makes, changes and deletes themes, each a JSON file in themes/; preview writes nothing",
          [], [drive_ok, model_requests(0)], drive=theme_routes, script=[]),
     # ---------- the web server's lock (2026-11-14): weblock.py, the middleware in server.py ----------
@@ -7036,7 +7217,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 256, len(CASES)
+assert len(CASES) == 258, len(CASES)
 
 
 def print_token_summary() -> None:

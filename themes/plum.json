@@ -1,0 +1,14 @@
+{
+  "name": "Plum",
+  "background": "#190019",
+  "panel": "#2B124C",
+  "raised": "#522B5B",
+  "border": "#854F6C",
+  "text": "#FBE4D8",
+  "muted": "#DFB6B2",
+  "accent": "#DFB6B2",
+  "on_accent": "#190019",
+  "glows": ["#522B5B", "#2B124C", "#854F6C"],
+  "blur": 18,
+  "tint": 0.72
+}

@@ -1,0 +1,14 @@
+{
+  "name": "Coffee",
+  "background": "#1A120E",
+  "panel": "#3A2418",
+  "raised": "#4A4A46",
+  "border": "#6B4A2E",
+  "text": "#D5C4AE",
+  "muted": "#CCB6A2",
+  "accent": "#A88462",
+  "on_accent": "#1A120E",
+  "glows": ["#4A4A46", "#3A2418", "#6B4A2E"],
+  "blur": 18,
+  "tint": 0.72
+}

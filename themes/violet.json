@@ -1,0 +1,14 @@
+{
+  "name": "Violet",
+  "background": "#0E0B1D",
+  "panel": "#2A1E4D",
+  "raised": "#3A3A52",
+  "border": "#5A3B8C",
+  "text": "#C9C2E3",
+  "muted": "#ABA0D6",
+  "accent": "#8B7CC7",
+  "on_accent": "#0E0B1D",
+  "glows": ["#3A3A52", "#2A1E4D", "#5A3B8C"],
+  "blur": 18,
+  "tint": 0.72
+}

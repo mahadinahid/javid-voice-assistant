@@ -1,0 +1,14 @@
+{
+  "name": "Berry Coral",
+  "background": "#1A0F2E",
+  "panel": "#3B1B4F",
+  "raised": "#51225A",
+  "border": "#7A2E6F",
+  "text": "#F4D7D4",
+  "muted": "#E28AB0",
+  "accent": "#FF6B6B",
+  "on_accent": "#1A0F2E",
+  "glows": ["#51225A", "#3B1B4F", "#7A2E6F"],
+  "blur": 18,
+  "tint": 0.72
+}

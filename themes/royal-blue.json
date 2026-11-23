@@ -1,0 +1,14 @@
+{
+  "name": "Royal Blue",
+  "background": "#021024",
+  "panel": "#052659",
+  "raised": "#214778",
+  "border": "#5483B3",
+  "text": "#C1E8FF",
+  "muted": "#A3BBD9",
+  "accent": "#5483B3",
+  "on_accent": "#021024",
+  "glows": ["#214778", "#052659", "#5483B3"],
+  "blur": 18,
+  "tint": 0.72
+}

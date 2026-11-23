@@ -1,0 +1,14 @@
+{
+  "name": "Teal Rust",
+  "background": "#0A0F14",
+  "panel": "#0F3D3E",
+  "raised": "#1A4E51",
+  "border": "#2E6F73",
+  "text": "#EADCC8",
+  "muted": "#93BFC3",
+  "accent": "#D96922",
+  "on_accent": "#0A0F14",
+  "glows": ["#1A4E51", "#0F3D3E", "#2E6F73"],
+  "blur": 18,
+  "tint": 0.72
+}

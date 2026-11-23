@@ -1,0 +1,386 @@
+{
+ "ember": {
+  "checks": [
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 11.85,
+    "what": "Text on glass"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 7.22,
+    "what": "Secondary text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 4.7,
+    "what": "Labels"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 6.79,
+    "what": "Text in your bubble"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 9.75,
+    "what": "Button text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 4.87,
+    "what": "Accent text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 7.27,
+    "what": "Highlights"
+   },
+   {
+    "min": 3.0,
+    "ok": true,
+    "ratio": 6.56,
+    "what": "Buttons stand out"
+   }
+  ],
+  "tokens": {
+   "--accent": "#FF9F45",
+   "--accent-hover": "#FFB169",
+   "--accent-ink": "#0F0805",
+   "--accent-soft": "rgba(255, 159, 69, 0.14)",
+   "--accent-text": "#FF9F45",
+   "--bg": "#140A07",
+   "--bg-elev": "#1D1411",
+   "--blue": "#FF6145",
+   "--blue-rgb": "255, 97, 69",
+   "--cyan": "#FFFC45",
+   "--cyan-rgb": "255, 252, 69",
+   "--cyan-soft": "#FFFEAD",
+   "--glass": "rgba(23, 13, 10, 0.58)",
+   "--glass-bg": "linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .02)), rgba(23, 13, 10, 0.58)",
+   "--glass-blur": "18px",
+   "--glass-fallback": "rgba(34, 25, 22, 0.94)",
+   "--glass-strong": "rgba(23, 13, 10, 0.82)",
+   "--glow-1": "rgba(234, 88, 12, 0.24)",
+   "--glow-2": "rgba(244, 63, 94, 0.16)",
+   "--glow-3": "rgba(250, 204, 21, 0.09)",
+   "--grad": "linear-gradient(135deg, #FF9F45, #FF9F45)",
+   "--grad-soft": "linear-gradient(135deg, rgba(255, 159, 69, 0.16), rgba(255, 252, 69, 0.08))",
+   "--label": "#C2AEA9",
+   "--mint": "#4ADE80",
+   "--mint-rgb": "74, 222, 128",
+   "--orb-1": "#FFFFFF",
+   "--orb-2": "#FFE7D0",
+   "--orb-2-rgb": "255, 231, 208",
+   "--orb-3": "#FF9F45",
+   "--orb-4": "#73481F",
+   "--orb-5": "#38230F",
+   "--orb-shade-rgb": "31, 19, 8",
+   "--pill-border-hover": "rgba(255, 159, 69, 0.45)",
+   "--ring-focus": "0 0 0 3px rgba(255, 159, 69, 0.3)",
+   "--scrim": "rgba(8, 4, 3, 0.8)",
+   "--text": "#F7F0ED",
+   "--text-2": "#E7D9D4",
+   "--user-border": "rgba(255, 159, 69, 0.5)",
+   "--user-bubble": "rgba(255, 159, 69, 0.22)",
+   "--violet": "#FF9F45",
+   "--violet-rgb": "255, 159, 69",
+   "--violet-soft": "#FFD5AD"
+  }
+ },
+ "graphite": {
+  "checks": [
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 12.77,
+    "what": "Text on glass"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 8.81,
+    "what": "Secondary text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 4.67,
+    "what": "Labels"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 6.81,
+    "what": "Text in your bubble"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 16.09,
+    "what": "Button text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 9.73,
+    "what": "Accent text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 7.44,
+    "what": "Highlights"
+   },
+   {
+    "min": 3.0,
+    "ok": true,
+    "ratio": 11.62,
+    "what": "Buttons stand out"
+   }
+  ],
+  "tokens": {
+   "--accent": "#E2E8F0",
+   "--accent-hover": "#FAFBFC",
+   "--accent-ink": "#080A0C",
+   "--accent-soft": "rgba(226, 232, 240, 0.14)",
+   "--accent-text": "#E2E8F0",
+   "--bg": "#0B0D10",
+   "--bg-elev": "#15171A",
+   "--blue": "#E2EDF0",
+   "--blue-rgb": "226, 237, 240",
+   "--cyan": "#E3E2F0",
+   "--cyan-rgb": "227, 226, 240",
+   "--cyan-soft": "#CBC9E3",
+   "--glass": "rgba(14, 16, 19, 0.6)",
+   "--glass-bg": "linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .02)), rgba(14, 16, 19, 0.6)",
+   "--glass-blur": "18px",
+   "--glass-fallback": "rgba(26, 28, 30, 0.94)",
+   "--glass-strong": "rgba(14, 16, 19, 0.82)",
+   "--glow-1": "rgba(71, 85, 105, 0.24)",
+   "--glow-2": "rgba(100, 116, 139, 0.16)",
+   "--glow-3": "rgba(148, 163, 184, 0.09)",
+   "--grad": "linear-gradient(135deg, #E2E8F0, #E2E8F0)",
+   "--grad-soft": "linear-gradient(135deg, rgba(226, 232, 240, 0.16), rgba(227, 226, 240, 0.08))",
+   "--label": "#9DA2A9",
+   "--mint": "#4ADE80",
+   "--mint-rgb": "74, 222, 128",
+   "--orb-1": "#FFFFFF",
+   "--orb-2": "#F8F9FB",
+   "--orb-2-rgb": "248, 249, 251",
+   "--orb-3": "#E2E8F0",
+   "--orb-4": "#66686C",
+   "--orb-5": "#323335",
+   "--orb-shade-rgb": "27, 28, 29",
+   "--pill-border-hover": "rgba(226, 232, 240, 0.45)",
+   "--ring-focus": "0 0 0 3px rgba(226, 232, 240, 0.3)",
+   "--scrim": "rgba(4, 5, 6, 0.8)",
+   "--text": "#F0F2F4",
+   "--text-2": "#DADDE2",
+   "--user-border": "rgba(226, 232, 240, 0.5)",
+   "--user-bubble": "rgba(226, 232, 240, 0.22)",
+   "--violet": "#E2E8F0",
+   "--violet-rgb": "226, 232, 240",
+   "--violet-soft": "#E2E8F0"
+  }
+ },
+ "ocean": {
+  "checks": [
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 12.56,
+    "what": "Text on glass"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 8.97,
+    "what": "Secondary text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 4.7,
+    "what": "Labels"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 8.48,
+    "what": "Text in your bubble"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 8.77,
+    "what": "Button text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 5.42,
+    "what": "Accent text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 6.13,
+    "what": "Highlights"
+   },
+   {
+    "min": 3.0,
+    "ok": true,
+    "ratio": 6.24,
+    "what": "Buttons stand out"
+   }
+  ],
+  "tokens": {
+   "--accent": "#5AB2FF",
+   "--accent-hover": "#7EC3FF",
+   "--accent-ink": "#040A10",
+   "--accent-soft": "rgba(90, 178, 255, 0.14)",
+   "--accent-text": "#5AB2FF",
+   "--bg": "#06101C",
+   "--bg-elev": "#101A25",
+   "--blue": "#5AE9FF",
+   "--blue-rgb": "90, 233, 255",
+   "--cyan": "#5A5FFF",
+   "--cyan-rgb": "90, 95, 255",
+   "--cyan-soft": "#ADB0FF",
+   "--glass": "rgba(9, 19, 31, 0.58)",
+   "--glass-bg": "linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .02)), rgba(9, 19, 31, 0.58)",
+   "--glass-blur": "18px",
+   "--glass-fallback": "rgba(21, 30, 42, 0.94)",
+   "--glass-strong": "rgba(9, 19, 31, 0.82)",
+   "--glow-1": "rgba(29, 78, 216, 0.24)",
+   "--glow-2": "rgba(6, 182, 212, 0.16)",
+   "--glow-3": "rgba(139, 92, 246, 0.09)",
+   "--grad": "linear-gradient(135deg, #5AB2FF, #5AB2FF)",
+   "--grad-soft": "linear-gradient(135deg, rgba(90, 178, 255, 0.16), rgba(90, 95, 255, 0.08))",
+   "--label": "#91A2B6",
+   "--mint": "#4ADE80",
+   "--mint-rgb": "74, 222, 128",
+   "--orb-1": "#FFFFFF",
+   "--orb-2": "#D6ECFF",
+   "--orb-2-rgb": "214, 236, 255",
+   "--orb-3": "#5AB2FF",
+   "--orb-4": "#285073",
+   "--orb-5": "#142738",
+   "--orb-shade-rgb": "11, 21, 31",
+   "--pill-border-hover": "rgba(90, 178, 255, 0.45)",
+   "--ring-focus": "0 0 0 3px rgba(90, 178, 255, 0.3)",
+   "--scrim": "rgba(2, 6, 11, 0.8)",
+   "--text": "#EDF2F8",
+   "--text-2": "#D4DDE8",
+   "--user-border": "rgba(90, 178, 255, 0.5)",
+   "--user-bubble": "rgba(90, 178, 255, 0.22)",
+   "--violet": "#5AB2FF",
+   "--violet-rgb": "90, 178, 255",
+   "--violet-soft": "#ADD9FF"
+  }
+ },
+ "orchid": {
+  "checks": [
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 12.59,
+    "what": "Text on glass"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 8.55,
+    "what": "Secondary text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 4.61,
+    "what": "Labels"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 8.17,
+    "what": "Text in your bubble"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 9.23,
+    "what": "Button text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 5.61,
+    "what": "Accent text"
+   },
+   {
+    "min": 4.5,
+    "ok": true,
+    "ratio": 6.55,
+    "what": "Highlights"
+   },
+   {
+    "min": 3.0,
+    "ok": true,
+    "ratio": 6.63,
+    "what": "Buttons stand out"
+   }
+  ],
+  "tokens": {
+   "--accent": "#C99BFF",
+   "--accent-hover": "#DCBFFF",
+   "--accent-ink": "#09050F",
+   "--accent-soft": "rgba(201, 155, 255, 0.14)",
+   "--accent-text": "#C99BFF",
+   "--bg": "#10091A",
+   "--bg-elev": "#1A1323",
+   "--blue": "#A89BFF",
+   "--blue-rgb": "168, 155, 255",
+   "--cyan": "#FB9BFF",
+   "--cyan-rgb": "251, 155, 255",
+   "--cyan-soft": "#FCADFF",
+   "--glass": "rgba(19, 12, 29, 0.58)",
+   "--glass-bg": "linear-gradient(180deg, rgba(255, 255, 255, .07), rgba(255, 255, 255, .02)), rgba(19, 12, 29, 0.58)",
+   "--glass-blur": "18px",
+   "--glass-fallback": "rgba(30, 24, 40, 0.94)",
+   "--glass-strong": "rgba(19, 12, 29, 0.82)",
+   "--glow-1": "rgba(147, 51, 234, 0.24)",
+   "--glow-2": "rgba(236, 72, 153, 0.16)",
+   "--glow-3": "rgba(99, 102, 241, 0.09)",
+   "--grad": "linear-gradient(135deg, #C99BFF, #C99BFF)",
+   "--grad-soft": "linear-gradient(135deg, rgba(201, 155, 255, 0.16), rgba(251, 155, 255, 0.08))",
+   "--label": "#A69AB7",
+   "--mint": "#4ADE80",
+   "--mint-rgb": "74, 222, 128",
+   "--orb-1": "#FFFFFF",
+   "--orb-2": "#F2E6FF",
+   "--orb-2-rgb": "242, 230, 255",
+   "--orb-3": "#C99BFF",
+   "--orb-4": "#5A4673",
+   "--orb-5": "#2C2238",
+   "--orb-shade-rgb": "24, 19, 31",
+   "--pill-border-hover": "rgba(201, 155, 255, 0.45)",
+   "--ring-focus": "0 0 0 3px rgba(201, 155, 255, 0.3)",
+   "--scrim": "rgba(6, 4, 10, 0.8)",
+   "--text": "#F1EDF7",
+   "--text-2": "#DCD4E8",
+   "--user-border": "rgba(201, 155, 255, 0.5)",
+   "--user-bubble": "rgba(201, 155, 255, 0.22)",
+   "--violet": "#C99BFF",
+   "--violet-rgb": "201, 155, 255",
+   "--violet-soft": "#D3ADFF"
+  }
+ }
+}

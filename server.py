@@ -1075,7 +1075,8 @@ def reject_action(aid: str, request: Request):
 # ---------- colour themes (themes.py: one JSON file each in themes/) ----------
 @app.get("/themes")
 def themes_list():
-    """Every usable colour theme with its colours worked out, and what's wrong with any file that isn't."""
+    """Every usable colour theme with its colours worked out (the main page's and the Hifz page's, with their checks and
+    swatches), what's wrong with any file that isn't, and Hifz Classic's checks."""
     return themes.listing()
 
 

@@ -21,9 +21,9 @@ import javid
 import memory_store
 
 APPROVE_SEC = 120
-# What waits on the web page and in the CLI: the model's deletes and moves, and hifz.py's delete or reset of
-# revision logs (asked for in code, carded through javid.gate_write).
-DESTRUCTIVE = ("delete_task", "delete_event", "move_event", "hifz_delete", "hifz_reset")
+# What waits on the web page and in the CLI: the model's deletes and moves, hifz.py's delete or reset of revision
+# logs, and duas.py's addition of a dua from a picture (asked for in code, carded through javid.gate_write).
+DESTRUCTIVE = ("delete_task", "delete_event", "move_event", "hifz_delete", "hifz_reset", "dua_add")
 _actions: dict[str, dict] = {}      # id -> {"id", "tool", "at", "turn", "typed_yes", "text", plus what run() needs}
 _turn = 0                           # bumped once per user message (javid.think_stream): a typed yes answers the last turn's card
 
@@ -155,6 +155,12 @@ def _plan(tool: str, args: dict, refuse_memory: str | None):
     if tool == "hifz_reset":
         return {"text": f"Delete your whole revision history: {args.get('count', 0)} logs since "
                         f"{args.get('since', 'the start')}", "count": args.get("count", 0)}
+    if tool == "dua_add":              # duas.py: a dua from a picture, bound to the addition as it was checked
+        import duas
+        entry = duas.pending_item(str(args.get("pending") or ""))
+        if not entry:
+            return "That addition isn't waiting any more."
+        return {"text": duas.describe_pending(entry), "pending": entry["id"]}
     if tool == "save_report":          # Google Drive: bound to the document as it is now
         report = args.get("report") or {}
         if not report.get("screen"):
@@ -229,6 +235,9 @@ def run(action: dict) -> str:
         n, copy = hifz.reset()
         return (f"Deleted your revision history ({n} logs). A copy is kept in {copy} until the next reset."
                 if n else "There was no revision history to delete.")
+    elif tool == "dua_add":
+        import duas
+        return duas.approve(action["pending"])
     elif tool == "save_report":
         done = drive_tools.save(action["report"])
         result = drive_tools.say(done["said"]) + (f" {done['link']}" if done.get("link") else "")

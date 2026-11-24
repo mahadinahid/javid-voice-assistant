@@ -140,14 +140,16 @@ _SPOKEN = {
               "Recitations and their timings come from Quran.com (eleven reciters; Ghamdi and Muaiqly from "
               "everyayah.com), the text I show and its translations (Saheeh International, Muhiuddin Khan) from Tanzil, "
               "kept on your Mac, and the surahs, juz and ayah counts from Tanzil's metadata, checked against Quran.com; "
-              "I never quote the Quran myself. "
+              "I never quote the Quran myself. Duas come only from your Dua & Zikr list, which was checked against "
+              "Quran.com, Hisnul Muslim and the six hadith collections; I never give one from memory. "
               "News comes from Google News, and other web answers from a Tavily web search, with the source and date.",
         "bn": "আবহাওয়া আসে Open-Meteo থেকে, দাম Binance আর Yahoo Finance থেকে, এক্সচেঞ্জ রেট ইউরোপিয়ান সেন্ট্রাল "
               "ব্যাংক আর ExchangeRate-API থেকে, ছুটির দিন Google-এর ছুটির ক্যালেন্ডার থেকে, আর নামাজের সময় ও হিজরি "
               "তারিখ Aladhan থেকে। তিলাওয়াত আর তার সময় আসে Quran.com থেকে (এগারোজন ক্বারী; গামদি আর মুআইকলি "
               "everyayah.com থেকে), দেখানো পাঠ আর অনুবাদ (সহিহ ইন্টারন্যাশনাল, মুহিউদ্দীন খান) Tanzil থেকে, তোমার ম্যাকে রাখা, "
               "আর সূরা, পারা ও আয়াতের হিসাব Tanzil-এর তালিকা থেকে, Quran.com-এর সাথে মিলিয়ে দেখা; কুরআনের শব্দ আমি নিজে "
-              "কখনো বলি না। খবর আসে Google News থেকে, "
+              "কখনো বলি না। দোয়া আসে শুধু তোমার দোয়া ও জিকিরের তালিকা থেকে, যা Quran.com, হিসনুল মুসলিম আর ছয়টি "
+              "হাদিস গ্রন্থের সাথে মিলিয়ে দেখা; মনে থেকে কোনো দোয়া বলি না। খবর আসে Google News থেকে, "
               "আর অন্য ওয়েবের উত্তর Tavily সার্চ থেকে, উৎস আর তারিখসহ।"},
     "memory": {
         "en": "I only remember what you approve: I propose a line, and it's saved to a file on your Mac once you "
@@ -176,7 +178,9 @@ _SPOKEN = {
               "give me, and remember what you approve. I tell you the prayer times and the Hijri date, ring before "
               "each prayer, and send zikir reminders and a morning brief to Telegram. I keep your Quran revision on a "
               "steady rotation, remind you of today's portion, show any surah or juz to read, with a translation or "
-              "as a hifz test, and play recitations from Quran.com with each ayah lit as it's recited. I can also "
+              "as a hifz test, and play recitations from Quran.com with each ayah lit as it's recited. Your duas and "
+              "adhkar are on the Hifz page too, after each salah, morning, evening and before sleep, each with a "
+              "counter, and a card comes a few minutes after each prayer with its adhkar. I can also "
               "watch a price, the news about something or the rain and tell you when it happens, check myself "
               "when something seems wrong, and save a report or a brief to your Google Drive when you say so. For "
               "bigger jobs I have {agents} agents; I can't send email or messages, "
@@ -186,6 +190,8 @@ _SPOKEN = {
               "রাখি। নামাজের সময় আর হিজরি তারিখ বলি, প্রতি ওয়াক্তের আগে জানাই, আর টেলিগ্রামে জিকিরের রিমাইন্ডার ও "
               "সকালের ব্রিফ পাঠাই। তোমার কুরআন রিভিশন নিয়মিত চক্রে রাখি, আজকের অংশ মনে করিয়ে দিই, যেকোনো সূরা বা পারা "
               "পড়তে দেখাই, অনুবাদসহ বা হিফজ টেস্ট হিসেবে, আর Quran.com থেকে তিলাওয়াত চালাই, প্রতিটি আয়াত জ্বলে ওঠে। "
+              "তোমার দোয়া ও জিকিরও হিফজ পেজে আছে, নামাজের পর, সকাল, সন্ধ্যা আর ঘুমানোর আগের, প্রতিটার কাউন্টারসহ, আর "
+              "প্রতি ওয়াক্তের কয়েক মিনিট পর সেই ওয়াক্তের জিকিরের কার্ড আসে। "
               "কোনো দাম, কোনো বিষয়ের খবর বা বৃষ্টির দিকে "
               "নজর রেখে সময়মতো জানাতে পারি, কিছু ঠিকমতো না চললে নিজেকে পরীক্ষা করতে পারি, আর তুমি বললে রিপোর্ট বা ব্রিফ "
               "তোমার Google Drive-এ সেভ করতে পারি। বড় কাজের জন্য {agents} "
@@ -245,6 +251,7 @@ _CAPABILITIES_SCREEN = """What Javid can do:
 - Prayer times and the Hijri date (Aladhan), a ring before each prayer, zikir reminders and a morning brief on Telegram
 - Hifz revision: "I revised juz 5", today's portion, what's behind, reminders after Fajr
 - The Quran to read and hear: any surah or juz, with a translation or as a hifz test; recitations from Quran.com, each ayah lit
+- Dua & Zikr: your checked list on the Hifz page, a counter for each, a card after each prayer; "show my after-Maghrib duas"
 - Weather, live crypto and stock prices, exchange rates
 - Sums and unit conversions
 - News from Google News, web search, public holidays

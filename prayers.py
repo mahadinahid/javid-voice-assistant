@@ -1136,7 +1136,11 @@ def _raised_texts(item: dict, cfg: dict, ts: float) -> tuple[str, dict]:
     return r["name"], {lang: _fill(r["text"][lang], on, lang, cfg) for lang in ("en", "bn")}
 
 
-_state_lock = threading.Lock()
+# Re-entrant: tick() holds it while it builds the morning brief, whose revision line (hifz.brief_line) asks
+# ramadan_start(), which takes it again on the same thread. A plain Lock froze the reminder thread there once a
+# revision was logged, and every GET /hifz after it (found 2026-11-23 on a scratch server; the live one was spared
+# because its brief went out before the first log).
+_state_lock = threading.RLock()
 
 
 def _load_state() -> dict:

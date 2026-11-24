@@ -48,6 +48,7 @@ keep_awake: true      # while the server runs and the Mac is on power, it doesn'
 # page: true also rings it on the page; enabled: false keeps it here, switched off.
 reminders:
   - name: Evening adhkar
+    enabled: false      # replaced by the Dua & Zikr card after Asr (duas.py, data/dua_settings.json), 2026-11-24
     after: Asr
     minutes: 30
     text:

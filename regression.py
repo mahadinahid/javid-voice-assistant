@@ -1,5 +1,5 @@
 """
-Regression check for Javid's agent behaviour: 258 cases. The default run never calls a real API: 194 of them script the
+Regression check for Javid's agent behaviour: 271 cases. The default run never calls a real API: 207 of them script the
 model's part and replay recorded fixtures for every provider; the other 64 send prompts through the real LLM and tool
 loop and only run with --llm.
 
@@ -65,6 +65,8 @@ import approvals  # noqa: E402
 import calendar_tools as ct  # noqa: E402
 import documents  # noqa: E402
 import drive_tools  # noqa: E402
+import dua_check  # noqa: E402
+import duas  # noqa: E402
 import edge_pool  # noqa: E402
 import gnews  # noqa: E402
 import hifz  # noqa: E402
@@ -433,14 +435,14 @@ def prayer_fresh(fake=None):
 
 @contextlib.contextmanager
 def prayer_clock(when: datetime):
-    """prayers', hifz's and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
+    """prayers', hifz's, duas' and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
     now = [when.timestamp()]
-    saved = prayers._time, timers._now, hifz._time
-    prayers._time = timers._now = hifz._time = lambda: now[0]
+    saved = prayers._time, timers._now, hifz._time, duas._time
+    prayers._time = timers._now = hifz._time = duas._time = lambda: now[0]
     try:
         yield types.SimpleNamespace(at=lambda dt: now.__setitem__(0, dt.timestamp()), now=lambda: now[0])
     finally:
-        prayers._time, timers._now, hifz._time = saved
+        prayers._time, timers._now, hifz._time, duas._time = saved
 
 
 def _dhaka(*args) -> datetime:
@@ -590,6 +592,15 @@ class FakeQuranCom:
             return {"audio_file": {"id": cid * 1000 + s, "chapter_id": s, "file_size": 1, "format": "mp3",
                                    "audio_url": f"https://download.quranicaudio.com/qdc/fake_{cid}/{s}.mp3",
                                    "timestamps": fake_timestamps(cid, s, self.wrong)}}
+        if "/verses/by_key/" in url:                    # a Quranic dua's ayah (duas.py): the made-up words
+            key = url.split("/verses/by_key/")[1].split("?")[0]
+            s, a = map(int, key.split(":"))
+            words = fake_words(s, a)
+            return {"verse": {"verse_key": key, "text_uthmani": " " + " ".join(words),
+                              "words": [{"position": i + 1, "char_type_name": "word", "text_uthmani": w}
+                                        for i, w in enumerate(words)] +
+                                       [{"position": len(words) + 1, "char_type_name": "end",
+                                         "text_uthmani": str(a).translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))}]}}
         raise OSError(f"the fake Quran.com has no {url}")
 
 
@@ -616,6 +627,122 @@ def quran_fresh(text: bool = False) -> None:
     ENSURE_SOON.clear()
     if text:
         quran_text.ensure()
+
+
+# ---------- Dua & Zikr (duas.py, dua_check.py), 2026-11-24: the suite's own list and sources, all made up ----------
+duas.LIST_FILE = os.path.join(SCRATCH, "duas.yaml")              # never Mahadi's list
+duas.SETTINGS_FILE = os.path.join(SCRATCH, "dua_settings.json")  # nor his reminder settings
+duas.PROGRESS_FILE = os.path.join(SCRATCH, "dua_progress.json")  # nor his counters
+duas.STATE_FILE = os.path.join(SCRATCH, "dua_state.json")
+duas.PENDING_FILE = os.path.join(SCRATCH, "dua_pending.json")
+duas.QURAN_DIR = os.path.join(SCRATCH, "dua_quran")
+duas.INBOX_DIR = os.path.join(SCRATCH, "dua_inbox")
+duas.BACKGROUND = False             # Quran.com (the fake) is asked in line, so a case sees every request
+dua_check.DIR = os.path.join(SCRATCH, "dua_sources")              # nor the Hisnul Muslim and hadith data on the Mac
+dua_check._get = lambda url: (_ for _ in ()).throw(OSError("dua_check downloads nothing in the suite"))
+DUA_READINGS: dict = {}             # a picture's bytes -> what the fake Tesseract reads in it
+dua_check.OCR = lambda data: DUA_READINGS.get(data, "")
+
+
+def fake_dua(k: int, words: int = 6) -> str:
+    """A made-up dua's Arabic: letters, each with a fatha, never a real dua's words (none is in this repository)."""
+    return " ".join("".join(chr(0x0628 + (k * 7 + w * 3 + i) % 19) + "\u064e" for i in range(3 + (k + w) % 3))
+                    for w in range(words))
+
+
+DUA_ITEMS = [   # every kind of entry: the after-salah list in Hisnul Muslim's order, each prayer's own, both times of day
+    {"id": "salah-a", "title": "First after salah", "status": "verified", "kind": "dua", "when": ["after_salah"],
+     "count": 3, "order": 10, "arabic": fake_dua(1), "arabic_from": "Hisnul Muslim #1", "reference": ["Hisnul Muslim #1"],
+     "transliteration": {"en": "First one"}, "meaning": {"en": "The first, made up.", "bn": "প্রথমটা, বানানো।"}},
+    {"id": "salah-tasbih", "title": "The counted one", "status": "verified", "kind": "dua", "when": ["after_salah"],
+     "count": 33, "order": 20, "arabic": fake_dua(2), "arabic_from": "Hisnul Muslim #4",
+     "phases": [{"count": 33, "label": "One"}, {"count": 33, "label": "Two"}, {"count": 33, "label": "Three"},
+                {"count": 1, "label": "Last"}]},
+    {"id": "salah-quls", "title": "Three short surahs", "status": "verified", "kind": "quran", "when": ["after_salah"],
+     "count": 1, "count_after": {"Fajr": 3, "Maghrib": 3}, "order": 30, "arabic_from": "Quran.com",
+     "quran": {"ayahs": ["112:1", "112:2"], "link": "https://quran.com/112"}},
+    {"id": "salah-plain", "title": "Unnumbered after salah", "status": "verified", "kind": "dua", "when": ["after_salah"],
+     "arabic": fake_dua(3)},
+    {"id": "fajr-own", "title": "Only after Fajr", "status": "verified", "kind": "dua", "when": ["after_fajr"], "count": 10,
+     "arabic": fake_dua(4)},
+    {"id": "maghrib-own", "title": "Only after Maghrib", "status": "check", "kind": "dua", "when": ["after_maghrib"],
+     "arabic": fake_dua(5), "notes": ["Its wording differs from the source in one word."]},
+    {"id": "morning-a", "title": "Morning one", "status": "verified", "kind": "dua", "when": ["morning"], "count": 3,
+     "arabic": fake_dua(6)},
+    {"id": "both-a", "title": "Morning and evening", "status": "verified", "kind": "dua", "when": ["morning", "evening"],
+     "count": 7, "arabic": fake_dua(7)},
+    {"id": "evening-a", "title": "Evening one", "status": "verified", "kind": "dua", "when": ["evening"],
+     "arabic": fake_dua(8)},
+    {"id": "sleep-q", "title": "An ayah at night", "status": "verified", "kind": "quran", "when": ["before_sleep"],
+     "arabic_from": "Quran.com", "quran": {"ayahs": ["2:255"]}},
+    {"id": "practice-a", "title": "Two surahs before sleeping", "status": "verified", "kind": "practice",
+     "when": ["before_sleep"], "reference": ["A made-up reference"]},
+    {"id": "worry", "title": "For worry", "status": "verified", "kind": "dua", "when": ["anytime"],
+     "occasion": "in worry and grief", "arabic": fake_dua(9)},
+    {"id": "debt-check", "title": "For debt", "status": "check", "kind": "dua", "when": ["anytime"], "occasion": "for debt",
+     "arabic": fake_dua(10)},
+    {"id": "part-ayah", "title": "Part of an ayah", "status": "verified", "kind": "quran", "when": ["anytime"],
+     "quran": {"ayahs": ["3:8"], "words": {"3:8": [2, 5]}}},
+    {"id": "hidden-fajr", "title": "A post's after-Fajr routine", "status": "unsourced", "kind": "practice",
+     "when": ["after_fajr"]},
+    {"id": "hidden-any", "title": "A post's dua for debt", "status": "unsourced", "kind": "dua", "when": ["anytime"],
+     "occasion": "for debt", "arabic": fake_dua(11)},
+    {"id": "occasion-a", "title": "In sujud", "status": "verified", "kind": "dua", "when": ["other"], "occasion": "in sujud",
+     "arabic": fake_dua(12)},
+]
+DUA_HEADER = "# The suite's made-up Dua & Zikr list (regression.py): no real dua's words.\n"
+DUA_HISN = [    # the made-up Hisnul Muslim: #1 is salah-a's text, #2 a dua not in the list, #3 an ayah it quotes
+    {"chapter": 1, "title_en": "Made-up chapter", "items_ar": [
+        {"ID": 1, "ARABIC_TEXT": f"(({fake_dua(1)}))", "REPEAT": 3},
+        {"ID": 2, "ARABIC_TEXT": f"(({fake_dua(20, 8)})) {fake_dua(29, 2)}", "REPEAT": 100},
+        {"ID": 3, "ARABIC_TEXT": "﴿" + " ".join(fake_words(2, 255)) + "﴾", "REPEAT": 1}],
+     "items_en": [{"ID": 1, "LANGUAGE_ARABIC_TRANSLATED_TEXT": "(Made-up first.)", "TRANSLATED_TEXT": "(The first.)"},
+                  {"ID": 2, "LANGUAGE_ARABIC_TRANSLATED_TEXT": "(Made-up second one, said often.)one hundred times)",
+                   "TRANSLATED_TEXT": "(The second, made up.)"}]}]
+DUA_HADITH = {"bukhari": [{"hadithnumber": 7, "arabicnumber": 7, "text": f"قال “{fake_dua(21, 8)}” .", "grades": []}],
+              "abudawud": [{"hadithnumber": 9, "arabicnumber": 9, "text": f"قال “{fake_dua(22, 8)}” .",
+                            "grades": [{"name": "Al-Albani", "grade": "Da'if"}]}]}
+
+
+def write_dua_list(items=None, extra: str = "") -> None:
+    with open(duas.LIST_FILE, "w", encoding="utf-8") as f:
+        f.write(DUA_HEADER + yaml.dump({"version": 1, "checked": "2026-11-23", "items": items or DUA_ITEMS,
+                                        "not_duas": []}, allow_unicode=True, sort_keys=False, width=110) + extra)
+    duas.reload()
+
+
+def dua_fresh(**settings) -> FakeQuranCom:
+    """The suite's list, no counters, settings (the defaults, with changes), nothing raised or waiting, no Quran.com
+    copies or pictures, the made-up sources and Tanzil text; the fake Quran.com (returned)."""
+    write_dua_list()
+    for f in (duas.SETTINGS_FILE, duas.PROGRESS_FILE, duas.STATE_FILE, duas.PENDING_FILE):
+        with contextlib.suppress(OSError):
+            os.remove(f)
+    for d in (duas.QURAN_DIR, duas.INBOX_DIR, dua_check.DIR):
+        shutil.rmtree(d, ignore_errors=True)
+    if settings:
+        duas.save_settings(settings)
+    os.makedirs(dua_check.DIR)
+    with open(os.path.join(dua_check.DIR, dua_check.HISN_FILE), "w", encoding="utf-8") as f:
+        json.dump(DUA_HISN, f, ensure_ascii=False)
+    for book, rows in DUA_HADITH.items():
+        with open(os.path.join(dua_check.DIR, f"ara-{book}.json"), "w", encoding="utf-8") as f:
+            json.dump({"hadiths": rows}, f, ensure_ascii=False)
+    dua_check.forget()
+    DUA_READINGS.clear()
+    fake = FakeQuranCom()
+    duas._get_json = fake.get
+    duas._qfail["at"] = 0.0
+    quran_fresh(text=True)
+    return fake
+
+
+def dua_picture(n: int, kind: str = "PNG") -> bytes:
+    """A small real picture (documents.py checks a picture is one), different for each n; Telegram's photos are JPEG."""
+    from PIL import Image
+    buf = io.BytesIO()
+    Image.new("RGB", (240, 160), (20 + n * 30 % 200, 90, 140)).save(buf, format=kind)
+    return buf.getvalue()
 
 
 # ---------- files (documents.py, 2026-11-16): the sample files, a fake Tesseract, no vision model unless a case says ----------
@@ -4621,6 +4748,636 @@ def prayer_brief():
     return {"problems": problems}
 
 
+def prayer_brief_with_revision():
+    """The brief with a revision logged: its hifz line asks for Ramadan's date while the tick holds the prayers'
+    state lock (2026-11-23: a plain Lock froze the reminder thread right there, and every GET /hifz after it). The
+    tick comes back with the brief and its revision line, and /hifz still answers."""
+    import threading
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayer_fresh()
+    hifz_settings()
+    hifz_fresh()
+    out = {}
+
+    def run(name, fn):
+        t = threading.Thread(target=lambda: out.__setitem__(name, fn()), daemon=True)
+        t.start()
+        t.join(5)
+        return not t.is_alive()
+    with prayer_clock(_dhaka(2026, 11, 21, 7, 0)) as clock:
+        prayers.ramadan_start()                     # saved: hifz's Ramadan line reads it back during the tick
+        hifz.log([quran.unit_portion("juz", 1)])
+        clock.at(_dhaka(2026, 11, 22, 5, 18))
+        if not run("tick", prayers.tick):
+            problems.append("the tick froze building the brief (the prayers' state lock taken twice)")
+        else:
+            briefs = [a for a in out["tick"] if a["kind"] == "brief"]
+            if len(briefs) != 1 or "📖 Revision today: juz 2" not in briefs[0]["announce"]["en"] \
+                    or "days to Ramadan" not in briefs[0]["announce"]["en"]:
+                problems.append(f"the brief: {[b['announce']['en'] for b in briefs]}")
+        if not run("hifz", lambda: client.get("/hifz", headers=KEYED).status_code) or out.get("hifz") != 200:
+            problems.append(f"GET /hifz after the tick: {out.get('hifz', 'it hung')}")
+    hifz_fresh()
+    return {"problems": problems}
+
+
+# ---------- Dua & Zikr (duas.py, dua_check.py), 2026-11-24 ----------
+def _no_arabic(text: str) -> bool:
+    return not quran._ARABIC.search(text or "")
+
+
+def _dua_turn(text: str, files=None, lang: str = "en", yes_ok: bool = True):
+    """One page turn: (its events, its reply)."""
+    javid.set_language(lang)
+    events = list(javid.think_stream(text, files=files, yes_ok=yes_ok))
+    javid.set_language("en")
+    return events, "".join(v for k, v in events if k == "delta")
+
+
+def dua_list():
+    """The list loads: every item with its timing and status, every dua with its Arabic as the file has it, every
+    Quranic one with its ayahs' text; a broken entry is reported and left out, a broken file keeps the last good list;
+    `python duas.py --check` says the same. The suite's list is scratch, never Mahadi's."""
+    problems = []
+    dua_fresh()
+    if not duas.LIST_FILE.startswith(SCRATCH):
+        problems.append(f"the list read is {duas.LIST_FILE}")
+    got = duas.items()
+    if [i["id"] for i in got] != [i["id"] for i in DUA_ITEMS] or duas.problems():
+        problems.append(f"loaded {[i['id'] for i in got]}, problems {duas.problems()}")
+    for i in got:
+        if not i["when"] or set(i["when"]) - set(duas.WHEN) or i["status"] not in duas.STATUSES:
+            problems.append(f"{i['id']}: when {i['when']}, status {i['status']}")
+        if i["kind"] == "dua" and i["status"] in duas.SHOWN and not i["arabic"]:
+            problems.append(f"{i['id']}: no Arabic")
+        if i["kind"] == "quran":
+            segs = duas.quran_segments(i)
+            if [x["key"] for x in segs] != i["quran"]["ayahs"] or not all(x["text"] for x in segs):
+                problems.append(f"{i['id']}: its text {segs}")
+    if duas.get("salah-a")["arabic"] != fake_dua(1):
+        problems.append("the Arabic isn't the file's as it is")
+    bad = DUA_ITEMS + [{"id": "bad-time", "title": "x", "status": "verified", "kind": "dua", "when": ["teatime"],
+                        "arabic": fake_dua(30)},
+                       {"id": "no-arabic", "title": "y", "status": "verified", "kind": "dua", "when": ["morning"]},
+                       {"id": "bad-ayah", "title": "z", "status": "verified", "kind": "quran", "when": ["anytime"],
+                        "quran": {"ayahs": ["1:8"]}}]
+    write_dua_list(bad)
+    said = " ".join(duas.problems())
+    if len(duas.items()) != len(DUA_ITEMS) or not all(x in said for x in ("bad-time", "no-arabic", "1:8 isn't an ayah")):
+        problems.append(f"broken entries: {len(duas.items())} kept, said {said!r}")
+    with open(duas.LIST_FILE, "w", encoding="utf-8") as f:
+        f.write("items: [ {id: unclosed")
+    duas.reload()
+    if len(duas.items()) != len(DUA_ITEMS) or "can't be read" not in " ".join(duas.problems()):
+        problems.append(f"a broken file: {len(duas.items())} items, {duas.problems()}")
+    os.remove(duas.LIST_FILE)
+    duas.reload()
+    if duas.items() or not duas.problems():
+        problems.append("no file, yet a list")
+    dua_fresh()
+    lines, found = duas.check_report()
+    text = "\n".join(lines)
+    for part in ("17 items: 13 verified, 2 check, 2 unsourced", "After salah: 4 shown", "Fajr's card: 7",
+                 "Anytime: 3 shown"):
+        if part not in text:
+            problems.append(f"--check lacks {part!r}: {text!r}")
+    if found:
+        problems.append(f"--check found {found}")
+    checks = [c for c in themes.hifz_checks(dict(themes.HIFZ_CLASSIC)) if c["what"].startswith("Dua & Zikr")]
+    if len(checks) != 4 or not all(c["ok"] for c in checks):
+        problems.append(f"the Hifz theme's dua checks: {checks}")
+    return {"problems": problems}
+
+
+def dua_cards():
+    """Each prayer's card: the after-salah adhkar in Hisnul Muslim's order on that prayer's own counters, then that
+    prayer's own; after Fajr the morning adhkar, after Asr the evening's; each count as that prayer has it (three
+    after Fajr and Maghrib), the tasbih to 100. Unsourced ones only when turned on."""
+    problems = []
+    dua_fresh()
+    common = lambda slot, quls: [("salah-a", slot, 3), ("salah-tasbih", slot, 100), ("salah-quls", slot, quls),
+                                 ("salah-plain", slot, 1)]
+    want = {"Fajr": common("fajr", 3) + [("fajr-own", "fajr", 10), ("morning-a", "morning", 3), ("both-a", "morning", 7)],
+            "Dhuhr": common("dhuhr", 1),
+            "Asr": common("asr", 1) + [("both-a", "evening", 7), ("evening-a", "evening", 1)],
+            "Maghrib": common("maghrib", 3) + [("maghrib-own", "maghrib", 1)],
+            "Isha": common("isha", 1)}
+    for p, w in want.items():
+        got = [(e["id"], e["slot"], e["target"]) for e in duas.card(p)]
+        if got != w:
+            problems.append(f"{p}: {got}")
+    groups = {g["key"]: g.get("items") or g.get("common") for g in duas.tab_json()["groups"]}
+    if groups != {"after_salah": ["salah-a", "salah-tasbih", "salah-quls", "salah-plain"],
+                  "morning": ["morning-a", "both-a"], "evening": ["both-a", "evening-a"],
+                  "before_sleep": ["sleep-q", "practice-a"], "anytime": ["worry", "debt-check", "part-ayah"],
+                  "other": ["occasion-a"]}:
+        problems.append(f"the tab's groups: {groups}")
+    if [e["group"] for e in duas.card("Fajr")][-3:] != ["after_fajr", "morning", "morning"]:
+        problems.append("the card doesn't say where its own and the morning's begin")
+    duas.save_settings({"show_unsourced": True})
+    if "hidden-fajr" not in [e["id"] for e in duas.card("Fajr")] or "hidden-any" not in duas.tab_json()["groups"][4]["items"]:
+        problems.append("turned on, the unsourced ones still don't show")
+    return {"problems": problems}
+
+
+def dua_hidden():
+    """Unsourced duas stay hidden by default: not in the tab's groups, a prayer's card, a search by use, a spoken
+    count or the Telegram card; the tab still says how many are hidden, and turning them on shows them."""
+    problems = []
+    dua_fresh()
+    if duas.settings()["show_unsourced"] is not False:
+        problems.append("shown by default")
+    tab = duas.tab_json()
+    listed = {i for g in tab["groups"] for i in (g.get("items") or g.get("common") or [])}
+    if listed & {"hidden-fajr", "hidden-any"} or tab["hidden"] != 2:
+        problems.append(f"the tab: {listed & {'hidden-fajr', 'hidden-any'}}, hidden {tab['hidden']}")
+    if any(e["id"].startswith("hidden") for p in prayers.PRAYERS for e in duas.card(p)):
+        problems.append("in a card")
+    if [i["id"] for i in duas.find(["debt"])] != ["debt-check"]:
+        problems.append(f"found by use: {[i['id'] for i in duas.find(['debt'])]}")
+    _, reply = _dua_turn("what's the dua for debt?")
+    if reply != "From your list: 1 dua, on screen.":
+        problems.append(f"asked: {reply!r}")
+    duas.save_settings({"show_unsourced": True})
+    if [i["id"] for i in duas.find(["debt"])] != ["debt-check", "hidden-any"]:
+        problems.append("turned on: not found")
+    return {"problems": problems}
+
+
+def dua_counters():
+    """A counter per dua and per time it's said (each prayer's own after salah, the morning's and the evening's apart),
+    kept between 0 and its count, one tap back or a fresh start, owner-only; it starts again at midnight in the city's
+    time, not UTC's."""
+    problems = []
+    dua_fresh()
+    with prayer_clock(_dhaka(2026, 11, 23, 23, 58)) as clock:
+        r = duas.count("isha", "salah-tasbih", delta=1)
+        if (r["n"], r["target"], r["done"]) != (1, 100, False):
+            problems.append(f"a tap: {r}")
+        r = duas.count("isha", "salah-tasbih", value=150)
+        if (r["n"], r["done"]) != (100, True):
+            problems.append(f"past the count: {r}")
+        if duas.count("isha", "salah-tasbih", delta=-1)["n"] != 99 or duas.count("isha", "salah-tasbih", value=0)["n"] != 0:
+            problems.append("a tap back, or a fresh start")
+        duas.count("morning", "both-a", delta=1)
+        duas.count("evening", "both-a", delta=1)
+        duas.count("evening", "both-a", delta=1)
+        if duas.counts() != {"isha": {}, "morning": {"both-a": 1}, "evening": {"both-a": 2}}:
+            problems.append(f"morning and evening apart: {duas.counts()}")
+        if os.stat(duas.PROGRESS_FILE).st_mode & 0o077:
+            problems.append("the counters' file isn't owner-only")
+        for bad in (("lunch", "salah-a"), ("isha", "no-such")):
+            try:
+                duas.count(*bad, delta=1)
+                problems.append(f"counted {bad}")
+            except KeyError:
+                pass
+        clock.at(_dhaka(2026, 11, 24, 0, 0, 30))
+        if duas.counts():
+            problems.append(f"after midnight: {duas.counts()}")
+        if duas.count("morning", "both-a", delta=1)["n"] != 1:
+            problems.append("the new day's first tap")
+        clock.at(datetime(2026, 11, 24, 17, 59, tzinfo=timezone.utc))      # 23:59 in Dhaka, the 24th
+        duas.count("isha", "salah-a", delta=1)
+        if duas.counts().get("isha") != {"salah-a": 1}:
+            problems.append("a tap at 23:59")
+        clock.at(datetime(2026, 11, 24, 18, 1, tzinfo=timezone.utc))       # 00:01 in Dhaka; UTC is still on the 24th
+        if duas.counts():
+            problems.append(f"midnight in Dhaka (UTC's date unchanged): {duas.counts()}")
+    return {"problems": problems}
+
+
+def dua_reminders():
+    """A day simulated a minute at a time with Aladhan's times: each prayer's card offset_min (10) after it begins,
+    LEAD_SEC early at most, once, with that prayer's entries, its words in no Arabic; the page lists it and Telegram
+    gets the card. 15 minutes when that's set; a prayer turned off has none; a card whose duas are all done isn't
+    raised; a Mac that wakes late rings it within the hour, never after; Friday's Dhuhr is Jumu'ah."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayer_fresh()
+    prayer_settings()
+    dua_fresh()
+
+    def day(d: date):
+        raised, t, end = [], _dhaka(d.year, d.month, d.day, 0, 0).timestamp(), _dhaka(d.year, d.month, d.day, 23, 59).timestamp()
+        with prayer_clock(_dhaka(d.year, d.month, d.day, 0, 0)) as clock:
+            while t <= end:
+                clock.at(datetime.fromtimestamp(t, DHAKA))
+                raised += [(a, t) for a in duas.tick()]
+                t += 60
+        return raised
+
+    def due(d: date, p: str, minutes: int) -> float:
+        dd = prayers.times_for(d)
+        return (prayers._prayer_at(dd, p, prayers.config())[1] + timedelta(minutes=minutes)).timestamp()
+    sunday = date(2026, 11, 22)
+    raised = day(sunday)
+    got = [(a["extra"]["dua"]["prayer"], a["due"]) for a, _ in raised]
+    if got != [(p, due(sunday, p, 10)) for p in prayers.PRAYERS]:
+        problems.append(f"Sunday's cards: {[(p, datetime.fromtimestamp(t, DHAKA).strftime('%H:%M')) for p, t in got]}")
+    for a, at in raised:
+        if not 0 <= a["due"] - at <= duas.LEAD_SEC:
+            problems.append(f"{a['label']} raised {a['due'] - at:.0f} s before it's due")
+        if [(e["id"], e["slot"]) for e in a["extra"]["dua"]["entries"]] != \
+                [(e["id"], e["slot"]) for e in duas.card(a["extra"]["dua"]["prayer"])]:
+            problems.append(f"{a['label']}: not its prayer's entries")
+        if not all(_no_arabic(x) for x in a["announce"].values()) or a["extra"]["dua"]["spoken"] is not False:
+            problems.append(f"{a['label']}: {a['announce']}, spoken {a['extra']['dua']['spoken']}")
+    if raised and raised[0][0]["announce"]["en"] != "Time for your after-Fajr adhkar.":
+        problems.append(f"the words: {raised[0][0]['announce']}")
+    if day(sunday):
+        problems.append("raised twice")
+    prayer_fresh()
+    dua_fresh()
+    with prayer_clock(datetime.fromtimestamp(due(sunday, "Asr", 10) + 30, DHAKA)):
+        duas.tick()
+        listed = [t for t in client.get("/timers", headers=KEYED).json() if t["kind"] == "dua"]
+        if [t["extra"]["dua"]["prayer"] for t in listed] != ["Asr"]:
+            problems.append(f"the page's list: {listed}")
+    # 15 minutes, Dhuhr off, Isha's already done
+    dua_fresh(offset_min=15, prayers={"Dhuhr": False})
+    monday = date(2026, 11, 23)
+    with prayer_clock(_dhaka(2026, 11, 23, 12, 0)):
+        duas.mark_done(duas.card("Isha"))
+    got = [(a["extra"]["dua"]["prayer"], a["due"]) for a, _ in day(monday)]
+    if got != [(p, due(monday, p, 15)) for p in ("Fajr", "Asr", "Maghrib")]:
+        problems.append(f"15 minutes, no Dhuhr, Isha done: {[(p, datetime.fromtimestamp(t, DHAKA).strftime('%H:%M')) for p, t in got]}")
+    # a late wake: within the hour it rings at once, after it never
+    dua_fresh()
+    with prayer_clock(datetime.fromtimestamp(due(monday, "Maghrib", 10) + 50 * 60, DHAKA)) as clock:
+        late = duas.tick()
+        if [a["extra"]["dua"]["prayer"] for a in late] != ["Maghrib"] or late[0]["due"] != clock.now():
+            problems.append(f"woke 50 minutes late: {late}")
+    dua_fresh()
+    with prayer_clock(datetime.fromtimestamp(due(monday, "Maghrib", 10) + 61 * 60, DHAKA)):
+        if duas.tick():
+            problems.append("rang an hour and a minute late")
+    dua_fresh()
+    friday = [a for a, _ in day(date(2026, 11, 27))]
+    if [a["extra"]["dua"]["name"] for a in friday][1:2] != ["Jumuah"] or \
+            friday[1]["announce"]["en"] != "Time for your after-Jumu'ah adhkar.":
+        problems.append(f"Friday: {[(a['extra']['dua']['name'], a['announce']['en']) for a in friday]}")
+    return {"problems": problems}
+
+
+def dua_telegram():
+    """On Telegram the card names its duas with their counts (no Arabic in it) and has two buttons: "Show the text"
+    sends each dua's Arabic, the source's, in as few messages as fit; "All done" ticks the card's counters, once. A
+    stranger's press does nothing. Telegram off in the settings: nothing sent; the page off: not listed there."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayer_fresh()
+    prayer_settings()
+    dua_fresh()
+    sunday = date(2026, 11, 22)
+    with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 9)):
+        raised = duas.tick()
+        telegram_bot.push_due()
+        cards = [(mid, p) for mid, p in fake.sent if p.get("reply_markup")]
+        if len(raised) != 1 or len(cards) != 1:
+            problems.append(f"{len(raised)} raised, {len(cards)} cards sent")
+        else:
+            mid, p = cards[0]
+            text = p["text"]
+            for part in ("🤲 After-Fajr adhkar (Fajr began 4:58 AM)", "1. First after salah · 3 times",
+                         "2. The counted one · One 33 + Two 33 + Three 33 + Last 1", "— After Fajr only —",
+                         "— Morning —", "Tap “Show the text” for the Arabic."):
+                if part not in text:
+                    problems.append(f"the card lacks {part!r}: {text!r}")
+            if not _no_arabic(text):
+                problems.append("Arabic in the card itself")
+            data = [b["callback_data"] for b in p["reply_markup"]["inline_keyboard"][0]]
+            if data != [f"du:t:{raised[0]['id']}", f"du:d:{raised[0]['id']}"]:
+                problems.append(f"the buttons: {data}")
+            before = len(fake.texts(OWNER))
+            telegram_bot.handle_update(tg_press(OWNER, data[0], mid))
+            shown = "\n".join(fake.texts(OWNER)[before:])
+            if fake_dua(1) not in shown or fake_dua(4) not in shown or " ".join(fake_words(112, 1)) not in shown:
+                problems.append(f"the text: {shown[:300]!r}")
+            telegram_bot.handle_update(tg_press(STRANGER, data[1], mid))
+            if duas.counts():
+                problems.append("a stranger's press counted")
+            telegram_bot.handle_update(tg_press(OWNER, data[1], mid))
+            if duas._done(duas.card("Fajr")) != len(duas.card("Fajr")) or not fake.edits()[-1].endswith("Marked done: 7 of 7."):
+                problems.append(f"All done: {duas.counts()}, {fake.edits()[-1:]}")
+            telegram_bot.handle_update(tg_press(OWNER, data[1], mid))
+            if not fake.answers()[-1].endswith("They were already done."):
+                problems.append(f"pressed twice: {fake.answers()[-1:]}")
+    dua_fresh(telegram=False)
+    os.remove(timers.TIMERS_FILE)
+    with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 9)):
+        duas.tick()
+        telegram_bot.push_due()
+        if fake.texts(OWNER) or not [t for t in client.get("/timers", headers=KEYED).json() if t["kind"] == "dua"]:
+            problems.append("Telegram off: still sent, or not on the page")
+    dua_fresh(page=False)
+    os.remove(timers.TIMERS_FILE)
+    with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 9)):
+        duas.tick()
+        if [t for t in client.get("/timers", headers=KEYED).json() if t["kind"] == "dua"]:
+            problems.append("the page off: still listed there")
+    return {"problems": problems}
+
+
+def dua_voice():
+    """Asked by voice, answered in code with no model request: a prayer's adhkar, before sleep, in Bangla, today's
+    progress, a dua by its use, one that isn't in the list (never left to the model), "recite" (it doesn't); the page
+    gets a duas event to open the tab, the reply names no dua and has no Arabic. A question about duas in general goes
+    to the model. On Telegram the duas' text comes in the screen part."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayer_fresh()
+    prayer_settings()
+    dua_fresh()
+    titles = [i["title"] for i in DUA_ITEMS]
+    with prayer_clock(_dhaka(2026, 11, 23, 18, 0)):
+        duas.count("morning", "morning-a", value=3)
+        for text, lang, event, want in [
+                ("show my after-Maghrib duas", "en", {"group": "after_salah", "prayer": "Maghrib"},
+                 "Your after-Maghrib adhkar are on screen: 5 of them."),
+                ("What's the dua before sleep?", "en", {"group": "before_sleep", "prayer": None},
+                 "Your before-sleep adhkar are on screen: 2 of them."),
+                ("সন্ধ্যার জিকির দেখাও", "bn", {"group": "evening", "prayer": None}, "তোমার সন্ধ্যার জিকির স্ক্রিনে আছে: ২টি।"),
+                ("did I finish my morning adhkar?", "en", {"group": "morning", "prayer": None},
+                 "Your morning adhkar: 1 of 2 done today, 1 left."),
+                ("what's the dua for anxiety?", "en", {"ids": ["worry"]}, "From your list: 1 dua, on screen."),
+                ("recite the morning adhkar", "en", {"group": "morning", "prayer": None},
+                 "I don't recite duas aloud. Your morning adhkar are on screen: 2 of them, 1 done today."),
+                ("what's the dua for traveling?", "en", None, "A dua for “traveling” isn't in your Dua & Zikr list, "
+                 "and I don't give duas from memory. Send me a picture of it with “add this to my evening adhkar” and "
+                 "I'll check it against its source.")]:
+            events, reply = _dua_turn(text, lang=lang)
+            seen = [v for k, v in events if k == "duas"]
+            if reply != want or (seen[:1] != [event] if event else seen):
+                problems.append(f"{text!r}: {reply!r}, {seen}")
+            if not _no_arabic(reply) or any(t in reply for t in titles):
+                problems.append(f"{text!r}: the reply names a dua or has Arabic: {reply!r}")
+        lines = client.post("/type", headers=PAGE, json={"text": "show my after-Fajr duas"}).text.splitlines()
+        kinds = [json.loads(x) for x in lines if x.strip()]
+        if not any(e.get("type") == "duas" and e.get("prayer") == "Fajr" for e in kinds):
+            problems.append(f"/type's events: {[e.get('type') for e in kinds]}")
+        _script.extend(["The morning adhkar are a protection for the day; your list is on the Hifz page."])
+        _, reply = _dua_turn("what is the virtue of the morning adhkar?")
+        if reply != "The morning adhkar are a protection for the day; your list is on the Hifz page." or _script:
+            problems.append(f"a general question: {reply!r}")
+        with telegram_world() as fake:
+            telegram_bot.handle_update(tg_message(OWNER, "what's the dua before sleep?"))
+            said = "\n".join(fake.texts(OWNER))
+            if " ".join(fake_words(2, 255)) not in said or "Your before-sleep adhkar are on screen" not in said:
+                problems.append(f"Telegram: {said[:300]!r}")
+    return {"problems": problems}
+
+
+def dua_speech():
+    """Arabic never reaches edge-tts: the answers above as the page speaks them, the card's one sentence, and Arabic
+    handed to synthesize (it's taken out); nor does a dua's name or text in transliteration."""
+    problems = []
+    prayer_fresh()
+    prayer_settings()
+    dua_fresh()
+    TTS_CALLS.clear()
+    with fake_edge_tts(), prayer_clock(_dhaka(2026, 11, 23, 18, 0)):
+        for text in ("show my after-Fajr duas", "what's the dua for anxiety?", "what's the dua before sleep?",
+                     "add Hisnul Muslim 2 to my evening adhkar"):
+            events, reply = _dua_turn(text)
+            speak_like_page(page_speech([v for k, v in events if k == "say"], reply), "en")
+        javid.set_language("bn")
+        _, reply = _dua_turn("ঘুমানোর আগের দোয়া কী", lang="bn")
+        speak_like_page(page_speech([], reply), "bn")
+        javid.set_language("en")
+        speak_like_page(["Time for your after-Fajr adhkar."], "en")
+        javid.synthesize(f"Here: {fake_dua(1)} and that's all.", "en")
+    spoken = [t for t, _ in TTS_CALLS]
+    if len(spoken) < 6:
+        problems.append(f"only {len(spoken)} sentences reached edge-tts")
+    for t in spoken:
+        if not _no_arabic(t) or any(i["title"] in t for i in DUA_ITEMS) or "Made-up" in t:
+            problems.append(f"edge-tts got {t!r}")
+    return {"problems": problems}
+
+
+def dua_pictures():
+    """"Add this to my evening adhkar" with a picture: read on this Mac, checked against the sources, and only waiting:
+    an Approve card and the tab's list, the list unchanged until he approves. Approved, the source's own text goes in
+    (never the picture's reading); one already in the list gains the new time instead. Rejected, nothing; a typed yes
+    on the next message approves; one with no source would stay hidden; the same addition twice waits once. By its
+    reference too. On Telegram it's a button."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    saved_ocr = documents.OCR
+    documents.OCR = lambda b: ("A screenshot of a dua, with its meaning under it." * 2, 90.0)
+    try:
+        dua_fresh()
+        source = fake_dua(20, 8)
+        off = source[:12] + chr(0x0642) + source[13:20] + chr(0x0642) + source[21:]    # the reading, two letters wrong
+        pics = {k: dua_picture(n) for n, k in enumerate(("close", "exact", "none", "blank", "again"))}
+        pics["tg"] = dua_picture(7, "JPEG")
+        DUA_READINGS.update({pics["close"]: f"4 duas t0 remember 2026\n{off}\nThe meaning, in English.",
+                             pics["exact"]: f"© 2026 page\n{source}", pics["none"]: fake_dua(40, 8),
+                             pics["blank"]: "Lorem 123 ipsum", pics["again"]: source, pics["tg"]: source})
+        before = open(duas.LIST_FILE, encoding="utf-8").read()
+        doc = documents.store(pics["close"], "dua.png")
+        events, reply = _dua_turn("add this to my evening adhkar", files=[doc["id"]])
+        cards = [v for k, v in events if k == "approval"]
+        if [c["tool"] for c in cards] != ["dua_add"] or "Nothing is added until you approve" not in reply:
+            problems.append(f"the card: {cards}, {reply!r}")
+        if open(duas.LIST_FILE, encoding="utf-8").read() != before:
+            problems.append("the list changed before approval")
+        waiting = duas.pending_json()
+        if len(waiting) != 1:
+            problems.append(f"waiting: {waiting}")
+        w = waiting[0] if waiting else {}
+        if w.get("arabic") == off or source not in (w.get("arabic") or "") or w.get("status") != "check":
+            problems.append(f"the text waiting isn't the source's: {w.get('arabic')!r}, {w.get('status')}")
+        out = client.post(f"/duas/pending/{w.get('id')}/approve", headers=PAGE).json()
+        duas.reload()
+        added = [i for i in duas.items() if i["origin"] == "picture"]
+        if len(added) != 1 or added[0]["when"] != ["evening"] or source not in added[0]["arabic"] or \
+                not out["said"].startswith("Added to your evening adhkar: Made-up second one, said often"):
+            problems.append(f"approved: {out.get('said')!r}, {[(i['id'], i['when'], i['arabic']) for i in added]}")
+        pic = os.path.join(duas.INBOX_DIR, (added or [{"screenshots": ["x"]}])[0]["screenshots"][0])
+        if not os.path.exists(pic) or os.stat(pic).st_mode & 0o077 or os.stat(duas.LIST_FILE).st_mode & 0o077:
+            problems.append("the picture or the list isn't owner-only")
+        late = approvals.take(cards[0]["id"])[0] if cards else None
+        if late and approvals.run(late) != "That addition isn't waiting any more, so nothing was done.":
+            problems.append("the chat's card added it again")
+        # an exact one, approved by a typed yes on the next message
+        doc = documents.store(pics["exact"], "dua2.png")
+        _dua_turn("add this to my morning adhkar", files=[doc["id"]])
+        events, reply = _dua_turn("yes")
+        duas.reload()
+        if not any(k == "approval_done" for k, _ in events) or "morning" not in duas.get(added[0]["id"])["when"]:
+            problems.append(f"a typed yes: {reply!r}, {duas.get(added[0]['id'])['when'] if added else None}")
+        # rejected: nothing, and its picture goes
+        doc = documents.store(pics["none"], "dua3.png")
+        _, reply = _dua_turn("add this to my evening adhkar", files=[doc["id"]])
+        w = duas.pending_json()
+        if [x["status"] for x in w] != ["unsourced"] or "stay hidden" not in reply:
+            problems.append(f"no source: {[x['status'] for x in w]}, {reply!r}")
+        n_items = len(duas.items())
+        client.post(f"/duas/pending/{w[0]['id']}/reject", headers=PAGE)
+        duas.reload()
+        if duas.pending_json() or len(duas.items()) != n_items or os.listdir(duas.INBOX_DIR) != [os.path.basename(pic)]:
+            problems.append(f"rejected: {duas.pending_json()}, {os.listdir(duas.INBOX_DIR)}")
+        doc = documents.store(pics["blank"], "dua4.png")
+        _, reply = _dua_turn("add this to my evening adhkar", files=[doc["id"]])
+        if [x["status"] for x in duas.pending_json()] != ["unreadable"] or "couldn't read the Arabic" not in reply:
+            problems.append(f"unreadable: {reply!r}")
+        duas.reject(duas.pending_json()[0]["id"])
+        # the same twice: one waiting, a card each time
+        doc = documents.store(pics["again"], "dua5.png")
+        _dua_turn("add this to my before-sleep adhkar", files=[doc["id"]])
+        events, _ = _dua_turn("add this to my before sleep adhkar", files=[doc["id"]])
+        if len(duas.pending_json()) != 1 or not any(k == "approval" for k, _ in events):
+            problems.append(f"asked twice: {len(duas.pending_json())} waiting")
+        duas.reject(duas.pending_json()[0]["id"])
+        # by its reference: Hisnul Muslim #1 is salah-a already, so it gains the morning
+        events, reply = _dua_turn("add Hisnul Muslim 1 to my morning adhkar")
+        if not reply.startswith("It's in your list already (Hisnul Muslim #1); it would go in your morning adhkar too."):
+            problems.append(f"by reference: {reply!r}")
+        client.post(f"/duas/pending/{duas.pending_json()[0]['id']}/approve", headers=PAGE)
+        duas.reload()
+        if duas.get("salah-a")["when"] != ["after_salah", "morning"] or duas.get("salah-a")["arabic"] != fake_dua(1):
+            problems.append(f"salah-a: {duas.get('salah-a')['when']}")
+        javid.drop_files()                              # a new chat's message: no picture open in it
+        javid.messages[1:] = []
+        _, reply = _dua_turn("add this to my evening adhkar")
+        if duas.pending_json() or "Send the dua's picture" not in reply:
+            problems.append(f"no picture: {reply!r}")
+        # Telegram: a photo with its caption, a button
+        with telegram_world() as fake:
+            telegram_bot._download = lambda file_id: pics["tg"]
+            telegram_bot.handle_update(tg_doc(OWNER, "", len(pics["tg"]), caption="add this to my after-Isha adhkar", photo=True))
+            tg_cards = fake.cards()
+            if not tg_cards or "Add “" not in tg_cards[-1][1]:
+                problems.append(f"Telegram: {fake.texts(OWNER)[-2:]}")
+            else:
+                telegram_bot.handle_update(tg_press(OWNER, tg_cards[-1][2], tg_cards[-1][0]))
+                duas.reload()
+                if "after_isha" not in duas.get(added[0]["id"])["when"]:
+                    problems.append(f"Telegram's Approve: {fake.answers()[-1:]}")
+    finally:
+        documents.OCR = saved_ocr
+    return {"problems": problems}
+
+
+def dua_model_rule():
+    """The model never writes out a dua: one it writes (in transliteration, or an English "O Allah, …" prayer) on a
+    message about duas is rewritten once, then those sentences go; a reply with one formula on another subject is
+    left alone."""
+    problems = []
+    dua_fresh()
+    _script.extend(["Say each morning: Allahumma bika asbahna wa bika amsayna. It protects you.",
+                    "The morning adhkar are a protection; your checked list is on the Hifz page."])
+    _, reply = _dua_turn("what is the virtue of the morning adhkar?")
+    if reply != "The morning adhkar are a protection; your checked list is on the Hifz page." or _script:
+        problems.append(f"rewritten: {reply!r}")
+    _script.extend(["It's a good habit. Say: O Allah, protect me this morning.", "Say: O Allah, protect me this morning."])
+    _, reply = _dua_turn("why should I read the morning adhkar?")
+    if reply != duas.strip_reply("", "", "en") or _script:
+        problems.append(f"dropped: {reply!r}")
+    if duas.reply_problem("Alhamdulillah, the rain has stopped in Dhaka.", "is it raining?"):
+        problems.append("one formula on another subject")
+    if not duas.reply_problem("SubhanAllah and Alhamdulillah are light on the tongue.", "tell me something nice"):
+        problems.append("two formulas, unasked, passed")
+    if not duas.reply_problem(f"Say {fake_dua(1)} at night.", "what's the dua for debt?") or \
+            duas.reply_problem(f"The word {fake_dua(1, 1)} is Arabic.", "what does this word mean?"):
+        problems.append("Arabic in a reply about a dua (the Quran rule catches it first in a turn; this one on its own)")
+    return {"problems": problems}
+
+
+def dua_quran_text():
+    """A Quranic dua's text is Quran.com's (its words for a part of an ayah), kept six days, owner-only, then fetched
+    again; Quran.com down: Tanzil's text on this Mac, said so; neither: the tab links to Quran.com."""
+    problems = []
+    fake = dua_fresh()
+    with prayer_clock(_dhaka(2026, 11, 23, 12, 0)) as clock:
+        segs = duas.quran_segments(duas.get("salah-quls"))      # fetched in line (duas.BACKGROUND off)
+        segs = duas.quran_segments(duas.get("salah-quls"))
+        if [(x["key"], x["source"], x["text"]) for x in segs] != \
+                [(k, "Quran.com", " ".join(fake_words(*map(int, k.split(":"))))) for k in ("112:1", "112:2")]:
+            problems.append(f"Quran.com's text: {segs}")
+        part = duas.quran_segments(duas.get("part-ayah"))
+        if [(x["text"], x["whole"]) for x in part] != [(" ".join(fake_words(3, 8)[1:5]), False)]:
+            problems.append(f"part of an ayah: {part}")
+        path = os.path.join(duas.QURAN_DIR, "112_1.json")
+        if not os.path.exists(path) or os.stat(path).st_mode & 0o077:
+            problems.append("its copy isn't saved owner-only")
+        asked = len(fake.urls)
+        clock.at(_dhaka(2026, 11, 28, 12, 0))
+        duas.quran_segments(duas.get("salah-quls"))
+        if len(fake.urls) != asked:
+            problems.append("asked again within six days")
+        fake.down = True
+        clock.at(_dhaka(2026, 11, 29, 13, 0))                # six days and an hour: the copy goes
+        segs = duas.quran_segments(duas.get("salah-quls"))
+        if os.path.exists(path) or [x["source"] for x in segs] != ["Tanzil", "Tanzil"] or \
+                segs[0]["text"] != " ".join(fake_words(112, 1)):
+            problems.append(f"after six days, Quran.com down: {[(x['source'], x['text']) for x in segs]}")
+        quran_text.forget()
+        shutil.rmtree(quran_text.DIR, ignore_errors=True)
+        if duas.quran_segments(duas.get("sleep-q")):
+            problems.append("neither source, yet a text")
+        tab = duas.tab_json()
+        if tab["items"]["sleep-q"]["quran"]["segments"] or tab["items"]["sleep-q"]["quran"]["link"] != "https://quran.com/2/255":
+            problems.append("the tab's link to Quran.com")
+    return {"problems": problems}
+
+
+def dua_routes():
+    """GET /duas needs the key; a tap, the settings and an approval need the page's Origin too; bad taps and settings
+    are refused with a reason and nothing saved; a picture is served only by its own name."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    dua_fresh()
+    if client.get("/duas", headers={"host": "localhost:8000"}).status_code != 401:
+        problems.append("GET /duas without the key")
+    tab = client.get("/duas", headers=KEYED).json()
+    if set(tab) < {"items", "groups", "cards", "counts", "settings", "pending", "hidden"} or len(tab["items"]) != len(DUA_ITEMS):
+        problems.append(f"GET /duas: {sorted(tab)}")
+    if client.post("/duas/count", headers=KEYED, json={"slot": "fajr", "id": "salah-a", "delta": 1}).status_code != 403:
+        problems.append("a tap without the page's Origin")
+    r = client.post("/duas/count", headers=PAGE, json={"slot": "fajr", "id": "salah-a", "delta": 1})
+    if r.status_code != 200 or r.json()["n"] != 1:
+        problems.append(f"a tap: {r.status_code} {r.text}")
+    for body, code in (({"slot": "fajr", "id": "salah-a", "delta": 5}, 400), ({"slot": "fajr", "id": "nope", "delta": 1}, 404),
+                       ({"slot": "teatime", "id": "salah-a", "delta": 1}, 404)):
+        if client.post("/duas/count", headers=PAGE, json=body).status_code != code:
+            problems.append(f"a tap {body}")
+    for body in ({"offset_min": 500}, {"spoken": "yes"}, {"colour": "red"}, {"prayers": {"Lunch": True}}, {"meaning": "fr"}):
+        if client.post("/duas/settings", headers=PAGE, json=body).status_code != 400:
+            problems.append(f"settings {body} accepted")
+    if os.path.exists(duas.SETTINGS_FILE):
+        problems.append("a refused setting was saved")
+    r = client.post("/duas/settings", headers=PAGE, json={"offset_min": 15, "prayers": {"Dhuhr": False}})
+    if r.status_code != 200 or r.json()["offset_min"] != 15 or r.json()["prayers"]["Dhuhr"] or not r.json()["prayers"]["Asr"] \
+            or os.stat(duas.SETTINGS_FILE).st_mode & 0o077:
+        problems.append(f"a setting: {r.text}")
+    if client.post("/duas/settings", headers=KEYED, json={"offset_min": 5}).status_code != 403:
+        problems.append("settings without the page's Origin")
+    if client.post("/duas/pending/abc/approve", headers=KEYED).status_code != 403:
+        problems.append("an approval without the page's Origin")
+    if client.post("/duas/pending/abc/approve", headers=PAGE).json()["said"] != \
+            "That addition isn't waiting any more, so nothing was done.":
+        problems.append("approving nothing")
+    os.makedirs(duas.INBOX_DIR, exist_ok=True)
+    with open(os.path.join(duas.INBOX_DIR, "Picture_1.png"), "wb") as f:
+        f.write(dua_picture(1))
+    if client.get("/duas/picture/Picture_1.png", headers=KEYED).status_code != 200:
+        problems.append("a picture by its name")
+    for name in ("..%2F..%2Fduas.yaml", "duas.yaml", "x.svg"):
+        if client.get(f"/duas/picture/{name}", headers=KEYED).status_code != 404:
+            problems.append(f"served {name}")
+    return {"problems": problems}
+
+
 def prayer_config():
     """The settings: what reaches Aladhan (city, country, method, Asr school, offsets), a city change fetching again, a
     broken file keeping the last good settings and saying why, bad values refused, the shipped file checking out."""
@@ -7137,6 +7894,8 @@ CASES += [
          [], [drive_ok], drive=prayer_day, script=[]),
     Case("prayer: the morning brief, built in code: Telegram only, once, held while locked, in Bangla, a late wake",
          [], [drive_ok], drive=prayer_brief, tasks=T5, script=[]),
+    Case("prayer: the brief with a revision logged doesn't freeze the reminders or /hifz (the lock taken twice)",
+         [], [drive_ok], drive=prayer_brief_with_revision, script=[]),
     Case("prayer: settings: what reaches Aladhan, a city change, a broken file, bad values, the shipped file",
          [], [drive_ok], drive=prayer_config, script=[]),
     Case("prayer: one request for the month, saved owner-only; Aladhan down with and without saved times",
@@ -7204,6 +7963,30 @@ CASES += [
          [], [drive_ok], drive=quran_timings_cache, script=[]),
     Case("quran: the reader's routes: /quran/read, /quran/surahs, /quran/state (the page's Origin to write), the font",
          [], [drive_ok], drive=quran_routes, script=[]),
+    Case("dua: the list loads: timing and status for each, Arabic for each dua, text for each ayah; broken ones reported",
+         [], [drive_ok], drive=dua_list, script=[]),
+    Case("dua: each prayer's card: the after-salah list in order, that prayer's own, the morning's after Fajr, the evening's after Asr",
+         [], [drive_ok], drive=dua_cards, script=[]),
+    Case("dua: unsourced duas stay hidden by default, in the tab, the cards, a search and the answers",
+         [], [drive_ok], drive=dua_hidden, script=[]),
+    Case("dua: counters per dua and per time, kept in bounds, owner-only, starting again at midnight in Dhaka",
+         [], [drive_ok], drive=dua_counters, script=[]),
+    Case("dua: a card 10 minutes after each prayer (a day a minute at a time), once, never late; 15 when set; Jumu'ah",
+         [], [drive_ok], drive=dua_reminders, script=[]),
+    Case("dua: Telegram's card, its Show the text and All done buttons; a stranger's press; Telegram or the page off",
+         [], [drive_ok], drive=dua_telegram, script=[]),
+    Case("dua: asked by voice, answered in code: a prayer's adhkar, before sleep, Bangla, progress, by use, not in the list",
+         [], [drive_ok], drive=dua_voice, script=[]),
+    Case("dua: no Arabic, and no dua's words, ever reach edge-tts",
+         [], [drive_ok], drive=dua_speech, script=[]),
+    Case("dua: a picture is checked and waits for approval; the source's text goes in, never the picture's reading",
+         [], [drive_ok], drive=dua_pictures, script=[]),
+    Case("dua: a dua the model writes out is rewritten once, then dropped",
+         [], [drive_ok], drive=dua_model_rule, script=[]),
+    Case("dua: a Quranic dua's text from Quran.com, kept six days; Tanzil's without it",
+         [], [drive_ok], drive=dua_quran_text, script=[]),
+    Case("dua: the tab's routes: the key, the page's Origin to write, bad taps and settings refused, pictures by name",
+         [], [drive_ok], drive=dua_routes, script=[]),
     Case("prayer: 'when is Ramadan?' in code from Aladhan, moved for Bangladesh; Aladhan down says so",
          [], [drive_ok], drive=ramadan_answers, script=[]),
     Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
@@ -7217,7 +8000,7 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 258, len(CASES)
+assert len(CASES) == 271, len(CASES)
 
 
 def print_token_summary() -> None:

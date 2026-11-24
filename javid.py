@@ -35,6 +35,7 @@ import calc
 import calendar_tools
 import documents
 import drive_tools
+import duas
 import edge_pool
 import hifz
 import markets
@@ -269,7 +270,9 @@ SYSTEM_PROMPT = (
     "Weather, prices, prayer times and sums come only from get_weather, market_price, prayer_times and calculate, "
     "and Mahadi's Quran revision only from hifz. Never quote, translate or number the Quran's verses yourself, and "
     "never write Arabic; to hear a surah he says 'play Surah ...'. "
-    "and a timer exists only "
+    "Never write out a dua or dhikr either (no Arabic, transliteration or translation of one): his checked list is "
+    "the Dua & Zikr tab on the Hifz page ('show my evening adhkar'). "
+    "A timer exists only "
     "once set_timer says so. "
     "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
     "Calendar: when the day and time are given, add the event straight away. To move or delete one, "
@@ -1068,6 +1071,13 @@ def _chat_files() -> list[dict]:
         if m["role"] == "user" and m.get("_files"):
             return [d for d in (documents.load(c["id"]) for c in m["_files"]) if d]
     return []
+
+
+def _open_docs() -> list[dict]:
+    """The open chat's attachment while it lasts, whether or not this message is about it, else its last files."""
+    if _doc_state["docs"] and _doc_state["session"] == current_session():
+        return list(_doc_state["docs"])
+    return _chat_files()
 
 
 def drop_files() -> bool:
@@ -2677,16 +2687,20 @@ def _personal_call(call: dict) -> bool:
     return False
 
 
-def _code_answer(user_text: str, player: dict | None = None, previous: dict | None = None, via: str = "page"):
-    """A watch to set, list or cancel, the recitation player or a question about the Quran's structure, a revision log
-    or question, a prayer-time question, a rates question, a market brief or a news request that code answers whole
-    (watches.request, quran.request, hifz.request, prayers.request, rates.request, markets.brief_request,
-    news.request): a function of the reply language giving the answer's generator. None leaves the message to the
-    model. player: the page's recitation player as it is ("next ayah"); previous: the reply before ("undo that")."""
+def _code_answer(user_text: str, player: dict | None = None, previous: dict | None = None, via: str = "page",
+                 docs: list | None = None):
+    """A watch to set, list or cancel, the recitation player or a question about the Quran's structure, a dua request,
+    a revision log or question, a prayer-time question, a rates question, a market brief or a news request that code
+    answers whole (watches.request, quran.request, duas.request, hifz.request, prayers.request, rates.request,
+    markets.brief_request, news.request): a function of the reply language giving the answer's generator. None leaves
+    the message to the model. player: the page's recitation player as it is ("next ayah"); previous: the reply before
+    ("undo that"); docs: the files with the message, or the chat's open one ("add this to my evening adhkar")."""
     if (req := watches.request(user_text)):     # first: "tell me when bitcoin goes above 70k" isn't a market brief
         return lambda lang: watches.answer(req, lang)
     if (req := quran.request(user_text, player)):    # before the prayers: "play Surah Al-Asr" isn't about Asr
         return lambda lang: quran.answer(req, lang)
+    if (req := duas.request(user_text, docs)):     # before the prayers: "after-Maghrib duas" isn't a time question
+        return lambda lang: duas.answer(req, lang, via)
     if (req := hifz.request(user_text, previous)):
         return lambda lang: hifz.answer(req, lang, via)
     if (req := prayers.request(user_text)):
@@ -2856,7 +2870,8 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         check = selfcheck.request(user_text)
         own = None if check else about.answer(user_text, lang, {**_self_facts(), "attached": bool(docs)})
         in_code = ((lambda lang: selfcheck.answer(check, user_text, lang, previous)) if check else
-                   None if own else _code_answer(user_text, player, previous, "page" if gate is None else "telegram"))
+                   None if own else _code_answer(user_text, player, previous, "page" if gate is None else "telegram",
+                                                 docs or _open_docs()))
         if own or in_code:
             tracing.mark("routing_done")
         if in_code:
@@ -2888,6 +2903,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         retried_required = False
         retried_holiday = False
         retried_quran = False
+        retried_dua = False
         required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
                     and not (skill_first and tool in WEB_TOOLS)   # the skill answers without the web
                     and not (agent_first and tool != "delegate" and tool not in agents.agent_tools(agent_first))]
@@ -3029,6 +3045,19 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                     text = quran.strip_reply(text, allowed, lang)
                     if via_agent and via_agent.get("screen"):
                         via_agent["screen"] = quran.strip_reply(via_agent["screen"], allowed, lang)
+                # Nor a dua's (duas.py): his checked list is the Dua & Zikr tab. One rewrite, then those sentences go.
+                whole = text + ("\n" + via_agent["screen"] if via_agent and via_agent.get("screen") else "")
+                if (dq := duas.reply_problem(whole, user_text)) and not retried_dua:
+                    retried_dua = True
+                    print(f"[duas] reply has {dq}, asking for a rewrite: {text[:60]!r}")
+                    notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
+                                                  {"role": "user", "content": duas.correction(dq)}]))
+                    continue
+                if dq:
+                    print(f"[duas] rewrite still has {dq}; those sentences are dropped")
+                    text = duas.strip_reply(text, user_text, lang)
+                    if via_agent and via_agent.get("screen"):
+                        via_agent["screen"] = duas.strip_reply(via_agent["screen"], user_text, lang)
             skill = skills.active()
             if not tool_calls and via_agent and not screen:
                 screen = via_agent["screen"]

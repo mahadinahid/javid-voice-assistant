@@ -3464,9 +3464,8 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-side { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; border-left: 1px solid var(--hz-line); background: rgba(var(--hz-shade-rgb), 0.5); }
 
 /* the revision reminder: stays until you log it, choose later, or dismiss it */
-.hz-ring {
-    position: fixed; top: 18px; left: 50%; z-index: 99; transform: translateX(-50%);
-    width: min(620px, calc(100vw - 32px)); padding: 16px 18px; border-radius: 20px; border: 1px solid var(--hz-gold);
+.hz-ring {          /* in .hz-rings (fixed at the top, below), so two reminders stack */
+    padding: 16px 18px; border-radius: 20px; border: 1px solid var(--hz-gold);
     background: var(--hz-pattern) center / 56px, linear-gradient(135deg, var(--hz-ring-1), var(--hz-ring-2));
     box-shadow: 0 20px 60px rgba(var(--hz-drop-rgb), 0.6), 0 0 50px rgba(var(--hz-gold-rgb), 0.28);
     animation: hz-glow 2.4s ease-in-out 3;
@@ -3480,6 +3479,137 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-ring .hz-actions { margin-top: 12px; }
 .hz-ring .hz-later { margin-left: auto; padding: 7px 12px; border: none; background: none; color: var(--hz-muted); font-size: 12.5px; cursor: pointer; }
 .hz-ring .hz-later:hover { color: var(--hz-ivory); }
+
+/* Dua & Zikr (duas.py): the Hifz view's third tab. Every colour is a --hz-* variable, so it takes the Hifz page's
+   theme; themes.hifz_checks has its own lines for what's new here: the Arabic and meaning on a finished dua (the card
+   lit faintly in the accent, HZ_DONE_TINT 0.12) and the counter's face (the deep shade over the card, HZ_COUNTER 0.55). */
+.du-inner { max-width: 940px; padding-top: 0; }
+.du-bar {
+    position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px;
+    margin: 0 -22px; padding: 14px 22px 12px; background: var(--hz-view-2); border-bottom: 1px solid var(--hz-line);
+}
+.du-groups, .du-prayers { display: flex; flex-wrap: wrap; gap: 6px; }
+.du-chip {
+    padding: 7px 14px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.55);
+    color: var(--hz-text-2); font-size: 13px; font-weight: 600; line-height: 1.25; cursor: pointer; text-align: left;
+}
+.du-chip:hover { color: var(--hz-ivory); border-color: var(--hz-gold); }
+.du-chip[aria-pressed="true"] { border-color: var(--hz-gold); background: linear-gradient(135deg, var(--hz-btn-1), var(--hz-btn-2)); color: var(--hz-ink); }
+.du-chip small { display: block; font-size: 11px; font-weight: 600; }
+.du-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-left: auto; }
+.du-seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.6); }
+.du-seg button { padding: 6px 12px; border-radius: 999px; border: none; background: none; color: var(--hz-text-2); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.du-seg button:hover { color: var(--hz-ivory); }
+.du-seg button[aria-pressed="true"] { background: linear-gradient(135deg, var(--hz-btn-1), var(--hz-btn-2)); color: var(--hz-ink); }
+.du-gear { padding: 7px 13px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.6); color: var(--hz-ivory); font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.du-gear:hover, .du-gear[aria-expanded="true"] { border-color: var(--hz-gold); color: var(--hz-gold); }
+.du-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; margin: 20px 0 12px; }
+.du-head h3 { margin: 0; font: 700 23px var(--hz-head); color: var(--hz-ivory); }
+.du-head h3 [lang="ar"] { margin-left: 8px; font-size: 22px; color: var(--hz-gold); }
+.du-progress { font-size: 13px; color: var(--hz-text-2); }
+.du-progress b { color: var(--hz-gold); }
+.du-clear { margin-left: auto; }
+.du-sub { margin: 22px 0 10px; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); }
+.du-list { display: flex; flex-direction: column; gap: 12px; }
+.du-card { padding: 16px 18px 14px; transition: border-color 0.3s, box-shadow 0.3s; }
+.du-card.done {
+    border-color: var(--hz-gold);
+    background: linear-gradient(rgba(var(--hz-gold-rgb), 0.12), rgba(var(--hz-gold-rgb), 0.12)), linear-gradient(160deg, var(--hz-card-2), var(--hz-card));
+}
+.du-card.just { box-shadow: 0 0 0 2px rgba(var(--hz-gold-rgb), 0.55), 0 18px 40px rgba(var(--hz-drop-rgb), 0.35); }
+.du-top { display: flex; align-items: flex-start; gap: 14px; }
+.du-name { flex: 1; min-width: 0; }
+.du-title { margin: 0; font-size: 14.5px; font-weight: 600; line-height: 1.45; color: var(--hz-ivory); overflow-wrap: anywhere; }
+.du-meta { margin-top: 3px; display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12.5px; color: var(--hz-text-2); }
+.du-meta .du-occ { color: var(--hz-muted); }
+.du-badge { display: inline-block; margin-left: 8px; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: 1px;
+            background: rgba(var(--hz-gold-rgb), 0.2); color: var(--hz-gold); }
+.du-badge.weak { background: rgba(var(--hz-weak-rgb), 0.16); color: var(--hz-weak-text); }
+.du-ar { margin: 12px 0 4px; font-family: var(--hz-ar); font-size: clamp(22px, 2.5vw, 29px); line-height: 2.05; direction: rtl; text-align: right;
+         color: var(--hz-ivory); overflow-wrap: break-word; }
+.du-ar.qr { font-family: 'Amiri Quran', 'Amiri', 'Geeza Pro', serif; line-height: 2.15; }
+.du-src { font-size: 11.5px; color: var(--hz-muted); }
+.du-src a { color: var(--hz-gold); }
+.du-tr { margin: 8px 0 0; font-size: 14px; line-height: 1.6; font-style: italic; color: var(--hz-text-2); overflow-wrap: anywhere; }
+.du-mean { margin: 6px 0 0; font-size: 14.5px; line-height: 1.65; color: var(--hz-text-2); overflow-wrap: anywhere; }
+.du-mean small { display: block; font-size: 11.5px; font-style: normal; color: var(--hz-muted); }
+.du-pic { display: block; max-width: min(100%, 360px); max-height: 420px; margin: 12px 0 4px; border-radius: 12px; border: 1px solid var(--hz-line-2); }
+.du-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin-top: 12px; }
+.du-refs { display: flex; flex-wrap: wrap; gap: 6px; flex: 1; min-width: 0; }
+.du-ref { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--hz-line-2); font-size: 11.5px; color: var(--hz-text-2); text-decoration: none; overflow-wrap: anywhere; }
+a.du-ref { color: var(--hz-gold); }
+a.du-ref:hover { border-color: var(--hz-gold); }
+.du-play { padding: 6px 13px; font-size: 12.5px; }
+.du-notes { flex-basis: 100%; }
+.du-notes summary { cursor: pointer; font-size: 12px; color: var(--hz-muted); }
+.du-notes summary:hover { color: var(--hz-ivory); }
+.du-notes p { margin: 6px 0 0; font-size: 12.5px; line-height: 1.55; color: var(--hz-text-2); overflow-wrap: anywhere; }
+.du-notes [lang="ar"] { font-size: 15px; }
+.du-ctr { flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 72px; }
+.du-count {
+    position: relative; display: grid; place-items: center; width: 66px; height: 66px; padding: 0; border-radius: 50%;
+    border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.55); color: var(--hz-ivory); cursor: pointer;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent; user-select: none;
+}
+.du-count:hover { border-color: var(--hz-gold); }
+.du-count:active { transform: scale(0.96); }
+.du-count svg { position: absolute; inset: 3px; width: calc(100% - 6px); height: calc(100% - 6px); transform: rotate(-90deg); }
+.du-count circle { fill: none; stroke-width: 3; }
+.du-count .trk { stroke: rgba(var(--hz-gold-rgb), 0.16); }
+.du-count .arc { stroke: var(--hz-gold); stroke-linecap: round; transition: stroke-dashoffset 0.2s; }
+.du-count span { position: relative; text-align: center; line-height: 1; }
+.du-count b { display: block; font: 700 18px var(--hz-head); }
+.du-count small { display: block; margin-top: 2px; font-size: 10.5px; font-weight: 600; color: var(--hz-muted); }
+.du-card.done .du-count { border-color: var(--hz-gold); background: linear-gradient(135deg, var(--hz-btn-1), var(--hz-btn-2)); color: var(--hz-ink); }
+.du-card.done .du-count small { color: var(--hz-ink); }
+.du-card.done .du-count .trk, .du-card.done .du-count .arc { stroke: transparent; }
+.du-phase { max-width: 120px; font-size: 11.5px; line-height: 1.3; text-align: center; color: var(--hz-text-2); }
+.du-card.done .du-phase { color: var(--hz-gold); font-weight: 700; }
+.du-undo { display: flex; gap: 2px; }
+.du-undo[hidden] { display: none; }
+.du-undo button { padding: 2px 7px; border: none; border-radius: 8px; background: none; color: var(--hz-muted); font-size: 12px; cursor: pointer; }
+.du-undo button:hover { color: var(--hz-ivory); background: rgba(var(--hz-gold-rgb), 0.08); }
+.du-empty { padding: 18px 4px; font-size: 13.5px; color: var(--hz-muted); }
+.du-problems { margin: 14px 0 0; padding: 10px 14px; border-radius: 12px; border: 1px dashed var(--hz-line-2); font-size: 12.5px; color: var(--hz-weak-text); }
+/* the settings, and the additions waiting for approval */
+.du-set, .du-wait { margin-top: 16px; }
+.du-set-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px 22px; }
+.du-field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; color: var(--hz-text-2); }
+.du-field input[type="number"] { width: 84px; padding: 7px 9px; border-radius: 10px; border: 1px solid var(--hz-line-2);
+                                  background: rgba(var(--hz-deep-rgb), 0.6); color: var(--hz-ivory); font: inherit; }
+.du-checks { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.du-checks label, .du-toggle { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; color: var(--hz-text-2); cursor: pointer; }
+.du-set input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--hz-gold); }
+.du-note { margin: 12px 0 0; font-size: 12px; line-height: 1.55; color: var(--hz-muted); }
+.du-pend { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 14px; padding: 12px 0; border-bottom: 1px solid rgba(var(--hz-gold-rgb), 0.12); }
+.du-pend:last-child { border-bottom: none; }
+.du-pend.no-pic { grid-template-columns: minmax(0, 1fr); }
+.du-pend .du-pic { margin: 0; max-width: 100%; max-height: 260px; }
+.du-pend-text { font-size: 13.5px; line-height: 1.5; color: var(--hz-ivory); font-weight: 600; }
+.du-pend .du-ar { margin-top: 8px; font-size: 22px; }
+.du-pend .hz-actions { margin-top: 10px; }
+.du-credits { margin: 24px auto 0; max-width: 760px; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--hz-muted); }
+.du-credits a { color: var(--hz-gold); }
+/* two reminders at once (a revision and a prayer's adhkar) stack instead of covering each other */
+.hz-rings { position: fixed; top: 18px; left: 50%; z-index: 99; transform: translateX(-50%); width: min(620px, calc(100vw - 32px));
+            display: flex; flex-direction: column; gap: 10px; pointer-events: none; }
+.hz-rings > .hz-ring { pointer-events: auto; }
+.du-ring .hz-ring-text small { display: block; margin-top: 2px; font-family: inherit; font-size: 13px; line-height: 1.4; color: var(--hz-text-2); }
+@media (max-width: 640px) {
+    .du-tools { margin-left: 0; }
+    .du-card { padding: 14px 14px 12px; }
+    .du-top { gap: 10px; }
+    .du-ctr { min-width: 62px; }
+    .du-count { width: 58px; height: 58px; }
+    .du-pend { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 520px) {      /* .hz-inner's own padding is 14px here: the bar still reaches the edges */
+    .du-bar { margin: 0 -14px; padding: 12px 14px 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .du-card, .du-count .arc { transition: none; }
+    .du-count:active { transform: none; }
+}
 
 @media (max-width: 1279px) {      /* the index becomes a drawer over the reader, opened by "☰ Surahs" */
     .qr-pane { grid-template-columns: minmax(0, 1fr) 320px; }
@@ -3760,6 +3890,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
             <div class="hz-tabs" role="tablist" aria-label="Hifz">
                 <button type="button" role="tab" id="hz-tab-today" data-tab="today" aria-selected="true" aria-controls="hz-pane-today">Today</button>
                 <button type="button" role="tab" id="hz-tab-read" data-tab="read" aria-selected="false" aria-controls="hz-pane-read">Read &amp; listen</button>
+                <button type="button" role="tab" id="hz-tab-duas" data-tab="duas" aria-selected="false" aria-controls="hz-pane-duas">Dua &amp; Zikr</button>
             </div>
             <div class="hz-theme-pick">
                 <button class="hz-theme-btn" id="hz-theme-btn" type="button" aria-haspopup="dialog" aria-expanded="false"
@@ -3855,6 +3986,9 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
             </section>
             <div class="qr-side" id="qr-side"></div>
         </div>
+        <div class="hz-pane" id="hz-pane-duas" role="tabpanel" aria-labelledby="hz-tab-duas" hidden>
+            <div class="hz-inner du-inner" id="du-inner"></div>
+        </div>
     </div>
     <div class="hz-dock" id="hz-dock"></div>
 </div>
@@ -3893,6 +4027,7 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
     <a class="hz-pl-credit" id="rp-credit" href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>
 </div>
 
+<div class="hz-rings">
 <div id="hz-ring" class="hz-scope hz-ring" role="alert" hidden>
     <div class="hz-ring-top">
         <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg>
@@ -3903,6 +4038,17 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
         <div class="hz-log" id="hz-ring-log"><span>Revised:</span><button type="button" data-st="strong">Strong</button><button type="button" data-st="okay">Okay</button><button type="button" data-st="weak">Weak</button></div>
         <button class="hz-later" id="hz-ring-later" type="button">Later</button>
     </div>
+</div>
+<div id="du-ring" class="hz-scope hz-ring du-ring" role="alert" hidden>
+    <div class="hz-ring-top">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg>
+        <div><div class="hz-ring-k" id="du-ring-k">After-salah adhkar</div><div class="hz-ring-text" id="du-ring-text"></div></div>
+    </div>
+    <div class="hz-actions">
+        <button class="hz-btn" id="du-ring-open" type="button">Open the adhkar</button>
+        <button class="hz-later" id="du-ring-later" type="button">Later</button>
+    </div>
+</div>
 </div>
 
 <div id="theme-editor" class="theme-editor" role="dialog" aria-labelledby="te-title" hidden>
@@ -5486,6 +5632,8 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                 } else if (ev.type === 'quran') {
                     muted = muted || !!ev.quiet;    // a reader command is shown, not spoken
                     quranReader.apply(ev);
+                } else if (ev.type === 'duas') {    // "show my after-Maghrib duas": the Dua & Zikr tab, on that list
+                    duaUI.show(ev);
                 } else if (ev.type === 'lang') {
                     setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
@@ -7521,7 +7669,7 @@ themesReady.then(ok => { if (ok && themeEditor.hidden) applyTheme(savedThemeId()
 // so two open tabs don't both announce. Browsers block sound until the page has been clicked once.
 let timerList = [];                 // [{id, kind, label, due (epoch ms), seconds, announce: {en, bn}}]
 const rungTimers = new Set();
-const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲', hifz: '📖' };   // a watch's, a prayer's, zikir, revision
+const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲', hifz: '📖', dua: '🤲' };   // a watch's, a prayer's, zikir, revision, adhkar
 let ringAudio = null;               // WebAudio context for the chime (a sound, not a voice)
 let ringHideTimer = null;
 
@@ -7602,10 +7750,13 @@ async function ringTimer(t) {
     } catch {}
     if (!first) return;             // another tab is announcing it
     const text = t.announce?.[replyLang] || t.announce?.en || 'Mahadi, your timer is done.';
-    if (recite.isPlaying()) recite.pause('ring');      // the announcement first; the recitation goes on after it
+    const quiet = t.kind === 'dua' && !t.extra?.dua?.spoken;     // a prayer's adhkar card speaks only when he asked it to
+    if (recite.isPlaying() && !quiet) recite.pause('ring');      // the announcement first; the recitation goes on after it
     if (t.kind === 'hifz') { hifzUI.ring(t, text); hifzChime(); }
+    else if (t.kind === 'dua') { duaUI.ring(t); if (!recite.isPlaying()) hifzChime(); }
     else { showRing(t, text); chime(); }
-    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, t.kind === 'hifz' ? 1700 : 1000);   // after the chime
+    if (quiet) return;
+    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, t.kind === 'hifz' || t.kind === 'dua' ? 1700 : 1000);   // after the chime
 }
 
 document.getElementById('ring-dismiss').addEventListener('click', () => {
@@ -8786,16 +8937,18 @@ const hifzUI = (() => {
         placePlayer();
         $('hifz-btn').focus();
     }
-    function setTab(t) {            // Today (the tracker) or Read & listen (the reader)
-        tab = t === 'read' ? 'read' : 'today';
-        $('hz-pane-today').hidden = tab !== 'today';
-        $('hz-pane-read').hidden = tab !== 'read';
-        $('hz-tab-today').setAttribute('aria-selected', String(tab === 'today'));
-        $('hz-tab-read').setAttribute('aria-selected', String(tab === 'read'));
+    function setTab(t) {            // Today (the tracker), Read & listen (the reader) or Dua & Zikr (duaUI)
+        tab = ['read', 'duas'].includes(t) ? t : 'today';
+        for (const k of ['today', 'read', 'duas']) {
+            $(`hz-pane-${k}`).hidden = tab !== k;
+            $(`hz-tab-${k}`).setAttribute('aria-selected', String(tab === k));
+        }
         $('hz-tab-today').textContent = hzT('Today', 'আজ');
         $('hz-tab-read').textContent = hzT('Read & listen', 'পড়ো ও শোনো');
+        $('hz-tab-duas').textContent = hzT('Dua & Zikr', 'দোয়া ও জিকির');
         placePlayer();
         if (tab === 'read') quranReader.show();
+        if (tab === 'duas') duaUI.shown();
     }
     // The player sits in the page's flow wherever it shows, so it never covers anything: under the header on the main
     // page, at the view's foot in Today, beside the text in Read (the full panel, with the reciters and the repeat).
@@ -8883,6 +9036,365 @@ const hifzUI = (() => {
     refresh();
     placePlayer();
     return { refresh, open, close, ring, placePlayer, logPortion, tab: () => tab };
+})();
+
+// ── Dua & Zikr (duas.py): the Hifz view's third tab ───────────────────────────────────────────────────────────
+// His checked list (data/duas.yaml): each dua's Arabic as its source has it (a Quranic one is Quran.com's text, or
+// Tanzil's on this Mac), its transliteration, its meaning in Bangla or English, its count and reference, and a counter
+// that starts again at midnight (data/dua_progress.json). After salah, each prayer has its own counters (the list is
+// said five times a day); after Fajr the morning adhkar follow, after Asr the evening's. Unsourced duas only when he
+// turns them on. A card rings a few minutes after each prayer (ring): nothing of it is spoken unless he asked for its
+// one sentence, and never a dua; a Quranic one plays only from a reciter (▶).
+const duaUI = (() => {
+    const $ = id => document.getElementById(id);
+    const pane = $('hz-pane-duas');
+    const box = $('du-inner');
+    const PRAYERS = ['Fajr', 'Dhuhr', 'Asr', 'Maghrib', 'Isha'];
+    const P_BN = { Fajr: 'ফজর', Dhuhr: 'যোহর', Asr: 'আসর', Maghrib: 'মাগরিব', Isha: 'এশা', Jumuah: 'জুমা' };
+    const OF_BN = { Fajr: 'ফজরের', Dhuhr: 'যোহরের', Asr: 'আসরের', Maghrib: 'মাগরিবের', Isha: 'এশার', Jumuah: 'জুমার' };
+    const END = String.fromCharCode(0x06DD);
+    const arNum = n => String(n).replace(/\d/g, d => String.fromCharCode(0x0660 + Number(d)));
+    let data = null, group = 'after_salah', prayer = null, only = null, setOpen = false, ringAlert = null;
+    let urls = [];
+    const queue = {};                     // slot/id -> the taps still on their way, sent one after another
+
+    async function refresh() {
+        try {
+            const r = await fetch('/duas');
+            if (!r.ok) return;
+            data = await r.json();
+            if (!prayer) prayer = data.current || 'Fajr';
+            render();
+        } catch {}
+    }
+    const isOpen = () => !!data && !pane.hidden && !$('hifz').hidden;
+    const meaningLang = () => {
+        const m = data?.settings?.meaning || 'auto';
+        return m === 'auto' ? (hzBn() ? 'bn' : 'en') : m;
+    };
+    const nameOf = p => (hzBn() ? P_BN[p] || p : p === 'Jumuah' ? "Jumu'ah" : p);
+    const todayName = p => (p === 'Dhuhr' && data.times?.Dhuhr?.name === 'Jumuah' ? 'Jumuah' : p);
+    function target(item, slot) {                       // as duas.target: a prayer's own count, the phases, the count
+        const pr = PRAYERS.find(p => p.toLowerCase() === slot);
+        if (pr && item.count_after?.[pr]) return item.count_after[pr];
+        if (item.phases?.length) return item.phases.reduce((a, p) => a + p.count, 0);
+        return item.count || 1;
+    }
+    const countOf = (slot, id) => data.counts?.[slot]?.[id] || 0;
+    const big = n => (hzBn() ? hzNum(n) : n.toLocaleString('en-US'));        // 10,000
+    function setCount(slot, id, n) {
+        data.counts[slot] = data.counts[slot] || {};
+        if (n) data.counts[slot][id] = n; else delete data.counts[slot][id];
+    }
+    function timesText(item, slot) {
+        if (item.phases?.length) return item.phases.map(p => `${p.label} ${hzNum(p.count)}`).join(' · ');
+        const pr = PRAYERS.find(p => p.toLowerCase() === slot);
+        const n = (pr && item.count_after?.[pr]) || item.count;
+        if (!n) return '';
+        return n === 1 ? hzT('once', 'একবার') : hzT(`${big(n)} times`, `${big(n)} বার`);
+    }
+    function phaseText(item, n) {                       // the tasbih: which phrase the count is on
+        if (!item.phases?.length) return '';
+        let left = n;
+        for (const p of item.phases) {
+            if (left < p.count) return `${p.label} ${hzNum(left)}/${hzNum(p.count)}`;
+            left -= p.count;
+        }
+        return '';
+    }
+    function entries() {
+        if (only) return only.filter(id => data.items[id]).map(id => ({ id, slot: 'anytime', group: 'anytime' }));
+        if (group === 'after_salah') return (data.cards[prayer] || []).filter(e => data.items[e.id]);
+        const g = data.groups.find(x => x.key === group);
+        const slot = ['morning', 'evening', 'before_sleep'].includes(group) ? group : 'anytime';
+        return (g?.items || []).filter(id => data.items[id]).map(id => ({ id, slot, group }));
+    }
+    const goalOf = e => e.target || target(data.items[e.id], e.slot);
+    const doneCount = list => list.filter(e => countOf(e.slot, e.id) >= goalOf(e)).length;
+
+    function arabicHtml(item) {
+        if (item.quran) {
+            const segs = item.quran.segments || [];
+            if (!segs.length) return `<p class="du-src">${hzT("The ayah's text isn't on this Mac yet:", 'আয়াতের লেখা এখনো এই ম্যাকে নেই:')}
+                <a href="${esc(item.quran.link)}" target="_blank" rel="noopener">Quran.com</a></p>`;
+            const text = segs.map(s => esc(s.text) + (s.whole ? `&nbsp;<span class="qa-end">${END}${arNum(s.a)}</span>` : '')).join(' ');
+            const from = segs.every(s => s.source === 'Quran.com') ? 'Quran.com' : hzT("Tanzil's text on this Mac", 'এই ম্যাকে রাখা Tanzil-এর পাঠ');
+            const part = segs.some(s => !s.whole) ? hzT(' · part of the ayah', ' · আয়াতের অংশ') : '';
+            return `<div class="du-ar qr" lang="ar" dir="rtl">${text}</div><div class="du-src">${esc(from)}${part}</div>`;
+        }
+        if (item.arabic) return `<div class="du-ar" lang="ar" dir="rtl">${esc(item.arabic)}</div>`;
+        if (item.picture) return `<img class="du-pic" data-pic="${esc(item.picture)}" alt="${esc(hzT('Your picture of it', 'তোমার ছবি'))}">`;
+        return '';
+    }
+    function counterHtml(item, slot, n, goal) {
+        const r = 27, c = 2 * Math.PI * r, done = n >= goal;
+        const phase = done ? hzT('✓ Done', '✓ হয়েছে') : phaseText(item, n);
+        const label = hzT(`Count: ${n} of ${goal}. Tap when you've said it once more.`, `গণনা: ${goal}-এর মধ্যে ${n}। আরেকবার বললে চাপো।`);
+        return `<div class="du-ctr">
+            <button type="button" class="du-count" aria-label="${esc(label)}">
+                <svg viewBox="0 0 60 60" aria-hidden="true"><circle class="trk" cx="30" cy="30" r="${r}"/><circle class="arc" cx="30" cy="30" r="${r}"
+                    stroke-dasharray="${c.toFixed(1)}" stroke-dashoffset="${(c * (1 - Math.min(n, goal) / goal)).toFixed(1)}"/></svg>
+                <span><b>${big(Math.min(n, goal))}</b><small>/${big(goal)}</small></span>
+            </button>
+            ${phase ? `<div class="du-phase">${esc(phase)}</div>` : ''}
+            <div class="du-undo"${n ? '' : ' hidden'}><button type="button" data-act="minus" aria-label="${esc(hzT('Take one back', 'একটা কমাও'))}">−1</button><button type="button" data-act="reset" aria-label="${esc(hzT('Start this one again', 'আবার শুরু'))}">↺</button></div>
+        </div>`;
+    }
+    function cardHtml(e) {
+        const item = data.items[e.id], goal = goalOf(e), n = countOf(e.slot, e.id);
+        const lang = meaningLang(), other = lang === 'bn' ? 'en' : 'bn';
+        const tr = item.transliteration?.[lang] || item.transliteration?.[other] || '';
+        const meanLang = item.meaning?.[lang] ? lang : item.meaning?.[other] ? other : null;
+        const mean = meanLang ? item.meaning[meanLang] : '';
+        const fallback = meanLang && meanLang !== lang ? `<small>${esc(lang === 'bn' ? hzT('No Bangla meaning in your list; the English:', 'তোমার তালিকায় বাংলা অর্থ নেই; ইংরেজিটা:')
+            : hzT('No English meaning in your list; the Bangla:', 'তোমার তালিকায় ইংরেজি অর্থ নেই; বাংলাটা:'))}</small>` : '';
+        const badge = item.status === 'check' ? `<span class="du-badge" title="${esc(hzT('Its wording or reference needs a look: see the notes', 'শব্দ বা রেফারেন্স যাচাই দরকার: নোট দেখো'))}">${hzT('check', 'যাচাই')}</span>`
+            : item.status === 'unsourced' ? `<span class="du-badge weak">${hzT('no reliable source', 'নির্ভরযোগ্য উৎস নেই')}</span>`
+            : item.status === 'unreadable' ? `<span class="du-badge weak">${hzT('unreadable', 'পড়া যায়নি')}</span>` : '';
+        const times = timesText(item, e.slot);
+        const meta = [times && `<span>${esc(times)}</span>`, item.occasion && `<span class="du-occ">${esc(item.occasion)}</span>`].filter(Boolean).join('');
+        const refs = (item.reference || []).map(r => `<span class="du-ref">${esc(r)}</span>`).join('')
+            + (item.links || []).map(u => `<a class="du-ref" href="${esc(u)}" target="_blank" rel="noopener">↗ ${esc(u.replace(/^https:\/\/(www\.)?/, '').split('/')[0])}</a>`).join('');
+        const keys = item.quran?.ayahs || [];
+        const play = keys.length ? `<button type="button" class="hz-btn ghost du-play" data-play-keys="${esc(keys[0] + ',' + keys[keys.length - 1])}"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4v16l13-8z"/></svg>${hzT('Listen', 'শোনো')}</button>` : '';
+        const notes = [...(item.notes || []), ...(item.claims || []).map(c => `${c.says} — ${c.verdict}`)];
+        const notesHtml = notes.length ? `<details class="du-notes"><summary>${hzT(`Notes (${notes.length})`, `নোট (${hzNum(notes.length)})`)}</summary>${notes.map(t => `<p>${noteHtml(t)}</p>`).join('')}</details>` : '';
+        return `<article class="hz-card du-card${n >= goal ? ' done' : ''}" data-id="${esc(e.id)}" data-slot="${esc(e.slot)}" data-goal="${goal}">
+            <div class="du-top">
+                <div class="du-name"><h4 class="du-title">${esc(item.title)}${badge}</h4>${meta ? `<div class="du-meta">${meta}</div>` : ''}</div>
+                ${counterHtml(item, e.slot, n, goal)}
+            </div>
+            ${arabicHtml(item)}
+            ${tr ? `<p class="du-tr">${esc(tr)}</p>` : ''}
+            ${mean ? `<p class="du-mean" lang="${meanLang}">${fallback}${esc(mean)}</p>` : ''}
+            <div class="du-foot"><div class="du-refs">${refs}</div>${play}${notesHtml}</div>
+        </article>`;
+    }
+    // A note quotes its source's Arabic in «…»: set apart, so it reads right to left inside the English
+    const noteHtml = t => esc(t).replace(/«([^»]*)»/g, (_, ar) => `«<bdi dir="rtl" lang="ar">${ar}</bdi>»`);
+
+    function settingsHtml() {
+        const s = data.settings;
+        return `<section class="hz-card hz-sec du-set" id="du-set">
+            <div class="hz-sec-head"><h3>${hzT('Reminders and list', 'রিমাইন্ডার আর তালিকা')}</h3></div>
+            <div class="du-set-grid">
+                <label class="du-field">${hzT('Minutes after each prayer begins', 'ওয়াক্ত শুরুর কত মিনিট পর')}
+                    <input type="number" id="du-offset" min="0" max="120" step="1" value="${s.offset_min}"></label>
+                <div class="du-field"><span>${hzT('A card after', 'কার্ড আসবে')}</span>
+                    <div class="du-checks">${PRAYERS.map(p => `<label><input type="checkbox" data-pr="${p}"${s.prayers[p] ? ' checked' : ''}> ${esc(nameOf(p))}</label>`).join('')}</div></div>
+                <label class="du-toggle"><input type="checkbox" id="du-page"${s.page ? ' checked' : ''}> ${hzT('Ring on this page', 'এই পেজে বাজবে')}</label>
+                <label class="du-toggle"><input type="checkbox" id="du-tg"${s.telegram ? ' checked' : ''}> ${hzT('Send the card to Telegram', 'টেলিগ্রামে কার্ড যাবে')}</label>
+                <label class="du-toggle"><input type="checkbox" id="du-spoken"${s.spoken ? ' checked' : ''}> ${hzT('Say “Time for your after-Fajr adhkar” aloud', '“ফজরের পরের জিকিরের সময় হয়েছে” বলবে')}</label>
+                <label class="du-toggle"><input type="checkbox" id="du-unsourced"${s.show_unsourced ? ' checked' : ''}> ${hzT(`Show unsourced duas (${data.hidden})`, `উৎসহীন দোয়াও দেখাবে (${hzNum(data.hidden)})`)}</label>
+            </div>
+            <p class="du-note">${hzT('Kept on this Mac, out of git (data/dua_settings.json, and your counters in data/dua_progress.json). The card never reads a dua aloud.',
+                'এই ম্যাকেই থাকে, git-এ যায় না (data/dua_settings.json, আর কাউন্টার data/dua_progress.json)। কার্ড কখনো দোয়া পড়ে শোনায় না।')}</p>
+        </section>`;
+    }
+    function pendingHtml() {
+        if (!data.pending?.length) return '';
+        return `<section class="hz-card hz-sec du-wait">
+            <div class="hz-sec-head"><h3>${hzT('Waiting for your approval', 'তোমার অনুমোদনের অপেক্ষায়')}</h3></div>
+            ${data.pending.map(p => {
+                const segs = p.segments || [];
+                const ar = segs.length ? `<div class="du-ar qr" lang="ar" dir="rtl">${segs.map(s => esc(s.text)).join(' ')}</div>`
+                    : p.arabic ? `<div class="du-ar" lang="ar" dir="rtl">${esc(p.arabic)}</div>` : '';
+                return `<div class="du-pend${p.picture ? '' : ' no-pic'}" data-pid="${esc(p.id)}">
+                    ${p.picture ? `<img class="du-pic" data-pic="${esc(p.picture)}" alt="${esc(hzT('Your picture', 'তোমার ছবি'))}">` : ''}
+                    <div><div class="du-pend-text">${esc(p.text)}</div>
+                        ${ar}${p.arabic_from ? `<div class="du-src">${esc(hzT('The text is the source’s:', 'লেখাটা উৎসের:'))} ${esc(p.arabic_from)}</div>` : ''}
+                        ${(p.notes || []).map(t => `<p class="du-note">${noteHtml(t)}</p>`).join('')}
+                        <div class="hz-actions"><button type="button" class="hz-btn" data-approve="${esc(p.id)}">${hzT('Approve', 'অনুমোদন')}</button>
+                            <button type="button" class="hz-btn ghost" data-reject="${esc(p.id)}">${hzT('Reject', 'বাদ দাও')}</button></div></div>
+                </div>`;
+            }).join('')}
+        </section>`;
+    }
+    function render() {
+        if (!isOpen()) return;
+        hzFonts();
+        urls.forEach(u => URL.revokeObjectURL(u));
+        urls = [];
+        const lang = meaningLang();
+        const list = entries();
+        const groups = data.groups.map(g => `<button type="button" class="du-chip" data-group="${g.key}" aria-pressed="${!only && group === g.key}">${esc(hzBn() ? g.bn : g.en)}</button>`).join('');
+        const tools = `<div class="du-tools">
+            <div class="du-seg" role="group" aria-label="${esc(hzT('Meaning in', 'অর্থ'))}"><button type="button" data-meaning="en" aria-pressed="${lang === 'en'}">English</button><button type="button" data-meaning="bn" aria-pressed="${lang === 'bn'}">বাংলা</button></div>
+            <button type="button" class="du-gear" id="du-gear" aria-expanded="${setOpen}">${hzT('Settings', 'সেটিংস')}</button></div>`;
+        let head, prayersRow = '';
+        if (only) {
+            head = `<div class="du-head"><h3>${hzT('From your list', 'তোমার তালিকা থেকে')}</h3><span class="du-progress">${hzNum(list.length)}</span>
+                <button type="button" class="hz-btn ghost du-clear" data-clear="1">${hzT('Back to the groups', 'সব দল')}</button></div>`;
+        } else {
+            if (group === 'after_salah') {
+                prayersRow = `<div class="du-prayers">${PRAYERS.map(p => {
+                    const t = data.times?.[p];
+                    return `<button type="button" class="du-chip" data-prayer="${p}" aria-pressed="${prayer === p}">${esc(nameOf(todayName(p)))}${t ? `<small>${esc(hzBn() ? t.at_bn : t.at)}</small>` : ''}</button>`;
+                }).join('')}</div>`;
+            }
+            const g = data.groups.find(x => x.key === group);
+            const title = group === 'after_salah' ? hzT(`After ${nameOf(todayName(prayer))}`, `${OF_BN[todayName(prayer)]} পরে`) : (hzBn() ? g.bn : g.en);
+            const done = doneCount(list);
+            head = `<div class="du-head"><h3>${esc(title)}</h3>
+                <span class="du-progress" id="du-progress">${list.length ? hzT(`<b>${done}</b> of ${list.length} done today`, `আজ ${hzNum(list.length)}টির মধ্যে <b>${hzNum(done)}</b>টি হয়েছে`) : ''}</span></div>`;
+        }
+        let cards = '', sub = null;
+        for (const e of list) {
+            if (group === 'after_salah' && !only && e.group !== sub && e.group !== 'after_salah') {
+                cards += `<div class="du-sub">${esc(e.group === 'morning' ? hzT('Then the morning adhkar', 'তারপর সকালের জিকির')
+                    : e.group === 'evening' ? hzT('Then the evening adhkar', 'তারপর সন্ধ্যার জিকির')
+                    : hzT(`After ${nameOf(prayer)} only`, `শুধু ${OF_BN[prayer]} পরে`))}</div>`;
+            }
+            sub = e.group;
+            cards += cardHtml(e);
+        }
+        const empty = `<p class="du-empty">${hzT('Nothing in your list here yet.', 'তোমার তালিকায় এখানে এখনো কিছু নেই।')}</p>`;
+        const problems = data.problems?.length ? `<p class="du-problems">${esc(hzT('Some of data/duas.yaml couldn’t be used: ', 'data/duas.yaml-এর কিছু অংশ ব্যবহার করা যায়নি: '))}${esc(data.problems.join('; '))}</p>` : '';
+        box.innerHTML = `<div class="du-bar"><div class="du-groups" role="group" aria-label="${esc(hzT('Lists', 'তালিকা'))}">${groups}</div>${tools}</div>
+            ${setOpen ? settingsHtml() : ''}${pendingHtml()}${problems}${prayersRow}${head}
+            <div class="du-list">${cards || empty}</div>
+            <p class="du-credits">${hzT(
+                `Each dua's Arabic is its source's, as checked on ${esc(data.checked || '2026-11-23')}: <a href="https://hisnmuslim.com" target="_blank" rel="noopener">Hisnul Muslim</a>, the six hadith collections with Al-Albani's grades, and the Quran from <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> (kept six days; Tanzil's text on this Mac without it). Javid never writes a dua himself, nor reads one aloud. Your counters start again at midnight.`,
+                `প্রতিটি দোয়ার আরবি তার উৎসের, যাচাই ${esc(data.checked || '2026-11-23')}: <a href="https://hisnmuslim.com" target="_blank" rel="noopener">হিসনুল মুসলিম</a>, আলবানির মানসহ ছয়টি হাদিস গ্রন্থ, আর কুরআন <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> থেকে (ছয় দিন রাখা; না পেলে এই ম্যাকে রাখা Tanzil-এর পাঠ)। জাভিদ নিজে কখনো দোয়া লেখে না, পড়েও শোনায় না। কাউন্টার মাঝরাতে আবার শূন্য থেকে শুরু হয়।`)}</p>`;
+        loadPictures();
+    }
+    function loadPictures() {
+        box.querySelectorAll('img[data-pic]').forEach(async img => {
+            try {
+                const r = await fetch(`/duas/picture/${encodeURIComponent(img.dataset.pic)}`);
+                if (!r.ok) { img.remove(); return; }
+                const url = URL.createObjectURL(await r.blob());
+                urls.push(url);
+                img.src = url;
+            } catch { img.remove(); }
+        });
+    }
+    function paint(cardEl) {                     // one card after a tap: its counter and mark, and the day's progress
+        const e = { id: cardEl.dataset.id, slot: cardEl.dataset.slot, target: Number(cardEl.dataset.goal) };
+        const item = data.items[e.id];
+        const ctr = cardEl.querySelector('.du-ctr');
+        ctr.outerHTML = counterHtml(item, e.slot, countOf(e.slot, e.id), e.target);
+        cardEl.classList.toggle('done', countOf(e.slot, e.id) >= e.target);
+        const list = entries(), done = doneCount(list), prog = $('du-progress');
+        if (prog && list.length) prog.innerHTML = hzT(`<b>${done}</b> of ${list.length} done today`, `আজ ${hzNum(list.length)}টির মধ্যে <b>${hzNum(done)}</b>টি হয়েছে`);
+    }
+    function tap(cardEl, delta, value) {
+        const id = cardEl.dataset.id, slot = cardEl.dataset.slot, goal = Number(cardEl.dataset.goal);
+        const before = countOf(slot, id);
+        const next = value != null ? value : Math.max(0, Math.min(goal, before + delta));
+        if (next === before) return;
+        setCount(slot, id, next);
+        const focused = document.activeElement?.closest?.('.du-card') === cardEl;
+        paint(cardEl);
+        if (focused) cardEl.querySelector('.du-count')?.focus();
+        if (next >= goal && before < goal && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+            cardEl.classList.add('just');
+            setTimeout(() => cardEl.classList.remove('just'), 1400);
+        }
+        const key = `${slot}/${id}`;
+        queue[key] = (queue[key] || Promise.resolve()).then(async () => {      // in order: the server ends where the taps did
+            try {
+                const r = await fetch('/duas/count', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(value != null ? { slot, id, value } : { slot, id, delta }) });
+                if (!r.ok) throw new Error(String(r.status));
+            } catch {
+                showToast(hzT('Not counted: is the server running?', 'গোনা হয়নি: সার্ভার চলছে তো?'));
+                refresh();
+            }
+        });
+    }
+    async function saveSettings(change) {
+        try {
+            const r = await fetch('/duas/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) { showToast(out.detail || hzT('Not saved.', 'সেভ হয়নি।')); render(); return; }
+            data.settings = out;
+            if ('show_unsourced' in change) refresh(); else render();
+        } catch { showToast(hzT('Not saved: is the server running?', 'সেভ হয়নি: সার্ভার চলছে তো?')); }
+    }
+    async function decide(pid, verb) {
+        try {
+            const r = await fetch(`/duas/pending/${encodeURIComponent(pid)}/${verb}`, { method: 'POST' });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) { showToast(out.detail || hzT('Nothing was done.', 'কিছুই করা হয়নি।')); return; }
+            data = out.tab;
+            render();
+            showToast(out.said);
+        } catch { showToast(hzT('Nothing was done: is the server running?', 'কিছুই করা হয়নি: সার্ভার চলছে তো?')); }
+    }
+    async function listen(first, last) {        // a Quranic dua from a reciter, through the Hifz player
+        const [s1, a1] = first.split(':').map(Number), [s2, a2] = last.split(':').map(Number);
+        const body = s1 === s2 ? { portions: [{ kind: 'surah', n: s1, a1, a2 }] } : { keys: [first, last] };   // "Al-Baqarah, ayah 255"
+        try {
+            const r = await fetch('/quran/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            if (!r.ok) { showToast((await r.json().catch(() => ({}))).detail || hzT('Nothing to play.', 'চালানোর কিছু নেই।')); return; }
+            stopSpeech();
+            recite.apply(await r.json());
+        } catch {}
+    }
+    box.addEventListener('click', e => {
+        const t = e.target;
+        const chip = t.closest('[data-group]');
+        if (chip) { group = chip.dataset.group; only = null; render(); pane.scrollTop = 0; return; }
+        const pr = t.closest('[data-prayer]');
+        if (pr) { prayer = pr.dataset.prayer; render(); return; }
+        const m = t.closest('[data-meaning]');
+        if (m) { saveSettings({ meaning: m.dataset.meaning }); return; }
+        if (t.closest('#du-gear')) { setOpen = !setOpen; render(); return; }
+        if (t.closest('[data-clear]')) { only = null; render(); pane.scrollTop = 0; return; }
+        const cnt = t.closest('.du-count');
+        if (cnt) { tap(cnt.closest('.du-card'), 1); return; }
+        const act = t.closest('[data-act]');
+        if (act) { const c = act.closest('.du-card'); if (act.dataset.act === 'minus') tap(c, -1); else tap(c, 0, 0); return; }
+        const play = t.closest('[data-play-keys]');
+        if (play) { const [a, b] = play.dataset.playKeys.split(','); listen(a, b); return; }
+        const ok = t.closest('[data-approve]');
+        if (ok) { decide(ok.dataset.approve, 'approve'); return; }
+        const no = t.closest('[data-reject]');
+        if (no) decide(no.dataset.reject, 'reject');
+    });
+    box.addEventListener('change', e => {
+        const t = e.target;
+        if (t.id === 'du-offset') {
+            const v = Number(t.value);
+            if (Number.isInteger(v) && v >= 0 && v <= 120) saveSettings({ offset_min: v });
+            else { showToast(hzT('0 to 120 minutes.', '০ থেকে ১২০ মিনিট।')); render(); }
+        } else if (t.dataset.pr) saveSettings({ prayers: { [t.dataset.pr]: t.checked } });
+        else if (t.id === 'du-page') saveSettings({ page: t.checked });
+        else if (t.id === 'du-tg') saveSettings({ telegram: t.checked });
+        else if (t.id === 'du-spoken') saveSettings({ spoken: t.checked });
+        else if (t.id === 'du-unsourced') saveSettings({ show_unsourced: t.checked });
+    });
+    function show(opts = {}) {                   // "show my after-Maghrib duas", the reminder's Open
+        if (opts.ids) only = opts.ids;
+        else if (opts.group) { group = opts.group; only = null; }
+        if (opts.prayer) prayer = opts.prayer;
+        hifzUI.open('duas');
+        pane.scrollTop = 0;
+    }
+    function shown() {                           // the tab came up (hifzUI.setTab): the list as it is now
+        if (data) render();
+        refresh();
+    }
+    function ring(t) {
+        hzFonts();
+        ringAlert = t;
+        const d = t.extra?.dua || {};
+        const name = d.name || d.prayer || 'Fajr', n = (d.entries || []).length;
+        $('du-ring-k').textContent = hzT(`After-${nameOf(name)} adhkar`, `${OF_BN[name] || ''} পরের জিকির`);
+        $('du-ring-open').textContent = hzT('Open the adhkar', 'জিকির খোলো');
+        $('du-ring-later').textContent = hzT('Later', 'পরে');
+        $('du-ring-text').innerHTML = `${esc(hzT(`${n} adhkar, each with its counter`, `${hzNum(n)}টি জিকির, প্রতিটার কাউন্টারসহ`))}<small>${esc(hzT(`${nameOf(name)} began at ${d.at || ''}`, `${nameOf(name)} শুরু হয়েছে ${d.at_bn || ''}`))}</small>`;
+        $('du-ring').hidden = false;
+    }
+    $('du-ring-open').addEventListener('click', () => {
+        $('du-ring').hidden = true;
+        show({ group: 'after_salah', prayer: ringAlert?.extra?.dua?.prayer });
+    });
+    $('du-ring-later').addEventListener('click', () => { $('du-ring').hidden = true; });
+    // a new day: the counters start again (the server's date is the city's; this only asks for the list again)
+    setInterval(() => { if (data && isOpen()) refresh(); }, 60000);
+    return { refresh, show, shown, ring, render };
 })();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────

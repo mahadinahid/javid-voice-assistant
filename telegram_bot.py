@@ -51,6 +51,7 @@ import httpx
 
 import approvals
 import documents
+import duas
 import hifz
 import javid
 import memory_store
@@ -85,9 +86,11 @@ COMMANDS = [("help", "What I can do here"), ("new", "Start a new Telegram chat")
             ("lock", "Turn off remote control until you unlock it on the Mac")]
 # What each kind of pushed item starts with: a watch's alert, prayers.py's heads-up and prayer-time message, the
 # morning brief, a zikir reminder, hifz.py's revision reminder; a timer or reminder otherwise.
-ICONS = {"alert": "🔔", "prayer": "🕌", "prayer_start": "🕌", "brief": "🌅", "devotion": "🤲", "hifz": "📖"}
+ICONS = {"alert": "🔔", "prayer": "🕌", "prayer_start": "🕌", "brief": "🌅", "devotion": "🤲", "hifz": "📖",
+         "dua": "🤲"}
 HIFZ_BUTTONS = (("s", "✓ Strong"), ("o", "✓ Okay"), ("w", "✓ Weak"))     # a revision reminder logs it in one tap
 HIFZ_STRENGTH = {"s": "strong", "o": "okay", "w": "weak"}
+DUA_BUTTONS = (("t", "📖 Show the text"), ("d", "✓ All done"))     # a prayer's adhkar card (duas.py)
 
 # Every Bot API URL carries the token, and httpx logs request URLs at INFO: keep its loggers at WARNING whatever
 # else configures logging.
@@ -769,6 +772,20 @@ def _button(query: dict) -> None:
         return
     kind, _, rest = (query.get("data") or "").partition(":")
     choice, _, aid = rest.partition(":")
+    if kind == "du" and choice in ("t", "d"):        # a prayer's adhkar card: its duas written out, or all ticked
+        extra = duas.from_alert(aid)
+        if choice == "t":
+            parts = duas.telegram_texts(extra, javid.get_language()) if extra else []
+            _answer(query, "Here they are." if parts else "That card has gone; the Dua & Zikr tab has them.")
+            for part in parts:
+                send(chat_id, part)
+            return
+        with javid.hold_turn():
+            note = "✓ " + duas.done_from_alert(aid)
+        _answer(query, note)
+        if msg.get("message_id"):
+            _edit(chat_id, msg["message_id"], f"{msg.get('text', '')}\n\n{note}")
+        return
     if kind == "hz" and choice in HIFZ_STRENGTH:     # a revision reminder's button: log what it named, once
         with javid.hold_turn():
             note = "✓ " + hifz.log_from_alert(aid, HIFZ_STRENGTH[choice], via="telegram")
@@ -815,6 +832,9 @@ def push_due() -> None:
         text = t["announce"].get(lang) or t["announce"]["en"]
         buttons = ([[{"text": label, "callback_data": f"hz:{k}:{t['id']}"} for k, label in HIFZ_BUTTONS]]
                    if t["kind"] == "hifz" and (t.get("extra") or {}).get("hifz") else None)
+        if t["kind"] == "dua" and (t.get("extra") or {}).get("dua"):    # the card: its duas by name, two buttons
+            text = duas.telegram_card(t["extra"], lang)
+            buttons = [[{"text": label, "callback_data": f"du:{k}:{t['id']}"} for k, label in DUA_BUTTONS]]
         send(state["chat"], f"{ICONS.get(t['kind'], '⏰')} {text}" +
              (f" (missed: it was due {timers._when(t['due'])})" if late else ""), buttons)
 

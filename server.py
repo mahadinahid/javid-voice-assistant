@@ -25,6 +25,7 @@ import approvals
 import documents
 import calendar_tools
 import drive_tools
+import duas
 import edge_pool
 import hifz
 import memory_store
@@ -93,6 +94,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=prayers.prefetch, daemon=True).start()   # this month's prayer times, before a question
     threading.Thread(target=prayers.ramadan_start, daemon=True).start()   # Ramadan's date (hifz.py counts down to it)
     threading.Thread(target=quran_text.ensure, daemon=True).start()       # the reader's text: checked, or downloaded once
+    threading.Thread(target=duas.prefetch, kwargs={"background": False}, daemon=True).start()   # Quranic duas' text
     quran.prune_timings()   # Quran.com's timings are kept under a week (its terms)
     if prayers.keep_awake():    # on power, no idle sleep while the server runs: Fajr's reminders go out
         print("[prayers] keeping the Mac awake while the server runs on power (keep_awake in config/prayers.yaml)")
@@ -252,6 +254,8 @@ def _reply_event(kind: str, value) -> str | None:
         return _event(type="hifz", **value)
     if kind == "quran":             # the reader: open a portion, the translation, the hifz test, a reciter chosen
         return _event(type="quran", **value)
+    if kind == "duas":              # open the Hifz view's Dua & Zikr tab on a group, a prayer's card or found duas
+        return _event(type="duas", **value)
     return None
 
 
@@ -733,6 +737,74 @@ def hifz_undo(request: Request):
     _local_page_only(request)
     gone = hifz.undo_last()
     return {"undone": len(gone), "status": hifz.status_json()}
+
+
+# Dua & Zikr (duas.py): the tab's list, counters and settings, and the additions from pictures waiting for approval.
+@app.get("/duas")
+def duas_tab():
+    return duas.tab_json()
+
+
+class DuaCountBody(BaseModel):
+    slot: str
+    id: str
+    delta: int | None = None             # +1 a tap, -1 a tap taken back
+    value: int | None = None             # 0 starts the counter again
+
+
+@app.post("/duas/count")
+def duas_count(body: DuaCountBody, request: Request):
+    _local_page_only(request)
+    if body.delta not in (None, -1, 1) or (body.value is not None and body.value < 0):
+        raise HTTPException(400, "A tap is +1 or -1; a counter is set from 0.")
+    try:
+        return duas.count(body.slot, body.id, delta=body.delta, value=body.value)
+    except KeyError:
+        raise HTTPException(404, "No such dua or counter.")
+
+
+@app.get("/duas/settings")
+def duas_get_settings():
+    return duas.settings()
+
+
+@app.post("/duas/settings")
+def duas_set_settings(body: dict, request: Request):
+    """The reminders' minutes after each prayer, which prayers, Telegram and the page, the spoken prompt, unsourced
+    duas shown or not, the meaning's language: kept on this Mac (data/dua_settings.json, 0600)."""
+    _local_page_only(request)
+    now, bad = duas.save_settings(body)
+    if bad:
+        raise HTTPException(400, "; ".join(bad))
+    return now
+
+
+@app.post("/duas/pending/{pid}/approve")
+def duas_approve(pid: str, request: Request):
+    _local_page_only(request)
+    with hold_turn():
+        said = duas.approve(pid)
+    return {"said": said, "tab": duas.tab_json()}
+
+
+@app.post("/duas/pending/{pid}/reject")
+def duas_reject(pid: str, request: Request):
+    _local_page_only(request)
+    gone = duas.reject(pid)
+    return {"said": "Dropped: nothing was added." if gone else "That addition isn't waiting any more.",
+            "tab": duas.tab_json()}
+
+
+@app.get("/duas/picture/{name}")
+def duas_picture(name: str):
+    """A picture an addition came from (data/dua_inbox): the tab shows it for one with no source's text."""
+    if not duas._PICTURE.fullmatch(name):
+        raise HTTPException(404, "No such picture.")
+    path = os.path.join(duas.INBOX_DIR, name)
+    if not os.path.isfile(path):
+        raise HTTPException(404, "No such picture.")
+    return FileResponse(path, media_type="image/png" if name.lower().endswith(".png") else "image/jpeg",
+                        headers={"Cache-Control": "no-store"})
 
 
 class QuranPlanBody(BaseModel):

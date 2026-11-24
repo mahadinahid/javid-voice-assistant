@@ -489,6 +489,8 @@ HZ_STATUSES = ("fresh", "steady", "soon", "over", "weak")
 HZ_GLOW_AT_CONTENT = 0.08          # the view's gold glow (0.16 at its peak, above the top edge) where text begins
 HZ_HIGHLIGHT = 0.17                # the ayah being recited: the accent at its strongest across the highlight
 HZ_TINT, HZ_SOFT_TINT = 0.20, 0.14 # the accent's tint under text: a pill, a pressed toggle (0.20); a chosen row (0.14)
+HZ_DONE_TINT = 0.12                # Dua & Zikr: a dua said its full count, its card lit faintly in the accent
+HZ_COUNTER = 0.55                  # Dua & Zikr: the counter's face, the view's deep shade over the card
 MIN_STATUS = 3.0                   # a status colour against what it sits on (WCAG's 3:1 for graphics)
 MIN_APART = 10.0                   # CIEDE2000 between any two of the six (Classic's closest, fresh and steady: 10.5)
 MIN_WEAK_APART = 11.0              # weak against every other (Classic: 11.9)
@@ -551,6 +553,12 @@ def hifz_checks(v: dict) -> list:
         ("Text on the accent's tints (pills, pressed buttons)", tinted, MIN_TEXT),
         ("Muted text on a chosen row", worst(c("--hz-muted"), s["soft_tints"]), MIN_TEXT),
     ]
+    done = [_over(s["gold"], HZ_DONE_TINT, x) for x in s["cards"]]
+    face = [_over(_numbers(v["--hz-deep-rgb"]), HZ_COUNTER, x) for x in s["cards"] + done]
+    out += [("Dua & Zikr: the Arabic of a finished dua", worst(c("--hz-ivory"), done), MIN_TEXT),
+            ("Dua & Zikr: its meaning on a finished dua", worst(c("--hz-text-2"), done), MIN_TEXT),
+            ("Dua & Zikr: the counter's number", worst(c("--hz-ivory"), face), MIN_TEXT),
+            ("Dua & Zikr: the counter's count to go", worst(c("--hz-muted"), face), MIN_TEXT)]
     under = s["cards"] + s["dash"]
     for key, word in (("fresh", "Fresh"), ("steady", "Steady"), ("soon", "Due soon"), ("over", "Past its cycle")):
         out.append((f"{word}: against the card", worst(c(f"--hz-{key}"), under), MIN_STATUS))

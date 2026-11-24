@@ -44,6 +44,17 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
   translation" and "continue where I left off" work by voice. The text is downloaded once from Tanzil and read
   offline after that; recitations stream from Quran.com (Ghamdi and Muaiqly from everyayah.com). Javid never says
   the Quran's words itself, and a model never writes, completes or translates an ayah.
+- **Dua & Zikr, from sources only.** The Hifz view's third tab is your own list (`data/duas.yaml`, built from your
+  screenshots and checked against Quran.com, Hisnul Muslim and the six hadith collections): after salah (Hisnul
+  Muslim's adhkar in order, then each prayer's own), morning, evening, before sleep, any time and set occasions. Each
+  dua shows its Arabic as its source has it, a transliteration, its meaning in Bangla or English, its count and
+  reference, and a tap counter that starts again at midnight; unsourced ones stay hidden unless you turn them on. A
+  few minutes after each prayer a card brings that prayer's adhkar (after Fajr the morning's, after Asr the evening's)
+  to the page and to Telegram; it speaks one sentence only if you ask it to, and never a dua. "Show my after-Maghrib
+  duas", "what's the dua before sleep?" and "what's the dua for anxiety?" are answered in code; "add this to my evening
+  adhkar" with a picture reads it on your Mac, finds its source and waits for your Approve (or name the source:
+  "add Hisnul Muslim 91 to my evening adhkar"). A language model never writes out a dua. `python duas.py --check`
+  checks your list.
 - **It remembers, with your say-so.** Nothing goes into its memory until you approve it, and secrets are refused.
   Past chats are searchable.
 - **On your phone.** A Telegram bot, paired by scanning a QR code. Anything that changes your data waits for an
@@ -69,7 +80,7 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
  Browser: index.html ── /talk, /type ──►  server.py (FastAPI) ──►  javid.py: the agent loop
    microphone                              speech to text: Groq Whisper (whisper-large-v3-turbo)
    speaker   ◄── /speak ─────────────────  answered in code first: news, watches, exchange rates, market briefs,
-                                           prayer times, hifz revision, the reader, recitation, questions about Javid,
+                                           prayer times, duas, hifz revision, the reader, recitation, questions about Javid,
                                            the self-check
                                            otherwise a language model with 27 tools:
                                            Groq gpt-oss-20b, then the fallbacks in config/providers.yaml
@@ -142,8 +153,10 @@ from Javid's own page: another website, a DNS-rebinding page or another program 
 else. What does leave the machine: each voice clip goes to Groq for transcription, each spoken
 reply to Microsoft's edge-tts, your city and prayer settings to Aladhan, the surah your browser plays to Quran.com's
 audio hosts (or everyayah.com), the reciter and surah whose timings Javid fetches from Quran.com, Tanzil's download of
-the text (once), and your requests to the language model and search providers that are on. Where you left off reading
-and listening stays on your Mac (`data/quran_state.json`). Calendar,
+the text (once), the ayahs of your Quranic duas to Quran.com (kept six days), and your requests to the language model
+and search providers that are on. Where you left off reading and listening stays on your Mac
+(`data/quran_state.json`), and so do your dua list, counters and reminder settings (`data/duas.yaml`,
+`data/dua_progress.json`, `data/dua_settings.json`); a dua picture you add is read on the Mac. Calendar,
 tasks, memory, chats, your revision log and the files you give it go only to providers with `personal_ok: true`; a file's text is
 treated as data, so nothing written in a file can change your tasks, calendar or memory without your Approve.
 
@@ -152,7 +165,7 @@ treated as data, so nothing written in a file can change your tasks, calendar or
 ## Testing
 
 ```bash
-python regression.py                         # 192 scripted checks: no network, no API tokens
+python regression.py                         # 207 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -179,6 +192,7 @@ prayer times, Quran.com, Tanzil, Telegram and Drive, so it never touches your da
 | `prayers.py`, `config/prayers.yaml`, `fixtures/prayers/` | Prayer times (Aladhan), prayer and zikir reminders, the Hijri date, Ramadan's date and the morning brief; its settings; the recorded months its tests use |
 | `hifz.py`, `config/hifz.yaml` | The hifz revision tracker: the log (`data/hifz_log.jsonl`, never in git), the rotation, the questions, the reminders |
 | `quran.py`, `quran_meta.json` | The Quran's structure (surahs, juz, manzils, pages; the names people say in English and Bangla), the reciters and their timings from Quran.com, the reader's search and saved place, and the rule that Quran text never comes from a model. The structure is from [Tanzil's Quran metadata](https://tanzil.net/docs/quran_metadata) (CC BY 3.0), checked against Quran.com with `python quran.py --check` |
+| `duas.py`, `dua_check.py` | Dua & Zikr: your list (`data/duas.yaml`, never in git), the counters, each prayer's card on the page and Telegram, the voice requests, the rule that a model never writes out a dua; and the check a dua picture goes through (Tesseract on the Mac, then the Quran, Hisnul Muslim and the six hadith books) before it waits for your approval |
 | `quran_text.py` | The reader's text, downloaded once into `data/quran/` and checked (6,236 ayahs): [Tanzil's Uthmani text](https://tanzil.net) (CC BY 3.0, verbatim) and its translations by Saheeh International and Muhiuddin Khan (non-commercial use) |
 | `fonts/` | [Amiri Quran](https://github.com/aliftype/amiri) for the reader, under the SIL Open Font License (`fonts/OFL-AmiriQuran.txt`) |
 | `telegram_bot.py`, `telegram.html` | The Telegram bot and its setup page |

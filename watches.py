@@ -21,6 +21,7 @@ import threading
 import time
 import uuid
 
+import duas
 import gnews
 import hifz
 import markets
@@ -574,6 +575,10 @@ def _loop() -> None:
             hifz.tick()             # today's revision after Fajr, and the nudges while it isn't logged
         except Exception as e:
             print(f"[hifz] {type(e).__name__}: {str(e)[:120]}")
+        try:
+            duas.tick()             # each prayer's adhkar card, a few minutes after it begins
+        except Exception as e:
+            print(f"[duas] {type(e).__name__}: {str(e)[:120]}")
 
 
 def start() -> None:

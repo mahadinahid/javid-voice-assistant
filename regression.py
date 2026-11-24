@@ -76,11 +76,14 @@ import memory_store  # noqa: E402
 import prayers  # noqa: E402
 import providers  # noqa: E402
 import quran  # noqa: E402
+import quran_corpus  # noqa: E402
 import quran_text  # noqa: E402
 import rates  # noqa: E402
 import search  # noqa: E402
 import selfcheck  # noqa: E402
 import skills  # noqa: E402
+import tafsir  # noqa: E402
+import tafsir_study  # noqa: E402
 import telegram_bot  # noqa: E402
 import themes  # noqa: E402
 import timers  # noqa: E402
@@ -435,14 +438,14 @@ def prayer_fresh(fake=None):
 
 @contextlib.contextmanager
 def prayer_clock(when: datetime):
-    """prayers', hifz's, duas' and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
+    """prayers', hifz's, duas', tafsir's and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
     now = [when.timestamp()]
-    saved = prayers._time, timers._now, hifz._time, duas._time
-    prayers._time = timers._now = hifz._time = duas._time = lambda: now[0]
+    saved = prayers._time, timers._now, hifz._time, duas._time, tafsir._time, tafsir_study._time
+    prayers._time = timers._now = hifz._time = duas._time = tafsir._time = tafsir_study._time = lambda: now[0]
     try:
         yield types.SimpleNamespace(at=lambda dt: now.__setitem__(0, dt.timestamp()), now=lambda: now[0])
     finally:
-        prayers._time, timers._now, hifz._time, duas._time = saved
+        prayers._time, timers._now, hifz._time, duas._time, tafsir._time, tafsir_study._time = saved
 
 
 def _dhaka(*args) -> datetime:
@@ -497,6 +500,8 @@ def fake_text(kind: str, s: int, a: int) -> str:
     if (s + a) % 5 == 0 and (s, a) != (1, 1):
         words = words[:2] + [chr(0x06D6)] + words[2:]         # a pause mark: not a word
     text = " ".join(words)
+    if a == 1 and s in (95, 97):        # Tanzil writes these with a shadda on the first letter (quran_text._split)
+        return f"{FAKE_BASMALA[0]}{chr(0x0651)}{FAKE_BASMALA[1:]} {text}"
     return f"{FAKE_BASMALA} {text}" if a == 1 and s not in (1, 9) else text
 
 
@@ -561,7 +566,8 @@ class FakeQuranCom:
                 lo, hi = quran.surah_range(s["n"])
                 count = self.wrong["ayahs"][1] if self.wrong.get("ayahs", (0,))[0] == s["n"] else s["ayahs"]
                 out.append({"id": s["n"], "name_arabic": s["ar"], "name_simple": s["en"], "verses_count": count,
-                            "pages": [quran.page_of(lo), quran.page_of(hi)]})
+                            "pages": [quran.page_of(lo), quran.page_of(hi)],
+                            "revelation_order": self.wrong["order"][1] if self.wrong.get("order", (0,))[0] == s["n"] else s["order"]})
             return {"chapters": out}
         if url.endswith("/juzs"):
             juzs = []
@@ -601,7 +607,63 @@ class FakeQuranCom:
                                         for i, w in enumerate(words)] +
                                        [{"position": len(words) + 1, "char_type_name": "end",
                                          "text_uthmani": str(a).translate(str.maketrans("0123456789", "٠١٢٣٤٥٦٧٨٩"))}]}}
+        if (got := self._tafsir(url)) is not None:
+            return got
         raise OSError(f"the fake Quran.com has no {url}")
+
+    def _tafsir(self, url):
+        """The tafsir endpoints (tafsir.py), made up in Quran.com's documented format; faults in self.wrong:
+        "tafsir_missing" {(id, key)} gives that passage no text, "tafsir_name" {id: name} lists it otherwise,
+        "wbw_short" (s, a) drops that ayah's last word, "tafsir_down" fails only these."""
+        import tafsir as _t
+        if self.wrong.get("tafsir_down") and ("/tafsirs" in url or "/info" in url or "words=true" in url):
+            raise OSError("the fake Quran.com's tafsir is down")
+        langs = {"ar": "arabic", "en": "english", "bn": "bengali"}
+        if url.endswith("/resources/tafsirs"):
+            names = self.wrong.get("tafsir_name", {})
+            return {"tafsirs": [{"id": tid, "name": names.get(tid, t["qc_name"]), "author_name": t["qc_author"],
+                                 "slug": t["slug"], "language_name": langs[t["lang"]]} for tid, t in _t.TAFSIRS.items()]}
+        missing = self.wrong.get("tafsir_missing", set())
+        if (m := re.search(r"/tafsirs/(\d+)/by_ayah/(\d+):(\d+)$", url)):
+            tid, s, a = int(m[1]), int(m[2]), int(m[3])
+            keys, on = fake_group(tid, s, a)
+            text = "" if tid in FAKE_LAST or (tid, on) in missing else fake_tafsir_html(tid, keys)
+            shown = keys[:-1] if tid in FAKE_LAST and len(keys) > 1 else keys      # Fathul Majid's by_ayah: one short
+            return {"tafsir": {"verses": {k: {"id": 1} for k in shown}, "resource_id": tid, "text": text}}
+        if (m := re.search(r"/tafsirs/(\d+)/by_chapter/(\d+)\?per_page=(\d+)&page=(\d+)$", url)):
+            tid, s, per, page = map(int, m.groups())
+            rows = []
+            for a in range(1, quran.SURAHS[s - 1]["ayahs"] + 1):
+                keys, on = fake_group(tid, s, a)
+                if tid in FAKE_PAIRS and f"{s}:{a}" != on:
+                    continue                    # Muyassar's by_chapter leaves the rows of a pair's second ayah out
+                text = fake_tafsir_html(tid, keys) if f"{s}:{a}" == on and (tid, on) not in missing else ""
+                rows.append({"verse_key": f"{s}:{a}", "resource_id": tid, "text": text})
+            pages = max(1, -(-len(rows) // per))
+            return {"tafsirs": rows[(page - 1) * per:page * per],
+                    "pagination": {"per_page": per, "current_page": page, "next_page": page + 1 if page < pages else None,
+                                   "total_pages": pages, "total_records": len(rows)}}
+        if (m := re.search(r"/chapters/(\d+)/info\?language=en$", url)):
+            s = int(m[1])
+            return {"chapter_info": {"chapter_id": s, "source": "A made-up introduction",
+                                     "text": f"<h2>Name</h2><p>A made-up name for surah {s}.</p><h2>Theme and Subject Matter</h2>"
+                                             f"<p>The made-up themes of surah {s}: trust and patience.</p>"}}
+        if (m := re.search(r"/verses/by_chapter/(\d+)\?words=true&word_fields=text_uthmani&language=(\w+)&"
+                           r"word_translation_language=(\w+)&per_page=(\d+)&page=(\d+)$", url)):
+            s, lang, per, page = int(m[1]), m[2], int(m[4]), int(m[5])
+            count = quran.SURAHS[s - 1]["ayahs"]
+            verses = []
+            for a in range((page - 1) * per + 1, min(page * per, count) + 1):
+                ws = fake_words(s, a)
+                if self.wrong.get("wbw_short") == (s, a):
+                    ws = ws[:-1]
+                verses.append({"verse_key": f"{s}:{a}", "words": [
+                    {"position": i + 1, "char_type_name": "word", "text_uthmani": w,
+                     "translation": {"text": f"[{lang}] {s}:{a}:{i + 1}", "language_name": lang},
+                     "transliteration": {"text": f"tl{i + 1}", "language_name": "english"}} for i, w in enumerate(ws)] +
+                    [{"position": len(ws) + 1, "char_type_name": "end", "text_uthmani": str(a)}]})
+            return {"verses": verses, "pagination": {"per_page": per, "current_page": page}}
+        return None
 
 
 # the reader's text (quran_text.py) and the recitation timings and saved place (quran.py), 2026-11-23: all scratch
@@ -734,6 +796,122 @@ def dua_fresh(**settings) -> FakeQuranCom:
     duas._get_json = fake.get
     duas._qfail["at"] = 0.0
     quran_fresh(text=True)
+    return fake
+
+
+# ---------- tafsir study (tafsir.py, tafsir_study.py, quran_corpus.py), 2026-11-24: all scratch, all made up ----------
+tafsir.DIR = os.path.join(SCRATCH, "tafsir")                        # never the Mac's six-day copies
+tafsir.STATE_FILE = os.path.join(SCRATCH, "tafsir_state.json")
+tafsir_study.CONFIG_FILE = os.path.join(SCRATCH, "tafsir.yaml")     # the suite's settings, never Mahadi's
+tafsir_study.STUDY_FILE = os.path.join(SCRATCH, "tafsir_study.json")    # never what he studied
+tafsir_study.NOTES_FILE = os.path.join(SCRATCH, "tadabbur.json")        # never his notebook
+tafsir_study.STATE_FILE = os.path.join(SCRATCH, "tafsir_reminders.json")
+quran_corpus.DIR = os.path.join(SCRATCH, "quran_corpus")            # a made-up file in the Corpus's format
+TAFSIR_SETTINGS = {"daily": {"min": 5, "max": 10}, "target": 1, "nudge": {"after": "Fajr", "minutes": 35},
+                   "page": True, "telegram": True, "spoken": False, "boundary": 169, "prefetch_days": 3, "hifz_link": True}
+FAKE_GROUPED = {169, 168, 164}      # passages of five ayahs, the text on the first (as Ibn Kathir abridged)
+FAKE_LAST = {381}                   # passages of five, the text on the last; Al-Falaq and An-Nas one (Fathul Majid)
+FAKE_PAIRS = {16}                   # passages of two, the second row left out of by_chapter (as Muyassar)
+FAKE_ROOTS = ("ktb", "Elm", "qwl", "xlq", "rHm", "smw", "nwr")
+
+
+def fake_group(tid: int, s: int, a: int) -> tuple[list[str], str]:
+    """The made-up passage of tafsir `tid` holding s:a: (its keys, the key its text is on)."""
+    count = quran.SURAHS[s - 1]["ayahs"]
+    if tid in FAKE_LAST and s in (113, 114):
+        return [f"113:{x}" for x in range(1, 6)] + [f"114:{x}" for x in range(1, 7)], "114:6"
+    if tid in FAKE_GROUPED or tid in FAKE_LAST:
+        lo = (a - 1) // 5 * 5 + 1
+        keys = [f"{s}:{x}" for x in range(lo, min(lo + 4, count) + 1)]
+        return keys, keys[-1] if tid in FAKE_LAST else keys[0]
+    if tid in FAKE_PAIRS:
+        lo = a if a % 2 else a - 1
+        keys = [f"{s}:{x}" for x in range(lo, min(lo + 1, count) + 1)]
+        return keys, keys[0]
+    return [f"{s}:{a}"], f"{s}:{a}"
+
+
+def fake_tafsir_html(tid: int, keys: list[str]) -> str:
+    """A made-up commentary in Quran.com's HTML: a heading, a first sentence that names the tafsir and the passage, a
+    paragraph that runs on past "said," (the next one is its translation), a quoted ayah, and for 2:255 a reason of
+    revelation. Arabic tafsirs in made-up Arabic letters, Bangla ones in Bangla."""
+    import tafsir as _t
+    lang = _t.TAFSIRS[tid]["lang"]
+    first, last = keys[0], keys[-1]
+    quoted = '<span class="arabic qpc-hafs">' + " ".join(fake_words(*map(int, first.split(":")))[:3]) + "</span>"
+    if lang == "ar":
+        word = lambda k: chr(0x0628 + (tid + k) % 20) + chr(0x0631) + chr(0x0633) + chr(0x064E)   # not the ayahs' shapes
+        return (f'<p lang="ar" class="ar ">{" ".join(word(k) for k in range(8))}. {quoted} {" ".join(word(k + 9) for k in range(6))}.</p>'
+                f'<p>{" ".join(word(k + 3) for k in range(10))} ({first}).</p>')
+    if lang == "bn":
+        out = (f"<p><b>নামকরণ:</b></p><p>বানানো তাফসীর {tid}, {first} থেকে {last}: এর প্রথম বাক্যটি এখানে। আল্লাহর ওপর ভরসার কথা বলা হয়েছে।</p>"
+               f"<p>রাসূলুল্লাহ (সাঃ) বলেছেন, এটি একটি বানানো বর্ণনা। {quoted}</p>")
+        if tid in FAKE_LAST and last == "114:6":
+            out += "<p><b>শানে নুযূল:</b></p><p>বানানো ঘটনা: এই দুই সূরা একটি বানানো প্রসঙ্গে নাযিল হয়েছে। আরও কিছু কথা।</p>"
+        return out
+    out = (f"<h2>On {first} to {last}</h2><p>Made-up commentary {tid} on {first}: its first sentence is this one.</p>"
+           f"<p>Imam Ahmad recorded that the Messenger of Allah said,</p><p>(A made-up saying, translated here for the suite.)</p>"
+           f"<h2>Lessons</h2><p>Trust in Allah and patience are taught in {first} by commentary {tid}. {quoted} is quoted.</p>")
+    if first.startswith("2:25") and "2:255" in keys:
+        out += f"<p>This was revealed concerning a made-up event that commentary {tid} reports.</p>"
+    return out
+
+
+def write_fake_corpus(skip: tuple = (37, 130)) -> None:
+    """The Quranic Arabic Corpus's format, made up: every ayah with as many words as the fake Tanzil text has (one
+    fewer for `skip`, as the real 37:130 differs), each a stem with a made-up root, an even word with a prefix."""
+    os.makedirs(quran_corpus.DIR, exist_ok=True)
+    lines = ["# PLEASE DO NOT REMOVE OR CHANGE THIS COPYRIGHT BLOCK", "#  Quranic Arabic Corpus (morphology, version 0.4)",
+             "#  - Permission is granted to copy and distribute verbatim copies", "#    of this file, but CHANGING IT IS NOT ALLOWED.",
+             "#  (Made up for Javid's suite: not the Corpus's data.)", "", "LOCATION\tFORM\tTAG\tFEATURES"]
+    for sm in quran.SURAHS:
+        s = sm["n"]
+        for a in range(1, sm["ayahs"] + 1):
+            n = len(fake_words(s, a)) - ((s, a) == skip)
+            for w in range(1, n + 1):
+                g = 1
+                if w % 2 == 0:
+                    lines.append(f"({s}:{a}:{w}:{g})\twa\tCONJ\tPREFIX|w:CONJ+")
+                    g += 1
+                root = FAKE_ROOTS[(s * 3 + a + w) % 7]
+                if w % 6 == 0:
+                    lines.append(f"({s}:{a}:{w}:{g})\tfiy\tP\tSTEM|POS:P|LEM:fiy")
+                elif w % 2:
+                    lines.append(f"({s}:{a}:{w}:{g})\tkataba\tV\tSTEM|POS:V|PERF|(IV)|LEM:kataba|ROOT:{root}|3MS")
+                else:
+                    lines.append(f"({s}:{a}:{w}:{g})\tkitAbu\tN\tSTEM|POS:N|LEM:kitAb|ROOT:{root}|M|NOM")
+    with open(os.path.join(quran_corpus.DIR, quran_corpus.FILE_NAME), "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+    with contextlib.suppress(OSError):
+        os.remove(os.path.join(quran_corpus.DIR, quran_corpus.MANIFEST))
+    quran_corpus.forget()
+
+
+def tafsir_settings(**changes) -> dict:
+    cfg = {**copy.deepcopy(TAFSIR_SETTINGS), **changes}
+    with open(tafsir_study.CONFIG_FILE, "w", encoding="utf-8") as f:
+        yaml.safe_dump(cfg, f, allow_unicode=True)
+    tafsir_study.reload()
+    return cfg
+
+
+def tafsir_fresh(corpus: bool = True, **wrong) -> "FakeQuranCom":
+    """Nothing kept, studied, noted or raised; the suite's settings; the made-up Corpus file (or none); the Tanzil text;
+    the fake Quran.com (returned), its faults in `wrong`."""
+    shutil.rmtree(tafsir.DIR, ignore_errors=True)
+    shutil.rmtree(quran_corpus.DIR, ignore_errors=True)
+    for f in (tafsir.STATE_FILE, tafsir_study.STUDY_FILE, tafsir_study.NOTES_FILE, tafsir_study.STATE_FILE):
+        with contextlib.suppress(OSError):
+            os.remove(f)
+    tafsir._fail["at"] = 0.0
+    tafsir._log.clear()
+    tafsir_settings()
+    quran_corpus.forget()
+    if corpus:
+        write_fake_corpus()
+    quran_fresh(text=True)
+    fake = FakeQuranCom(wrong=wrong)
+    tafsir._get_json = fake.get
     return fake
 
 
@@ -5792,6 +5970,7 @@ def hifz_reminders():
     import server
     problems, client = [], TestClient(server.app)
     prayers.ramadan_start()                        # 1 Ramadan 1448 from the fake Aladhan: 9 February here
+    tafsir_fresh()                                 # nothing studied: the reminder offers juz 14's first passage
 
     def due(d, key):        # when hifz plans a reminder that day (Fajr 5:00 on the 24th + 25 minutes = 5:25)
         return next(i["due"] for i in hifz.planned(d) if i["key"].endswith(key))
@@ -5805,7 +5984,7 @@ def hifz_reminders():
         clock.at(morning - timedelta(seconds=15))
         raised = hifz.tick()
         want = ("Mahadi, today's revision: juz 14, Al-Hijr 1 to An-Nahl 128. It's day 2 in a row, keep it going. "
-                "77 days to Ramadan.")
+                "77 days to Ramadan. Study its tafsir too: Al-Hijr 1 to 8.")      # the juz's first passage (tafsir_study)
         if [(a["kind"], a["label"], a["announce"]["en"]) for a in raised] != \
                 [("hifz", "Today's revision: juz 14", want)]:
             problems.append(f"the morning reminder: {[(a['kind'], a['label'], a['announce']['en']) for a in raised]}")
@@ -5813,7 +5992,8 @@ def hifz_reminders():
                                             "kind": "morning"}:
             problems.append(f"its portions: {raised[0]['extra']}")
         if not raised or raised[0]["announce"]["bn"] != ("মাহাদি, আজকের রিভিশন: পারা ১৪, আল-হিজর ১ থেকে আন-নাহল ১২৮। "
-                                                         "টানা ২ দিন, চালিয়ে যাও। রমজানের আর ৭৭ দিন বাকি।"):
+                                                         "টানা ২ দিন, চালিয়ে যাও। রমজানের আর ৭৭ দিন বাকি। "
+                                                         "এর তাফসীরও পড়তে পারো: আল-হিজর ১ থেকে ৮।"):
             problems.append(f"in Bangla: {raised and raised[0]['announce']['bn']!r}")
         if hifz.tick():
             problems.append("raised twice")
@@ -8000,7 +8180,701 @@ CASES += [
     Case("telegram: a PDF or photo with a caption is read under the full gate; forwarded, .exe and big files aren't fetched",
          [], [drive_ok], drive=tg_file, tasks=T3, script=[]),
 ]
-assert len(CASES) == 271, len(CASES)
+# ---------- tafsir study (tafsir.py, tafsir_study.py, quran_corpus.py), 2026-11-24 ----------
+def _tafsir_turn(text: str, lang: str = "en", player=None, gate=None):
+    """One page turn: (its events, its reply, its screen part)."""
+    javid.set_language(lang)
+    try:
+        events = list(javid.think_stream(text, player=player, gate=gate))
+    finally:
+        javid.set_language("en")
+    return events, "".join(v for k, v in events if k == "delta"), next((v for k, v in reversed(events) if k == "screen"), "")
+
+
+def _reader_at(key: str, study: bool = True, passage=None) -> dict:
+    """The page's player and reader as quranState() sends them: the reader open on key's surah, the study panel on key."""
+    s = int(key.split(":")[0])
+    return {"active": False, "reader": {"open": True, "test": False, "translation": "en", "view": {"kind": "surah", "n": s},
+                                         "key": key, "sel": key,
+                                         "study": {"open": study, "key": key, "passage": passage, "ids": [169],
+                                                   "compare": False} if study else {"open": False}}}
+
+
+def _logged(n: int = 1) -> list[dict]:
+    """The chat log's last n assistant lines (what's kept for good)."""
+    with open(javid.HISTORY_FILE, encoding="utf-8") as f:
+        rows = [json.loads(x) for x in f if x.strip()]
+    return [r for r in rows if r.get("role") == "assistant"][-n:]
+
+
+def _owner_only(root: str) -> list[str]:
+    return [os.path.join(d, n) for d, _s, ns in os.walk(root) for n in ns if os.stat(os.path.join(d, n)).st_mode & 0o077]
+
+
+def tafsir_sources():
+    """Each of the twelve tafsirs is listed as Javid has it (`tafsir.py --check`, against the fake), and its passage
+    for an ayah covers that ayah, as Quran.com lays each out: the text on a passage's first ayah (Ibn Kathir
+    abridged), on its last with by_ayah giving none (Fathul Majid, Al-Falaq and An-Nas as one passage), rows left out
+    of by_chapter (Muyassar). A tafsir with no text there says so; one not kept with Quran.com down is Unavailable (503),
+    never a guess; a kept one opens in well under a second offline; the copies are owner-only, kept six days, then
+    fetched again; a failure waits RETRY_SEC before asking again."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    fake = tafsir_fresh()
+    ok, lines = tafsir.check(get=fake.get)
+    if not ok:
+        problems.append(f"--check against the fake: {lines}")
+    bad = FakeQuranCom(wrong={"tafsir_name": {169: "Something else"}})
+    ok, lines = tafsir.check(get=bad.get)
+    if ok or not any("169" in x and "Something else" in x for x in lines):
+        problems.append(f"--check missed a renamed tafsir: {lines[:3]}")
+    tafsir_fresh()
+    for tid in tafsir.TAFSIRS:
+        for k in ("1:1", "2:255", "67:2", "113:3", "114:1"):
+            s, a = map(int, k.split(":"))
+            want, _on = fake_group(tid, s, a)
+            try:
+                p = tafsir.passage(tid, k)
+            except Exception as e:
+                problems.append(f"{tid} {k}: {type(e).__name__}: {e}")
+                continue
+            if p["keys"] != want or k not in p["keys"] or not p["sections"] or p["tafsir"]["id"] != tid:
+                problems.append(f"{tid} {k}: covers {p['first']}..{p['last']}, want {want[0]}..{want[-1]}")
+    asked = len(fake.urls) if (fake := FakeQuranCom()) else 0
+    tafsir._get_json = fake.get
+    p = tafsir.passage(381, "114:4")          # read with Al-Falaq above: from this Mac, no request
+    if p["first"] != "113:1" or p["last"] != "114:6" or not p["cached"] or fake.urls:
+        problems.append(f"Fathul Majid's Al-Falaq and An-Nas: {p['first']}..{p['last']}, cached {p['cached']}, {fake.urls}")
+    fake = tafsir_fresh(tafsir_missing={(169, "67:1")})
+    try:
+        tafsir.passage(169, "67:3")
+        problems.append("a passage with no text was shown")
+    except LookupError:
+        pass
+    if client.get("/tafsir/passage", params={"tafsir_id": 169, "key": "67:3"}, headers=KEYED).status_code != 404:
+        problems.append("no text: not a 404")
+    fake = tafsir_fresh()
+    with prayer_clock(_dhaka(2026, 11, 24, 8, 0)) as clock:
+        tafsir.passage(169, "67:2")
+        fake.down = True
+        t0 = time.perf_counter()
+        r = client.get("/tafsir/passage", params={"tafsir_id": 169, "key": "67:4"}, headers=KEYED)
+        took = time.perf_counter() - t0
+        if r.status_code != 200 or not r.json()["cached"] or took >= 1.0:
+            problems.append(f"offline from the cache: {r.status_code}, {took:.3f} s")
+        r = client.get("/tafsir/passage", params={"tafsir_id": 169, "key": "67:9"}, headers=KEYED)
+        if r.status_code != 503 or "isn't kept" not in r.json()["detail"]:
+            problems.append(f"not kept and Quran.com down: {r.status_code} {r.text[:80]}")
+        n = len(fake.urls)
+        client.get("/tafsir/passage", params={"tafsir_id": 169, "key": "67:12"}, headers=KEYED)
+        if len(fake.urls) != n:
+            problems.append("asked Quran.com again within RETRY_SEC of a failure")
+        fake.down = False
+        if _owner_only(tafsir.DIR):
+            problems.append(f"not owner-only: {_owner_only(tafsir.DIR)}")
+        clock.at(_dhaka(2026, 11, 29, 8, 0))     # five days on: still kept
+        tafsir._fail["at"] = 0.0
+        n = len(fake.urls)
+        tafsir.passage(169, "67:2")
+        if len(fake.urls) != n:
+            problems.append("fetched again within six days")
+        clock.at(_dhaka(2026, 11, 30, 8, 30))    # six days and a half: deleted, fetched again
+        tafsir.prune()
+        if os.path.exists(tafsir._surah_path(169, 67)):
+            problems.append("a copy older than six days was kept")
+        tafsir.passage(169, "67:2")
+        if len(fake.urls) == n:
+            problems.append("not fetched again after six days")
+    return {"problems": problems}
+
+
+def tafsir_text():
+    """Quran.com's HTML becomes headings, paragraphs and quoted ayahs: an Arabic paragraph right to left, a short bold
+    line a heading, a long text without headings in parts. The first sentence is the tafsir's own, word for word,
+    without Arabic, read on past a "said," into its translation, and "i.e." doesn't end it. A reason of revelation is
+    found only where the tafsir says it (a paragraph, or a section headed so), never "revealed in Makkah"."""
+    problems = []
+    bs = tafsir.blocks('<h2>Head</h2><p>One <span class="arabic qpc-hafs">بلم</span> two<br>three</p>'
+                       '<p lang="ar" class="ar ">بلم تلم ثلم.</p><p><b>নামকরণ:</b></p><p>x <span class="blue">mark</span></p>')
+    shape = [(b["t"], b["dir"], [k for _t, k in b["runs"]]) for b in bs]
+    if shape != [("h", "ltr", [""]), ("p", "ltr", ["", "q", ""]), ("p", "rtl", [""]), ("h", "ltr", ["b"]), ("p", "ltr", ["", "m"])]:
+        problems.append(f"blocks: {shape}")
+    joined = tafsir.sections(tafsir.blocks("<h2>Revealed in Makkah</h2><h2>Its virtues</h2><p>Text.</p>"))
+    if [x["title"] for x in joined] != ["Revealed in Makkah · Its virtues"]:
+        problems.append(f"a heading with nothing under it: {[x['title'] for x in joined]}")
+    long = tafsir.blocks("".join(f"<p>Paragraph {i}.</p>" for i in range(14)))
+    if [x["title"] for x in tafsir.sections(long)] != ["Part 1 of 3", "Part 2 of 3", "Part 3 of 3"] or \
+            tafsir.sections(long, "bn")[0]["title"] != "অংশ ১/৩":
+        problems.append(f"parts: {[x['title'] for x in tafsir.sections(long)]}")
+    cases = [
+        ("<p>Imam X recorded that the Messenger said,</p><p>«بلم تلم»</p><p>(Indeed, a saying here.)</p><p>More.</p>",
+         "Imam X recorded that the Messenger said, (Indeed, a saying here.)"),
+        ("<p>Imam Y recorded that he said,</p><p>(Verily, a chapter will intercede. (It is): Blessed be He.)</p>",
+         "Imam Y recorded that he said, Verily, a chapter will intercede."),
+        ("<p>Only two things, i.e. life and death, are named here. Then more.</p>",
+         "Only two things, i.e. life and death, are named here."),
+        ('<p><span class="arabic">بلم</span> (بلم) The meaning of this word is plain [1]. Next.</p>',
+         "The meaning of this word is plain."),
+        ("<p>بلم تلم ثلم.</p>", ""),
+    ]
+    for raw, want in cases:
+        got = tafsir.first_sentence(tafsir.blocks(raw))
+        if got != want:
+            problems.append(f"first sentence {got!r}, want {want!r}")
+    tafsir_fresh()
+    p = tafsir.passage(169, "2:255")
+    if not p["asbab"] or "revealed concerning" not in p["asbab"][0]["text"] or p["asbab"][0]["tafsir"] != 169:
+        problems.append(f"Ibn Kathir's reason of revelation at 2:255: {p['asbab']}")
+    if tafsir.passage(169, "67:2")["asbab"]:
+        problems.append("a reason of revelation where the tafsir gives none")
+    p = tafsir.passage(381, "113:1")
+    if not p["asbab"] or "নাযিল" not in p["asbab"][0]["text"]:
+        problems.append(f"Fathul Majid's শানে নুযূল section: {p['asbab']}")
+    secs = tafsir.sections(tafsir.blocks("<p>This surah was revealed in Makkah. It is short.</p>"))
+    if tafsir.asbab(169, secs):
+        problems.append("'revealed in Makkah' taken for a reason of revelation")
+    return {"problems": problems}
+
+
+def tafsir_words():
+    """Each word's meaning (Quran.com, English and Bangla) and its root, lemma and grammar (the Corpus), only where the
+    source's words are the reader's words: an ayah Quran.com gives a word short of gets no meanings, the Corpus's
+    37:130 (a word fewer) no grammar, and nothing at all without the Corpus's file, said so; its header changed: not
+    used. "Where else is this root?" lists every ayah with it, with the reader's word there. The Bismillah of At-Tin
+    and Al-Qadr (written with a shadda) is taken off their first ayah, so its words count right."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    fake = tafsir_fresh(wbw_short=(67, 2))
+    w = tafsir.words(67, 1, 3)
+    for a in (1, 2, 3):
+        got = w["ayahs"][f"67:{a}"]
+        if got["n"] != len(fake_words(67, a)) or len(got["words"]) != got["n"]:
+            problems.append(f"67:{a}: {got['n']} words")
+    w1 = w["ayahs"]["67:1"]["words"][0]
+    if (w1.get("tr_en"), w1.get("tr_bn"), w1.get("tl"), w1.get("root"), w1.get("root_ar")) != \
+            ("[en] 67:1:1", "[bn] 67:1:1", "tl1", FAKE_ROOTS[(67 * 3 + 1 + 1) % 7], quran_corpus.root_letters(FAKE_ROOTS[(67 * 3 + 2) % 7])):
+        problems.append(f"a word: {w1}")
+    if w1.get("en") != ["verb, perfect (past), form IV, 3rd person, masculine, singular"]:
+        problems.append(f"its grammar: {w1.get('en')}")
+    if any("tr_en" in x for x in w["ayahs"]["67:2"]["words"]) or not all("root" in x for x in w["ayahs"]["67:2"]["words"]):
+        problems.append("Quran.com's words a word short were used, or the Corpus's dropped with them")
+    w = tafsir.words(37, 130, 130)["ayahs"]["37:130"]["words"]
+    if any("root" in x for x in w) or not all("tr_en" in x for x in w):
+        problems.append("the Corpus's 37:130 (a word fewer) was used")
+    locs = [(s["n"], a, x) for s in quran.SURAHS for a in range(1, s["ayahs"] + 1)
+            for x in range(1, len(fake_words(s["n"], a)) - ((s["n"], a) == (37, 130)) + 1)
+            if x % 6 and FAKE_ROOTS[(s["n"] * 3 + a + x) % 7] == "nwr"]
+    r = client.get("/tafsir/root", params={"root": "nwr"}, headers=KEYED).json()
+    if r["count"] != len(locs) or r["ayahs"] != len({(s, a) for s, a, _x in locs}) or r["rows"][0]["key"] != f"{locs[0][0]}:{locs[0][1]}":
+        problems.append(f"root nwr: {r['count']} in {r['ayahs']} ayahs, want {len(locs)}")
+    first = r["rows"][0]
+    if first["word"] != fake_words(first["s"], first["a"])[first["w"][0] - 1]:
+        problems.append(f"the reader's word for {first['key']}: {first['word']}")
+    if client.get("/tafsir/root", params={"root": "<script>x"}, headers=KEYED).status_code != 400:
+        problems.append("a root that isn't one was taken")
+    if quran_text.word_count(95, 1) != len(fake_words(95, 1)) or not quran_text.reader([quran.surah_range(97)])["parts"][0]["bismillah"]:
+        problems.append("At-Tin's Bismillah (with a shadda) is still inside its first ayah")
+    if _owner_only(os.path.join(tafsir.DIR, "words")):
+        problems.append("Quran.com's word copies aren't owner-only")
+    tafsir_fresh(corpus=False)
+    w = tafsir.words(67, 1, 1)
+    if any("root" in x for x in w["ayahs"]["67:1"]["words"]) or "the Quranic Arabic Corpus file" not in w["missing"]:
+        problems.append(f"without the Corpus's file: {w['missing']}")
+    write_fake_corpus()
+    with open(os.path.join(quran_corpus.DIR, quran_corpus.FILE_NAME), encoding="utf-8") as f:
+        text = f.read().replace("CHANGING IT IS NOT ALLOWED", "edited")
+    with open(os.path.join(quran_corpus.DIR, quran_corpus.FILE_NAME), "w", encoding="utf-8") as f:
+        f.write(text)
+    quran_corpus.forget()
+    if quran_corpus.status()["ready"]:
+        problems.append("a Corpus file with its terms taken out was used")
+    return {"problems": problems}
+
+
+TAFSIR_REQUESTS = [
+    ("What does Ibn Kathir say about Al-Mulk 2?", None, {"action": "show", "key": "67:2"}),
+    ("tafsir of ayatul kursi", None, {"action": "show", "key": "2:255"}),
+    ("What does Ibn Kathir say about death in Al-Mulk 2?", None, {"action": "question", "key": "67:2", "question": "death"}),
+    ("explain this simply", "67:3", {"action": "summary", "key": "67:3"}),
+    ("compare Sa'di and Ibn Kathir here", "67:2", {"action": "compare", "key": "67:2"}),
+    ("explain Surah Al-Mulk ayah 2 simply", None, {"action": "summary", "key": "67:2"}),
+    ("সূরা মুলকের ২ নম্বর আয়াতের তাফসীর", None, {"action": "show", "key": "67:2"}),
+    ("is it haram to skip this, according to the tafsir?", "67:2", {"action": "ruling"}),
+    ("show me the tafsir", None, {"action": "which"}),
+    ("show my notes on tawakkul", None, {"action": "notes", "topic": "tawakkul"}),
+    ("what's today's tafsir?", None, {"action": "today"}),
+    ("mark this studied", "67:3", {"action": "studied", "key": "67:3"}),
+    ("explain this simply", None, None),                    # nothing open: not a tafsir request
+    ("what's the weather today?", "67:2", None),
+    ("play Surah Al-Mulk", None, None),
+    ("read Surah Mulk with translation", None, None),
+]
+
+
+def tafsir_voice():
+    """Asked by voice, answered in code: "what does Ibn Kathir say about Al-Mulk 2?" opens the panel on its passage and
+    reads its first sentence word for word (English: the abridged edition; Bangla: the Bangla one), an Arabic tafsir is
+    said to be Arabic and shown, a ruling is refused, no passage asks which ayah, a missing text is refused, never a
+    model request. The chat log keeps the reference, never the tafsir's words; Telegram gets the text itself."""
+    problems = []
+    for text, key, want in TAFSIR_REQUESTS:
+        got = tafsir.request(text, _reader_at(key) if key else None)
+        if want is None:
+            if got is not None:
+                problems.append(f"{text!r} taken: {got}")
+        elif not got or any(got.get(k) != v for k, v in want.items()):
+            problems.append(f"{text!r}: {got}, want {want}")
+    tafsir_fresh()
+    asked = SCRIPTED_REQUESTS
+    events, reply, screen = _tafsir_turn("What does Ibn Kathir say about Al-Mulk 2?")
+    want = ("Tafsir Ibn Kathir (abridged) on Al-Mulk 1 to 5, from Quran.com. Made-up commentary 169 on 67:1: its first "
+            "sentence is this one. The full text is in the panel.")
+    if reply != want:
+        problems.append(f"the reply: {reply!r}")
+    opened = [v for k, v in events if k == "tafsir"]
+    if opened != [{"open": {"key": "67:2", "ids": [169], "compare": False}}]:
+        problems.append(f"the panel: {opened}")
+    links = [v for k, v in events if k == "sources"]
+    if not links or links[0][0]["url"] != "https://quran.com/67:1/tafsirs/en-tafisr-ibn-kathir":
+        problems.append(f"the link: {links}")
+    kept = _logged()[0]
+    if "Made-up commentary" in json.dumps(kept) or "Tafsir Ibn Kathir (abridged)" not in kept["text"]:
+        problems.append(f"the chat log keeps: {kept}")
+    _e, reply, _s = _tafsir_turn("সূরা মুলক ২-এ ইবনে কাসীর কী বলেছেন?", "bn")
+    if not reply.startswith("তাফসীরে ইবনে কাসীর (বাংলা)") or "বানানো তাফসীর 164" not in reply:
+        problems.append(f"in Bangla: {reply!r}")
+    _e, reply, _s = _tafsir_turn("What does Tabari say about 67:2?")
+    if "written in Arabic" not in reply or quran._ARABIC.search(reply):
+        problems.append(f"an Arabic tafsir: {reply!r}")
+    _e, reply, _s = _tafsir_turn("Is it haram to skip this, according to the tafsir?", player=_reader_at("67:2"))
+    if "don't give rulings" not in reply:
+        problems.append(f"a ruling: {reply!r}")
+    _e, reply, _s = _tafsir_turn("show me the tafsir")
+    if not reply.startswith("Which ayah?"):
+        problems.append(f"no ayah: {reply!r}")
+    tafsir_fresh(tafsir_missing={(169, "67:1")})
+    _e, reply, _s = _tafsir_turn("What does Ibn Kathir say about Al-Mulk 2?")
+    if "don't explain tafsir from memory" not in reply:
+        problems.append(f"no text: {reply!r}")
+    tafsir_fresh()
+    spoken, screen = _drain_gen(tafsir.answer({"action": "show", "key": "67:2", "text": "ibn kathir"}, "en", "telegram"))
+    if "Made-up commentary 169" not in screen or "The full text is in the panel" in spoken:
+        problems.append(f"Telegram: {screen[:120]!r}")
+    if SCRIPTED_REQUESTS != asked:
+        problems.append("a model was asked")
+    return {"problems": problems}
+
+
+def _drain_gen(gen):
+    try:
+        while True:
+            next(gen)
+    except StopIteration as done:
+        return done.value
+
+
+GOOD_POINTS = ('POINTS:\n- [Ibn Kathir] The passage opens by naming the commentary || "Made-up commentary 169 on 67:1: its first sentence is this one"\n'
+               '- [Ibn Kathir] It teaches trust and patience || "Trust in Allah and patience are taught in 67:1"')
+
+
+def tafsir_summary():
+    """"Explain this simply" and "compare Sa'di and Ibn Kathir here": the model gets only the text fetched for that
+    ayah (quoted ayahs marked, not written out) and every point it returns is checked: its tag one of the tafsirs
+    fetched, its quote found in that tafsir's own text, a hadith, a ruling or a reason of revelation in it backed by
+    its quote. Failures get one rewrite, then go. The answer says it's a summary, names the tafsir after each point
+    and links the full text; nothing that doesn't answer is said to; a text that's missing or can't be had is
+    refused with no model request; the chat log keeps the points without their quotes."""
+    problems = []
+    sent = []
+    orig = tafsir._complete
+    tafsir._complete = lambda msgs: (sent.append(copy.deepcopy(msgs)), orig(msgs))[1]
+    try:
+        tafsir_fresh()
+        _script.extend([GOOD_POINTS + '\n- [Ibn Kathir] It promises paradise || "a quote that is nowhere in the text at all"\n'
+                                      '- [Tabari] Another view || "Made-up commentary 169 on 67:1: its first sentence"',
+                        GOOD_POINTS])
+        events, reply, screen = _tafsir_turn("explain this simply", player=_reader_at("67:3"))
+        if len(sent) != 2 or _script:
+            problems.append(f"{len(sent)} requests, {len(_script)} left: one rewrite expected")
+        if sent:
+            system, user = sent[0][0]["content"], sent[0][1]["content"]
+            if "ONLY the tafsir text" not in system or "[Ibn Kathir] Tafsir Ibn Kathir (abridged) on Al-Mulk 1 to 5" not in user:
+                problems.append(f"the request: {user[:160]!r}")
+            if "Made-up commentary 169 on 67:1" not in user or "[a quoted ayah]" not in user or quran._ARABIC.search(user):
+                problems.append("the text sent isn't the fetched text, its ayahs marked")
+            if any(k.startswith("_needs") for m in sent[0] for k in m):
+                problems.append("the request was tagged personal or as needing tools")
+        for want in ("Summary by Javid's language model of the tafsir text shown: not tafsir itself.",
+                     "• The passage opens by naming the commentary [Ibn Kathir]", "“Trust in Allah and patience are taught in 67:1”",
+                     "Full text: https://quran.com/67:1/tafsirs/en-tafisr-ibn-kathir"):
+            if want not in screen:
+                problems.append(f"the screen lacks {want!r}")
+        if "paradise" in screen or "Another view" in screen:
+            problems.append("a point that failed its check was kept")
+        if not reply.startswith("A summary of Tafsir Ibn Kathir (abridged) on Al-Mulk 1 to 5.") or "[" in reply.split(".")[0]:
+            problems.append(f"the spoken part: {reply!r}")
+        if [v for k, v in events if k == "tafsir"] != [{"open": {"key": "67:3", "ids": [169], "compare": False}, "summary": True}]:
+            problems.append(f"the panel: {[v for k, v in events if k == 'tafsir']}")
+        kept = json.dumps(_logged()[0], ensure_ascii=False)
+        if "Trust in Allah and patience are taught" in kept or "naming the commentary" not in kept:
+            problems.append(f"the chat log: {kept[:200]}")
+        sent.clear()
+        sadi = tafsir.plain([b for sec in tafsir.passage(91, "67:2")["sections"] for b in sec["blocks"]], quoted="")
+        quote = " ".join(sadi.split()[:5])
+        _script.extend([f'POINTS:\n- [Sa\'di] Sa\'di explains the meaning briefly || "{quote}"\n' + GOOD_POINTS.split("\n", 1)[1] +
+                        '\n- [Ibn Kathir] The Prophet said it saves its reciter || "Trust in Allah and patience are taught in 67:1"',
+                        f'POINTS:\n- [Sa\'di] Sa\'di explains the meaning briefly || "{quote}"\n' + GOOD_POINTS.split("\n", 1)[1]])
+        events, reply, screen = _tafsir_turn("compare Sa'di and Ibn Kathir here", player=_reader_at("67:2"))
+        if "Tafsir al-Sa'di" not in sent[0][1]["content"] or "Tafsir Ibn Kathir (abridged)" not in sent[0][1]["content"]:
+            problems.append("compare: both texts weren't sent")
+        if "Sa'di explains the meaning briefly [Sa'di]" not in screen or "[Ibn Kathir]" not in screen or "saves its reciter" in screen:
+            problems.append(f"compare: {screen[:300]!r}")
+        if not reply.startswith("Comparing Tafsir al-Sa'di and Tafsir Ibn Kathir (abridged) on Al-Mulk 2: 1 point from Sa'di, 2 points from Ibn Kathir."):
+            problems.append(f"compare, spoken: {reply!r}")
+        _script.extend(["NOT_IN_TEXT"])
+        _e, reply, screen = _tafsir_turn("What does Ibn Kathir say about camels in Al-Mulk 2?")
+        if reply != "The tafsir text fetched (Tafsir Ibn Kathir (abridged)) doesn't answer that." or screen:
+            problems.append(f"not in the text: {reply!r}")
+        asked = SCRIPTED_REQUESTS
+        tafsir_fresh(tafsir_missing={(169, "67:1")})
+        _e, reply, _s = _tafsir_turn("explain this simply", player=_reader_at("67:2"))
+        if "don't explain tafsir from memory" not in reply:
+            problems.append(f"missing text: {reply!r}")
+        fake = tafsir_fresh()
+        fake.down = True
+        _e, reply, _s = _tafsir_turn("explain Ibn Kathir on Al-Mulk 2 simply")
+        if "don't explain tafsir from memory" not in reply:
+            problems.append(f"Quran.com down: {reply!r}")
+        if SCRIPTED_REQUESTS != asked:
+            problems.append("a model was asked with no tafsir text")
+    finally:
+        tafsir._complete = orig
+    texts = {169: "Imam Ahmad recorded that the Messenger of Allah said it is good. Trust is taught here plainly."}
+    checks = [
+        ('- [Ibn Kathir] Good point || "Trust is taught here plainly"', 1),
+        ('- [Ibn Kathir] Good point || "Trust is taught"', 0),                          # too short
+        ('- [Ibn Kathir] The ruling: it is haram || "Trust is taught here plainly"', 0),
+        ('- [Ibn Kathir] The Prophet said it is good || "the Messenger of Allah said it is good"', 1),
+        ('- [Ibn Kathir] The Prophet said so in a hadith || "Trust is taught here plainly"', 0),
+        ('- [Ibn Kathir] It was revealed about a battle || "Trust is taught here plainly"', 0),
+        ('- [Ibn Kathir] بلم in the point || "Trust is taught here plainly"', 0),
+        ('- [Ibn Kathir] Quoted with other punctuation || "imam ahmad recorded that the messenger of allah"', 1),
+    ]
+    for line, n in checks:
+        good, _bad, _no = tafsir.check_summary(line, texts, [169])
+        if len(good) != n:
+            problems.append(f"check_summary({line!r}): {len(good)} kept")
+    a = next(a for a in range(1, 31) if len(fake_words(67, a)) >= 5)
+    ayah = " ".join(fake_words(67, a)[:5])          # the Quran's own words, repeated in a commentary's text
+    texts = {169: f"The ayah reads {ayah} and the commentary explains it at length here."}
+    good, bad, _no = tafsir.check_summary(f'- [Ibn Kathir] God is able to do all things || "{ayah}"', texts, [169], {169: [f"67:{a}"]})
+    if good or not any("the Quran's own words" in x for x in bad):
+        problems.append(f"a quote of the ayah itself passed as the tafsir's commentary: {bad}")
+    good, _bad, _no = tafsir.check_summary('- [Ibn Kathir] It explains it || "and the commentary explains it at length"', texts, [169], {169: [f"67:{a}"]})
+    if not good:
+        problems.append("the commentary's own words were refused")
+    return {"problems": problems}
+
+
+def tafsir_model_rule():
+    """A model reply that says what a tafsir or a mufassir says is rewritten once, then those sentences go; a mention
+    that isn't a claim ("Ibn Kathir was born in Syria") is left alone."""
+    problems = []
+    tafsir_fresh()
+    _script.extend(["Ibn Kathir says this teaches patience. Be patient.", "Be patient."])
+    _e, reply, _s = _tafsir_turn("how can I be more patient?")
+    if reply != "Be patient." or _script:
+        problems.append(f"rewritten: {reply!r}")
+    _script.extend(["According to Ibn Kathir, patience is half of faith.", "The commentators say patience is half of faith."])
+    _e, reply, _s = _tafsir_turn("tell me about patience")
+    if reply != tafsir.strip_reply("", "en") or _script:
+        problems.append(f"dropped: {reply!r}")
+    for text, flagged in (("Ibn Kathir was born in Syria.", False), ("ইবনে কাসীর বলেছেন যে এটি ধৈর্যের শিক্ষা।", True),
+                          ("Sa'di explains it as a test.", True), ("I read about Tabari yesterday.", False)):
+        if bool(tafsir.reply_problem(text)) != flagged:
+            problems.append(f"reply_problem({text!r}) is {not flagged}")
+    return {"problems": problems}
+
+
+def tafsir_plan():
+    """The study path: Juz Amma from An-Nas back, short surahs joined up to daily.max, then Al-Fatiha, then
+    Al-Baqarah on; a surah's passages end at the boundary tafsir's passages once they're kept (else at a ruku). A
+    month simulated a day at a time: today's passage is fixed for the day, the next day goes on from it, progress
+    counts the ayahs studied, the streak counts the days studied and a missed day only pauses it. Marked studied by
+    mistake: taken back. With a juz due for revision, its first passage not studied is offered (the Today card, the
+    hifz morning reminder)."""
+    problems = []
+    tafsir_fresh()
+    taken, labels = set(), []
+    for _ in range(7):
+        p = tafsir_study.next_passage(taken)
+        labels.append(p["label"])
+        taken.update(i for a, b in p["ranges"] for i in range(a, b + 1))
+    if labels != ["all of An-Nas", "all of Al-Falaq", "Al-Ikhlas and Al-Masad", "An-Nasr and Al-Kafirun",
+                  "Al-Kawthar and Al-Ma'un", "Quraysh and Al-Fil", "all of Al-Humazah"]:
+        problems.append(f"the path: {labels}")
+    amma = {i for n in range(78, 115) for i in range(*[quran.surah_range(n)[0], quran.surah_range(n)[1] + 1])}
+    if tafsir_study.next_passage(amma)["first"] != "1:1" or tafsir_study.next_passage(amma | set(range(*[0, 7])))["first"] != "2:1":
+        problems.append("after Juz Amma: not Al-Fatiha, then Al-Baqarah")
+    before = [tafsir_study.passage_at(f"67:{a}")["label"] for a in (1, 9)]
+    for a in range(1, 31):
+        tafsir.group(169, f"67:{a}")
+    after = [tafsir_study.passage_at(f"67:{a}")["label"] for a in (1, 7, 12)]
+    if after != ["Al-Mulk 1 to 5", "Al-Mulk 6 to 10", "Al-Mulk 11 to 15"] or before == after[:2]:
+        problems.append(f"Al-Mulk's passages: rukus {before}, with Ibn Kathir's kept {after}")
+    tafsir_fresh()
+    skip = {5, 12, 13, 20}
+    studied_ayahs = 0
+    with prayer_clock(_dhaka(2026, 11, 1, 6, 0)) as clock:
+        for day in range(1, 31):
+            clock.at(_dhaka(2026, 11, day, 6, 0))
+            d = date(2026, 11, day)
+            t = tafsir_study.today(d)
+            st = tafsir_study.streak(d=d)
+            if day > 1:
+                want = "paused" if day - 1 in skip else "ready"
+                if st["status"] != want:
+                    problems.append(f"day {day}: the streak is {st['status']}, want {want}")
+            if day in skip:
+                continue
+            clock.at(_dhaka(2026, 11, day, 20, 0))
+            p = t[0]
+            tafsir_study.mark(p["first"], p["last"], True, "page", d)
+            studied_ayahs += p["ayahs"]
+            again = tafsir_study.today(d)
+            if again[0]["first"] != p["first"] or not again[0]["done"]:
+                problems.append(f"day {day}: today's passage changed after studying it, or isn't done")
+            if tafsir_study.streak(d=d)["status"] != "today":
+                problems.append(f"day {day}: studied, but the streak says otherwise")
+        pl = tafsir_study.plan_json()
+        days = 30 - len(skip)
+        if pl["streak"]["days"] != days or pl["progress"]["overall"]["studied"] != studied_ayahs:
+            problems.append(f"the month: {pl['streak']}, {pl['progress']['overall']} ({days} days, {studied_ayahs} ayahs)")
+        if pl["progress"]["juz_amma"]["studied"] != studied_ayahs:
+            problems.append("Juz Amma's progress")
+        nxt = tafsir_study.next_passage()
+        if not nxt or pl["continue"]["first"] != nxt["first"]:
+            problems.append(f"continue where I left off: {pl['continue']}")
+        tafsir_study.mark(nxt["first"], nxt["last"], True)
+        tafsir_study.mark(nxt["first"], nxt["last"], False)
+        if tafsir_study.next_passage()["first"] != nxt["first"]:
+            problems.append("taking a mark back didn't")
+    tafsir_fresh()
+    hifz_fresh()
+    hifz_settings()
+    prayer_fresh()
+    prayer_settings()
+    with prayer_clock(_dhaka(2026, 11, 22, 7, 0)) as clock:
+        hifz.log([quran.unit_portion("juz", 12)])
+        clock.at(_dhaka(2026, 11, 23, 7, 0))
+        hifz.log([quran.unit_portion("juz", 13)])
+        clock.at(_dhaka(2026, 11, 24, 7, 0))
+        offer = tafsir_study.hifz_offer()
+        if [(o["portion"], o["passage"]["first"]) for o in offer] != [("juz 14", "15:1")]:
+            problems.append(f"the hifz offer: {offer}")
+        tafsir_settings(hifz_link=False)
+        if tafsir_study.hifz_offer():
+            problems.append("hifz_link off, still offered")
+    hifz_fresh()
+    return {"problems": problems}
+
+
+def tafsir_nudge():
+    """The morning nudge: once, 35 minutes after Fajr, with today's passage ("Today's tafsir: all of An-Nas."), on the
+    page (listed, quiet unless spoken is on) and on Telegram with Show the tafsir (its text, named, linked) and Studied
+    (once; a stranger's press does nothing); none when today's passage is studied, none after its until, none when
+    off; Telegram's /tafsir answers in code."""
+    problems = []
+    prayer_fresh()
+    prayer_settings()
+    tafsir_fresh()
+    with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 4, 0)) as clock:
+        due = tafsir_study.planned(date(2026, 11, 22))[0]["due"]
+        if (due.hour, due.minute) != (5, 33):
+            problems.append(f"due {due}")
+        clock.at(due - timedelta(seconds=40))
+        if tafsir_study.tick():
+            problems.append("raised too early")
+        clock.at(due - timedelta(seconds=15))
+        raised = tafsir_study.tick()
+        if [(a["kind"], a["announce"]["en"]) for a in raised] != [("tafsir", "Today's tafsir: all of An-Nas.")] or \
+                raised[0]["extra"]["tafsir"]["spoken"] is not False or raised[0]["channels"] != ["page", "cli", "telegram"]:
+            problems.append(f"raised: {[(a['kind'], a['announce'], a.get('channels')) for a in raised]}")
+        if tafsir_study.tick():
+            problems.append("raised twice")
+        clock.at(due + timedelta(seconds=5))
+        telegram_bot.push_due()
+        cards = [(mid, p) for mid, p in fake.sent if p.get("reply_markup")]
+        if len(cards) != 1 or not cards[0][1]["text"].startswith("📖 Today's tafsir: all of An-Nas."):
+            problems.append(f"Telegram: {[p['text'] for _m, p in fake.sent][:2]}")
+        elif raised:
+            mid, p = cards[0]
+            data = [b["callback_data"] for b in p["reply_markup"]["inline_keyboard"][0]]
+            if data != [f"tf:t:{raised[0]['id']}", f"tf:d:{raised[0]['id']}"]:
+                problems.append(f"the buttons: {data}")
+            before = len(fake.texts(OWNER))
+            telegram_bot.handle_update(tg_press(OWNER, data[0], mid))
+            shown = "\n".join(fake.texts(OWNER)[before:])
+            if "Made-up commentary 169 on 114:1" not in shown or "https://quran.com/114:1/tafsirs/en-tafisr-ibn-kathir" not in shown:
+                problems.append(f"Show the tafsir: {shown[:200]!r}")
+            telegram_bot.handle_update(tg_press(STRANGER, data[1], mid))
+            if tafsir_study.studied_set():
+                problems.append("a stranger's press marked it")
+            telegram_bot.handle_update(tg_press(OWNER, data[1], mid))
+            if len(tafsir_study.studied_set()) != 6 or not fake.edits()[-1].endswith("Marked studied: all of An-Nas."):
+                problems.append(f"Studied: {len(tafsir_study.studied_set())}, {fake.edits()[-1:]}")
+            telegram_bot.handle_update(tg_press(OWNER, data[1], mid))
+            if not fake.answers()[-1].endswith("Already marked studied."):
+                problems.append(f"pressed twice: {fake.answers()[-1:]}")
+        before = len(fake.texts(OWNER))
+        telegram_bot.handle_update(tg_message(OWNER, "/tafsir"))
+        if not any("Today's tafsir" in x and "Juz Amma: 6/564" in x for x in fake.texts(OWNER)[before:]):
+            problems.append(f"/tafsir: {fake.texts(OWNER)[before:]}")
+        due = tafsir_study.planned(date(2026, 11, 23))[0]["due"]
+        clock.at(due - timedelta(seconds=10))
+        nxt = tafsir_study.today(date(2026, 11, 23))[0]
+        tafsir_study.mark(nxt["first"], nxt["last"], True)
+        if tafsir_study.tick():
+            problems.append("a nudge for a passage already studied")
+        clock.at(_dhaka(2026, 11, 24, 11, 0))      # asleep through Fajr until after its until
+        if tafsir_study.tick():
+            problems.append("a stale nudge")
+        tafsir_settings(nudge="off")
+        clock.at(_dhaka(2026, 11, 25, 5, 33))
+        if tafsir_study.planned(date(2026, 11, 25)) or tafsir_study.tick():
+            problems.append("off, still raised")
+    return {"problems": problems}
+
+
+def tafsir_notes():
+    """The notebook: a note on a passage (reflection, question, action, tags, a mark), changed in place, checked (a
+    bad key, too many tags, a tag that isn't words, a long text, a mark that isn't one: nothing saved), owner-only;
+    searched by words, a tag or the surah's name in either language; exported as Markdown; marked studied counts as
+    studied; "show my notes on tawakkul" is answered in code, never by a model. Writes need the page's Origin."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    tafsir_fresh()
+    a = tafsir_study.save_note({"first": "67:1", "last": "67:5", "reflection": "Sovereignty is His alone.",
+                                "question": "What is the test of life?", "action": "Pray Isha on time.",
+                                "tags": ["Tawakkul", "akhirah", "tawakkul"]})
+    b = tafsir_study.save_note({"first": "2:255", "last": "2:255", "reflection": "Al-Kursi before sleep.", "tags": ["dua"],
+                                "mark": "revisit"})
+    a2 = tafsir_study.save_note({"first": "67:1", "last": "67:5", "reflection": "Sovereignty is His alone, and life a test.",
+                                 "tags": ["tawakkul", "akhirah"], "mark": "studied"})
+    if a2["id"] != a["id"] or len(tafsir_study.notes()) != 2 or a2["tags"] != ["tawakkul", "akhirah"]:
+        problems.append(f"changed in place: {tafsir_study.notes()}")
+    if len(tafsir_study.studied_set()) != 5:
+        problems.append("a note marked studied didn't count")
+    for bad in ({"first": "67:31", "last": "67:31"}, {"first": "67:1", "last": "67:2", "tags": [f"t{i}" for i in range(13)]},
+                {"first": "67:1", "last": "67:2", "tags": ["<b>x</b>"]}, {"first": "67:1", "last": "67:2", "reflection": "x" * 4001},
+                {"first": "67:1", "last": "67:2", "mark": "maybe"}, {"first": "67:5", "last": "67:1"}):
+        try:
+            tafsir_study.save_note(bad)
+            problems.append(f"saved {str(bad)[:60]}")
+        except ValueError:
+            pass
+    if len(tafsir_study.notes()) != 2 or _owner_only(os.path.dirname(tafsir_study.NOTES_FILE)) and \
+            os.stat(tafsir_study.NOTES_FILE).st_mode & 0o077:
+        problems.append("the notebook after bad notes, or not owner-only")
+    found = {q: [n["first"] for n in tafsir_study.notes(q=q)] for q in ("test of life", "mulk", "মুলক", "kursi before")}
+    if found != {"test of life": [], "mulk": ["67:1"], "মুলক": ["67:1"], "kursi before": ["2:255"]}:
+        problems.append(f"search: {found}")
+    if [n["first"] for n in tafsir_study.notes(tag="tawakkul")] != ["67:1"]:
+        problems.append("by tag")
+    md = client.get("/tafsir/notes.md", headers=KEYED)
+    for want in ("# Tadabbur notes", "## 2. Al-Baqarah", "### Al-Mulk 1 to 5", "tags: tawakkul, akhirah", "↻ revisit",
+                 "> Sovereignty is His alone, and life a test.", "[Quran.com](https://quran.com/67/1-5)"):
+        if want not in md.text:
+            problems.append(f"the export lacks {want!r}")
+    if "attachment" not in md.headers.get("content-disposition", ""):
+        problems.append("the export isn't a download")
+    asked = SCRIPTED_REQUESTS
+    events, reply, screen = _tafsir_turn("show my notes on tawakkul")
+    if not reply.startswith("You have 1 note on “tawakkul”: Al-Mulk 1 to 5") or "Sovereignty is His alone" not in screen:
+        problems.append(f"by voice: {reply!r} / {screen[:80]!r}")
+    _e, reply, _s = _tafsir_turn("আমার নোট দেখাও", "bn")
+    if "২টি নোট" not in reply:
+        problems.append(f"in Bangla: {reply!r}")
+    if SCRIPTED_REQUESTS != asked:
+        problems.append("a model was asked about his notes")
+    if client.put("/tafsir/notes", json={"first": "67:6", "last": "67:6", "reflection": "x"}, headers=KEYED).status_code != 403:
+        problems.append("a write without the page's Origin")
+    r = client.put("/tafsir/notes", json={"first": "67:6", "last": "67:6", "tags": ["<x>"]}, headers=PAGE)
+    if r.status_code != 400:
+        problems.append(f"a bad note through the route: {r.status_code}")
+    if client.delete(f"/tafsir/notes/{b['id']}", headers=PAGE).status_code != 200 or len(tafsir_study.notes()) != 1:
+        problems.append("delete")
+    return {"problems": problems}
+
+
+def tafsir_routes():
+    """The panel's routes: the key everywhere, the page's Origin to write; bad ayahs, ids and settings refused; the
+    list, a passage, the context (Makki or Madani, revelation order, Maududi's themes credited), the plan, the study
+    passage of an ayah, studied, the panel's state (owner-only)."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    tafsir_fresh()
+    if client.get("/tafsir/list").status_code not in (401, 403):
+        problems.append("no key, still answered")
+    out = client.get("/tafsir/list", headers=KEYED).json()
+    if [t["id"] for t in out["tafsirs"]] != list(tafsir.TAFSIRS) or out["chosen"] != [169, 91] or not out["corpus"]["ready"]:
+        problems.append(f"the list: {out['chosen']}, {out['corpus']}")
+    for params in ({"tafsir_id": 1, "key": "67:2"}, {"tafsir_id": 169, "key": "67:31"}, {"tafsir_id": 169, "key": "x"}):
+        if client.get("/tafsir/passage", params=params, headers=KEYED).status_code != 400:
+            problems.append(f"refused: {params}")
+    ctx = client.get("/tafsir/context", params={"surah": 67}, headers=KEYED).json()
+    if (ctx["type"], ctx["order"], ctx["themes_source"]) != ("makki", 77, "A made-up introduction") or \
+            ctx["themes"][0]["title"] != "Theme and Subject Matter":
+        problems.append(f"the context: {ctx['type']}, {ctx['order']}, {ctx['themes_source']}")
+    if client.get("/tafsir/context", params={"surah": 2}, headers=KEYED).json()["type"] != "madani":
+        problems.append("Al-Baqarah isn't Madani")
+    at = client.get("/tafsir/at", params={"key": "114:3"}, headers=KEYED).json()
+    if at["passage"]["label"] != "all of An-Nas" or at["note"] is not None:
+        problems.append(f"the study passage of 114:3: {at['passage']['label']}")
+    if client.post("/tafsir/studied", json={"first": "114:1", "last": "114:6"}, headers=KEYED).status_code != 403:
+        problems.append("studied without the page's Origin")
+    pl = client.post("/tafsir/studied", json={"first": "114:1", "last": "114:6"}, headers=PAGE).json()
+    if not pl["today"][0]["done"] or pl["streak"]["days"] != 1:
+        problems.append(f"studied: {pl['today']}, {pl['streak']}")
+    for bad in ({"selected": [1]}, {"font": 9}, {"tab": "x"}, {"compare": "yes"}, {"colour": 1}):
+        if client.post("/tafsir/state", json=bad, headers=PAGE).status_code != 400:
+            problems.append(f"a bad setting saved: {bad}")
+    if client.post("/tafsir/state", json={"selected": [91, 169], "compare": True, "study": True}, headers=PAGE).status_code != 200 or \
+            tafsir.state()["selected"] != [91, 169] or os.stat(tafsir.STATE_FILE).st_mode & 0o077:
+        problems.append(f"the panel's state: {tafsir.state()}")
+    if tafsir.chosen("en") != [91, 169]:
+        problems.append("his choice isn't the panel's tafsirs")
+    return {"problems": problems}
+
+
+CASES += [
+    Case("tafsir: twelve tafsirs as Quran.com lays each out (first ayah, last ayah, two surahs, rows left out); none, offline, six days",
+         [], [drive_ok], drive=tafsir_sources, script=[]),
+    Case("tafsir: the text in sections, the first sentence word for word without Arabic, a reason of revelation only where it's given",
+         [], [drive_ok], drive=tafsir_text, script=[]),
+    Case("tafsir: word meanings and roots only where the words match; where else a root is; no Corpus file says so",
+         [], [drive_ok], drive=tafsir_words, script=[]),
+    Case("tafsir: asked by voice, answered in code: its first sentence read, Bangla, Arabic, a ruling refused, the log keeps references",
+         [], [drive_ok], drive=tafsir_voice, script=[]),
+    Case("tafsir: a summary or comparison only from the fetched text, every point quoted and found, refused without the text",
+         [], [drive_ok], drive=tafsir_summary, script=[]),
+    Case("tafsir: a model's own 'Ibn Kathir says' is rewritten once, then dropped",
+         [], [drive_ok], drive=tafsir_model_rule, script=[]),
+    Case("tafsir: the study path, passages at the tafsir's ends, a month of study, the streak only pauses, the hifz offer",
+         [], [drive_ok], drive=tafsir_plan, script=[]),
+    Case("tafsir: the nudge after Fajr, once, on the page and Telegram with its buttons; none when studied, stale or off",
+         [], [drive_ok], drive=tafsir_nudge, script=[]),
+    Case("tafsir: the tadabbur notebook: notes checked and owner-only, searched, exported, by voice in code",
+         [], [drive_ok], drive=tafsir_notes, script=[]),
+    Case("tafsir: the panel's routes: the key, the page's Origin to write, bad ayahs and settings refused, the context",
+         [], [drive_ok], drive=tafsir_routes, script=[]),
+]
+
+assert len(CASES) == 281, len(CASES)
 
 
 def print_token_summary() -> None:

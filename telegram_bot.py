@@ -32,7 +32,8 @@ by voice as the page speaks them, converted to OGG/Opus by ffmpeg (an MP3 audio 
 edge-tts is down, the backup voice as on the page, else the text says the voice is unavailable). A skill's or agent's screen
 part and the source links follow as their own messages. Timers and reminders are pushed when they come due, and so
 are prayers.py's prayer and zikir reminders and the morning brief.
-Commands: /help, /new, /tasks, /timers, /lang, /voice, /status, /watches, /check, /prayers, /reminders, /lock.
+Commands: /help, /new, /tasks, /timers, /lang, /voice, /status, /watches, /check, /prayers, /reminders, /hifz,
+/tafsir, /lock.
 """
 import contextlib
 import json
@@ -58,6 +59,7 @@ import memory_store
 import prayers
 import providers
 import selfcheck
+import tafsir_study
 import timers
 import tracing
 import watches
@@ -83,14 +85,16 @@ COMMANDS = [("help", "What I can do here"), ("new", "Start a new Telegram chat")
             ("prayers", "Today's prayer times and the next prayer"),
             ("reminders", "Prayer and zikir reminders coming up"),
             ("hifz", "Your Quran revision: today's portion, what's behind, your streak"),
+            ("tafsir", "Today's tafsir study passage and your progress"),
             ("lock", "Turn off remote control until you unlock it on the Mac")]
 # What each kind of pushed item starts with: a watch's alert, prayers.py's heads-up and prayer-time message, the
 # morning brief, a zikir reminder, hifz.py's revision reminder; a timer or reminder otherwise.
 ICONS = {"alert": "🔔", "prayer": "🕌", "prayer_start": "🕌", "brief": "🌅", "devotion": "🤲", "hifz": "📖",
-         "dua": "🤲"}
+         "dua": "🤲", "tafsir": "📖"}
 HIFZ_BUTTONS = (("s", "✓ Strong"), ("o", "✓ Okay"), ("w", "✓ Weak"))     # a revision reminder logs it in one tap
 HIFZ_STRENGTH = {"s": "strong", "o": "okay", "w": "weak"}
 DUA_BUTTONS = (("t", "📖 Show the text"), ("d", "✓ All done"))     # a prayer's adhkar card (duas.py)
+TAFSIR_BUTTONS = (("t", "📖 Show the tafsir"), ("d", "✓ Studied"))   # the morning tafsir nudge (tafsir_study.py)
 
 # Every Bot API URL carries the token, and httpx logs request URLs at INFO: keep its loggers at WARNING whatever
 # else configures logging.
@@ -634,6 +638,13 @@ def _command(chat_id: int, text: str) -> None:
         send(chat_id, prayers.telegram_times(javid.get_language()))
     elif name == "reminders":
         send(chat_id, prayers.telegram_schedule(javid.get_language()))
+    elif name == "tafsir":
+        lang = javid.get_language()
+        spoken, _ = _drain(tafsir_study.today_answer(lang, "telegram"))
+        pl = tafsir_study.plan_json()
+        pr = pl["progress"]
+        send(chat_id, "📖 " + spoken + f"\n\nJuz Amma: {pr['juz_amma']['studied']}/{pr['juz_amma']['total']} ayahs · "
+             f"the Quran: {pr['overall']['studied']}/{pr['overall']['total']}")
     elif name == "hifz":
         lang = javid.get_language()
         spoken, screen = _drain(hifz.answer({"action": "status"}, lang, via="telegram"))
@@ -786,6 +797,19 @@ def _button(query: dict) -> None:
         if msg.get("message_id"):
             _edit(chat_id, msg["message_id"], f"{msg.get('text', '')}\n\n{note}")
         return
+    if kind == "tf" and choice in ("t", "d"):        # the tafsir nudge: its tafsir written out, or studied
+        if choice == "t":
+            parts = tafsir_study.telegram_texts(aid, javid.get_language())
+            _answer(query, "Here it is." if parts else "That reminder has gone; the Hifz page has it.")
+            for part in parts:
+                send(chat_id, part)
+            return
+        with javid.hold_turn():
+            note = "✓ " + tafsir_study.studied_from_alert(aid)
+        _answer(query, note)
+        if msg.get("message_id"):
+            _edit(chat_id, msg["message_id"], f"{msg.get('text', '')}\n\n{note}")
+        return
     if kind == "hz" and choice in HIFZ_STRENGTH:     # a revision reminder's button: log what it named, once
         with javid.hold_turn():
             note = "✓ " + hifz.log_from_alert(aid, HIFZ_STRENGTH[choice], via="telegram")
@@ -832,6 +856,8 @@ def push_due() -> None:
         text = t["announce"].get(lang) or t["announce"]["en"]
         buttons = ([[{"text": label, "callback_data": f"hz:{k}:{t['id']}"} for k, label in HIFZ_BUTTONS]]
                    if t["kind"] == "hifz" and (t.get("extra") or {}).get("hifz") else None)
+        if t["kind"] == "tafsir" and (t.get("extra") or {}).get("tafsir"):
+            buttons = [[{"text": label, "callback_data": f"tf:{k}:{t['id']}"} for k, label in TAFSIR_BUTTONS]]
         if t["kind"] == "dua" and (t.get("extra") or {}).get("dua"):    # the card: its duas by name, two buttons
             text = duas.telegram_card(t["extra"], lang)
             buttons = [[{"text": label, "callback_data": f"du:{k}:{t['id']}"} for k, label in DUA_BUTTONS]]

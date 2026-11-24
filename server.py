@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 import segno
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, Response, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
 from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
@@ -32,9 +32,12 @@ import memory_store
 import prayers
 import providers
 import quran
+import quran_corpus
 import quran_text
 import selfcheck
 import skills
+import tafsir
+import tafsir_study
 import telegram_bot
 import themes
 import timers
@@ -96,6 +99,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=quran_text.ensure, daemon=True).start()       # the reader's text: checked, or downloaded once
     threading.Thread(target=duas.prefetch, kwargs={"background": False}, daemon=True).start()   # Quranic duas' text
     quran.prune_timings()   # Quran.com's timings are kept under a week (its terms)
+    threading.Thread(target=_tafsir_start, daemon=True).start()   # the Corpus, the six-day prune, the next days' tafsir
     if prayers.keep_awake():    # on power, no idle sleep while the server runs: Fajr's reminders go out
         print("[prayers] keeping the Mac awake while the server runs on power (keep_awake in config/prayers.yaml)")
     documents.prune()       # uploads older than KEEP_DAYS go
@@ -256,6 +260,8 @@ def _reply_event(kind: str, value) -> str | None:
         return _event(type="quran", **value)
     if kind == "duas":              # open the Hifz view's Dua & Zikr tab on a group, a prayer's card or found duas
         return _event(type="duas", **value)
+    if kind == "tafsir":            # the study panel: open on an ayah (its tafsirs, compare), the notes, refresh
+        return _event(type="tafsir", **value)
     return None
 
 
@@ -933,6 +939,143 @@ def quran_plan(body: QuranPlanBody):
             raise HTTPException(400, "the start isn't in what's to play")
         start = quran.key(k)
     return {"action": "play", **quran.plan(ranges, body.reciter or quran.default_reciter(), title, start=start)}
+
+
+# ---------- tafsir study (tafsir.py, tafsir_study.py, quran_corpus.py): the Hifz view's study panel ----------
+def _tafsir_start() -> None:
+    tafsir.prune()                  # Quran.com's tafsir, words and introductions: six days at most (its terms)
+    quran_corpus.load()             # the Corpus's roots and grammar, read once
+    tafsir_study.prefetch()         # the next days' passages, so they open offline
+
+
+def _tafsir_key(key: str) -> str:
+    try:
+        s, a = map(int, str(key).split(":"))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "an ayah is written like 67:2")
+    if not (1 <= s <= 114 and 1 <= a <= quran.SURAHS[s - 1]["ayahs"]):
+        raise HTTPException(400, f"{key} isn't an ayah")
+    return f"{s}:{a}"
+
+
+@app.get("/tafsir/list")
+def tafsir_list():
+    lang = get_language()
+    return {"tafsirs": tafsir.listing(lang), "defaults": tafsir.DEFAULTS, "compare": tafsir.COMPARE,
+            "chosen": tafsir.chosen(lang), "state": tafsir.state(), "corpus": quran_corpus.status(),
+            "lang": lang}
+
+
+@app.get("/tafsir/passage")
+def tafsir_passage(tafsir_id: int, key: str):
+    """One tafsir's passage covering an ayah: from this Mac (kept six days) or Quran.com. 404: that tafsir has no
+    text there; 503: it isn't kept and Quran.com can't be reached."""
+    if tafsir_id not in tafsir.TAFSIRS:
+        raise HTTPException(400, "not one of the tafsirs")
+    key = _tafsir_key(key)
+    try:
+        return tafsir.passage(tafsir_id, key, get_language())
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    except tafsir.Unavailable as e:
+        raise HTTPException(503, f"{e}, and it isn't kept on this Mac.")
+
+
+@app.get("/tafsir/words")
+def tafsir_words(surah: int, first: int, last: int):
+    if not 1 <= surah <= 114 or not 1 <= first <= last or last - first > 300:
+        raise HTTPException(400, "a surah, and its ayahs first to last (at most 300)")
+    return tafsir.words(surah, first, last)
+
+
+_BW_ROOT = __import__("re").compile(r"[A-Za-z'>&<}*$`{~^#:@\"\[;,.!+%\]_-]{1,6}")
+
+
+@app.get("/tafsir/root")
+def tafsir_root(root: str):
+    if not _BW_ROOT.fullmatch(root or ""):
+        raise HTTPException(400, "a root as the Corpus writes it, like xlq")
+    return tafsir.root_occurrences(root, get_language())
+
+
+@app.get("/tafsir/context")
+def tafsir_context(surah: int):
+    if not 1 <= surah <= 114:
+        raise HTTPException(400, "a surah is 1 to 114")
+    return tafsir.context(surah, get_language())
+
+
+@app.get("/tafsir/plan")
+def tafsir_plan():
+    return tafsir_study.plan_json()
+
+
+@app.get("/tafsir/at")
+def tafsir_at(key: str):
+    """The study passage holding an ayah (today's, or the surah's as the plan cuts it), its note, what of the surah
+    is studied."""
+    key = _tafsir_key(key)
+    p = tafsir_study.passage_at(key)
+    return {"passage": p, "note": tafsir_study.note_for(p["first"], p["last"]),
+            "surah": tafsir_study.surah_progress(int(key.split(":")[0]))}
+
+
+class StudiedBody(BaseModel):
+    first: str
+    last: str
+    studied: bool = True
+
+
+@app.post("/tafsir/studied")
+def tafsir_studied(body: StudiedBody, request: Request):
+    _local_page_only(request)
+    try:
+        out = tafsir_study.mark(_tafsir_key(body.first), _tafsir_key(body.last), body.studied)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    tafsir_study.prefetch_soon()
+    return out
+
+
+@app.post("/tafsir/state")
+def tafsir_save_state(body: dict, request: Request):
+    """The panel's choices (which tafsirs, compare, its size, study mode, word by word, its tab): this Mac only."""
+    _local_page_only(request)
+    try:
+        return tafsir.save_state(body)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.get("/tafsir/notes")
+def tafsir_notes(q: str = "", tag: str = ""):
+    return {"notes": tafsir_study.notes(q, tag), "suggestions": list(tafsir_study.TAG_SUGGESTIONS),
+            "tags": sorted({t for n in tafsir_study.notes() for t in n["tags"]})}
+
+
+@app.put("/tafsir/notes")
+def tafsir_save_note(body: dict, request: Request):
+    """Add or change his note on a passage (data/tadabbur.json, owner-only, never sent to a model)."""
+    _local_page_only(request)
+    try:
+        return {"note": tafsir_study.save_note(body), "plan": tafsir_study.plan_json()}
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/tafsir/notes/{nid}")
+def tafsir_delete_note(nid: str, request: Request):
+    _local_page_only(request)
+    if not tafsir_study.delete_note(nid):
+        raise HTTPException(404, "No note by that id.")
+    return {"ok": True}
+
+
+@app.get("/tafsir/notes.md")
+def tafsir_notes_md(q: str = "", tag: str = ""):
+    """The notebook as Markdown, to download."""
+    return PlainTextResponse(tafsir_study.export_md(q=q, tag=tag), media_type="text/markdown; charset=utf-8",
+                             headers={"Content-Disposition": 'attachment; filename="tadabbur-notes.md"'})
 
 
 @app.get("/skills")

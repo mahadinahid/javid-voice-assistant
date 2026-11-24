@@ -24,7 +24,7 @@ KEEP_FIRED_SEC = 3600       # a rung timer stays in the file this long (so a sec
 MISSED_SEC = 12 * 3600      # one that came due while no page was open still rings if it's this recent
 # Raised by prayers.py (heads-ups, prayer-time messages, the brief, zikir) and hifz.py (today's revision): not
 # Mahadi's timers, so the timers tool doesn't list or cancel them and they don't count against MAX_ACTIVE.
-SCHEDULED_KINDS = ("prayer", "prayer_start", "brief", "devotion", "hifz", "dua")
+SCHEDULED_KINDS = ("prayer", "prayer_start", "brief", "devotion", "hifz", "dua", "tafsir")
 _now = time.time            # the clock (regression.py moves it with prayers._time)
 
 _lock = threading.Lock()

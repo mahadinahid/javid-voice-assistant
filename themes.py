@@ -491,6 +491,9 @@ HZ_HIGHLIGHT = 0.17                # the ayah being recited: the accent at its s
 HZ_TINT, HZ_SOFT_TINT = 0.20, 0.14 # the accent's tint under text: a pill, a pressed toggle (0.20); a chosen row (0.14)
 HZ_DONE_TINT = 0.12                # Dua & Zikr: a dua said its full count, its card lit faintly in the accent
 HZ_COUNTER = 0.55                  # Dua & Zikr: the counter's face, the view's deep shade over the card
+HZ_SIDE = 0.5                      # Read: the side panels (the surah list, the player, the study panel), shade over the view
+HZ_BAND = 0.08                     # Study: the ayahs a tafsir's passage covers, the accent faintly under them
+HZ_SEC = 0.08                      # Study: a tafsir section's header bar, the accent over the study panel
 MIN_STATUS = 3.0                   # a status colour against what it sits on (WCAG's 3:1 for graphics)
 MIN_APART = 10.0                   # CIEDE2000 between any two of the six (Classic's closest, fresh and steady: 10.5)
 MIN_WEAK_APART = 11.0              # weak against every other (Classic: 11.9)
@@ -559,6 +562,17 @@ def hifz_checks(v: dict) -> list:
             ("Dua & Zikr: its meaning on a finished dua", worst(c("--hz-text-2"), done), MIN_TEXT),
             ("Dua & Zikr: the counter's number", worst(c("--hz-ivory"), face), MIN_TEXT),
             ("Dua & Zikr: the counter's count to go", worst(c("--hz-muted"), face), MIN_TEXT)]
+    side = [_over(_numbers(v["--hz-shade-rgb"]), HZ_SIDE, y) for y in s["views"]]
+    band = [_over(s["gold"], HZ_BAND, y) for y in s["views"] + s["highlight"]]
+    head = [_over(s["gold"], HZ_SEC, y) for y in side]
+    out += [("Tafsir: its text on the study panel (Arabic, English, Bangla)", worst(c("--hz-ivory"), side + head), MIN_TEXT),
+            ("Tafsir: the source's marks and the second column", worst(c("--hz-text-2"), side), MIN_TEXT),
+            ("Tafsir: the author and source line", worst(c("--hz-muted"), side), MIN_TEXT),
+            ("Tafsir: quoted ayahs and section titles (accent)", worst(c("--hz-gold"), side + head), MIN_TEXT),
+            ("Study: the ayahs a passage covers", worst(c("--hz-ivory"), band), MIN_TEXT),
+            ("Study: their translation", worst(c("--hz-text-2"), band), MIN_TEXT),
+            ("Study: the word card (meaning, root, grammar)",
+             min(worst(c(k), s["drawer"]) for k in ("--hz-ivory", "--hz-gold", "--hz-text-2", "--hz-muted")), MIN_TEXT)]
     under = s["cards"] + s["dash"]
     for key, word in (("fresh", "Fresh"), ("steady", "Steady"), ("soon", "Due soon"), ("over", "Past its cycle")):
         out.append((f"{word}: against the card", worst(c(f"--hz-{key}"), under), MIN_STATUS))

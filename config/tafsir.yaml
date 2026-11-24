@@ -1,0 +1,20 @@
+# Tafsir study (tafsir_study.py; 2026-11-24). Javid reads this file again when it changes: no restart. A file that
+# doesn't check out isn't used: Javid keeps the last good settings and prints what's wrong. What you studied is
+# data/tafsir_study.json, your notes data/tadabbur.json (both owner-only, never in git).
+#
+# The path: Juz Amma first (An-Nas back to An-Naba), then Al-Fatiha, then Al-Baqarah onward.
+
+daily:                # a day's passage, in ayahs: it ends where the boundary tafsir's passage ends (else at a ruku)
+  min: 5
+  max: 10
+target: 1             # passages a day
+boundary: 169         # whose passages a day's passage ends with: 169 Ibn Kathir (abridged), 164 its Bangla edition…
+prefetch_days: 3      # the next days' passages fetched ahead, so they open offline (Quran.com's text is kept 6 days)
+hifz_link: true       # when a juz is due for revision, offer its tafsir too
+
+nudge:                # "Today's tafsir: Al-Mulk 1–5": after: Fajr, Sunrise, Dhuhr, Asr, Maghrib or Isha with minutes:,
+  after: Fajr         # or at: "05:30"; off to stop it
+  minutes: 35
+page: true            # on the page: its own banner and a soft chime
+telegram: true        # on Telegram, with Show the tafsir and Studied buttons
+spoken: false         # true: the page also says the nudge's sentence in Javid's voice

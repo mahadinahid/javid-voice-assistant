@@ -113,6 +113,7 @@ UNITS = {"juz": _ranges(META["juz"]), "manzil": _ranges(META["manzil"]), "quarte
 COUNT = {"juz": 30, "manzil": 7}
 _UNIT_START = {k: [r[0] for r in v] for k, v in UNITS.items()}
 _PAGE_START = [index(s, a) for s, a in META["pages"]]
+RUKU_START = [index(s, a) for s, a in META["rukus"]]      # Tanzil's 556 rukus: where a day's tafsir passage may end
 
 
 def unit_range(kind: str, n: int) -> tuple[int, int]:
@@ -182,6 +183,8 @@ def span_text(lo: int, hi: int, lang: str = "en", spoken: bool = False) -> str:
     (s1, a1), (s2, a2) = verse(lo), verse(hi)
     n1, n2 = name(s1, lang, spoken), name(s2, lang, spoken)
     whole = s1 == s2 and a1 == 1 and a2 == SURAHS[s1 - 1]["ayahs"]
+    if lo == hi and not whole:          # one ayah: "Al-Mulk 2", not "Al-Mulk 2 to 2"
+        return f"{n1} {bn_digits(a1)}" if lang == "bn" else f"{n1} {a1}"
     if lang == "bn":
         if whole:
             return f"পুরো সূরা {n1}"
@@ -1776,9 +1779,12 @@ def check(get=_get) -> tuple[bool, list[str]]:
             lines.append(f"surah {c['id']}: pages {mine} here, {c['pages']} on Quran.com")
         if _ar(c["name_arabic"]) != _ar(s["ar"]):
             names_differ.append(c["id"])
+        if c.get("revelation_order") is not None and c["revelation_order"] != s["order"]:
+            bad += 1
+            lines.append(f"surah {c['id']}: revelation order {s['order']} here, {c['revelation_order']} on Quran.com")
     if len(chapters) != 114:
         bad += 1
-    lines.append(f"surahs: {len(chapters)} checked (ayah counts and pages); the Arabic spelling differs (hamza, "
+    lines.append(f"surahs: {len(chapters)} checked (ayah counts, pages, revelation order); the Arabic spelling differs (hamza, "
                  f"alif forms) for {len(names_differ)}: {names_differ}")
     seen = {}
     for j in get(f"{API}/juzs")["juzs"]:
@@ -1839,6 +1845,6 @@ if __name__ == "__main__":
     print("OK: quran_meta.json matches Quran.com" if ok else "MISMATCH: see above")
     if ok:
         _write_checked({"date": date.today().isoformat(), "against": "api.quran.com/api/v4",
-                        "what": "the ayah counts and pages of all 114 surahs, the 30 juz, the 7 manzils, where the "
+                        "what": "the ayah counts, pages and revelation order of all 114 surahs, the 30 juz, the 7 manzils, where the "
                                 "reciters' ayah files are, and each surah-file reciter's timings for Al-Mulk"})
     sys.exit(0 if ok else 1)

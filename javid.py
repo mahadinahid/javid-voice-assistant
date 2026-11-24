@@ -47,6 +47,8 @@ import quran
 import rates
 import selfcheck
 import skills
+import tafsir
+import tafsir_study
 import timers
 import tracing
 import watches
@@ -272,6 +274,8 @@ SYSTEM_PROMPT = (
     "never write Arabic; to hear a surah he says 'play Surah ...'. "
     "Never write out a dua or dhikr either (no Arabic, transliteration or translation of one): his checked list is "
     "the Dua & Zikr tab on the Hifz page ('show my evening adhkar'). "
+    "Never say what a tafsir or a mufassir says, never explain an ayah's tafsir from memory, and never give a fatwa "
+    "or a ruling: Javid shows tafsir from Quran.com ('what does Ibn Kathir say about Al-Mulk 2?'). "
     "A timer exists only "
     "once set_timer says so. "
     "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
@@ -1005,7 +1009,8 @@ WRITE_TOOLS = ("add_task", "complete_task", "delete_task", "add_event", "move_ev
 # personal_ok: true in config/providers.yaml; any other provider gets the request without them (_public_request).
 PERSONAL_TOOLS = frozenset({"add_task", "list_tasks", "delete_task", "complete_task", "propose_memory",
                             "search_history", "morning_briefing", "list_events", "find_free_time", "add_event",
-                            "move_event", "delete_event", "hifz", "hifz_log"})     # hifz_log: a log made in code
+                            "move_event", "delete_event", "hifz", "hifz_log",
+                            "tafsir_notes"})     # hifz_log: a log made in code; tafsir_notes: his notebook, in code
 _write_gate = None
 _new_approvals: list = []     # this turn's web cards (approvals.py actions), yielded as ("approval", action) events
 
@@ -2691,12 +2696,14 @@ def _code_answer(user_text: str, player: dict | None = None, previous: dict | No
                  docs: list | None = None):
     """A watch to set, list or cancel, the recitation player or a question about the Quran's structure, a dua request,
     a revision log or question, a prayer-time question, a rates question, a market brief or a news request that code
-    answers whole (watches.request, quran.request, duas.request, hifz.request, prayers.request, rates.request,
+    answers whole (watches.request, tafsir.request, quran.request, duas.request, hifz.request, prayers.request, rates.request,
     markets.brief_request, news.request): a function of the reply language giving the answer's generator. None leaves
     the message to the model. player: the page's recitation player as it is ("next ayah"); previous: the reply before
     ("undo that"); docs: the files with the message, or the chat's open one ("add this to my evening adhkar")."""
     if (req := watches.request(user_text)):     # first: "tell me when bitcoin goes above 70k" isn't a market brief
         return lambda lang: watches.answer(req, lang)
+    if (req := tafsir.request(user_text, player)):   # before quran.py: "the tafsir of Al-Mulk 2" isn't its text
+        return lambda lang: tafsir.answer(req, lang, via)
     if (req := quran.request(user_text, player)):    # before the prayers: "play Surah Al-Asr" isn't about Asr
         return lambda lang: quran.answer(req, lang)
     if (req := duas.request(user_text, docs)):     # before the prayers: "after-Maghrib duas" isn't a time question
@@ -2904,6 +2911,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         retried_holiday = False
         retried_quran = False
         retried_dua = False
+        retried_tafsir = False
         required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
                     and not (skill_first and tool in WEB_TOOLS)   # the skill answers without the web
                     and not (agent_first and tool != "delegate" and tool not in agents.agent_tools(agent_first))]
@@ -3058,6 +3066,20 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                     text = duas.strip_reply(text, user_text, lang)
                     if via_agent and via_agent.get("screen"):
                         via_agent["screen"] = duas.strip_reply(via_agent["screen"], user_text, lang)
+                # Nor what a tafsir says (tafsir.py): that comes only from Quran.com's text, shown or summarised and
+                # checked in code. One rewrite, then those sentences go.
+                whole = text + ("\n" + via_agent["screen"] if via_agent and via_agent.get("screen") else "")
+                if (tq := tafsir.reply_problem(whole)) and not retried_tafsir:
+                    retried_tafsir = True
+                    print(f"[tafsir] reply tells a tafsir from memory, asking for a rewrite: {text[:60]!r}")
+                    notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
+                                                  {"role": "user", "content": tafsir.correction(tq)}]))
+                    continue
+                if tq:
+                    print("[tafsir] rewrite still tells a tafsir; those sentences are dropped")
+                    text = tafsir.strip_reply(text, lang)
+                    if via_agent and via_agent.get("screen"):
+                        via_agent["screen"] = tafsir.strip_reply(via_agent["screen"], lang)
             skill = skills.active()
             if not tool_calls and via_agent and not screen:
                 screen = via_agent["screen"]
@@ -3219,9 +3241,13 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                          **({"agent": via_agent["agent"]} if via_agent else {})})
         if messages[turn_start].get("_needs_personal") and reply.strip():
             _personal_speech.append(" ".join(reply.split()))     # the backup voice may not say it (_eleven)
+        # A tafsir answer keeps only its references in the log, never the tafsir's words (Quran Foundation: a week).
+        kept = tafsir.take_log() if "tafsir" in code_tools else {}
         if reply.strip():
-            log_message("assistant", reply.strip(), **basis,
-                        **({"screen": screen} if screen else {}), **({"skill": skills.active()["name"]} if skills.active() else {}),
+            logged_screen = kept.get("screen", screen) if kept else screen
+            log_message("assistant", (kept.get("reply") or reply).strip(), **basis,
+                        **({"screen": logged_screen} if logged_screen else {}),
+                        **({"skill": skills.active()["name"]} if skills.active() else {}),
                         **({"agent": via_agent["agent"]} if via_agent else {}))
         _finish_turn_usage()
 

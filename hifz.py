@@ -1287,6 +1287,13 @@ def _reminder_texts(item: dict, s: dict) -> tuple[str, dict, list[dict]]:
             found.append({**e["portion"], "ranges": e["ranges"]} if w["whole"] else
                          {"kind": "surah", "n": quran.verse(w["lo"])[0], "ranges": [[w["lo"], w["hi"]]]})
     texts = {}
+    offer = None
+    if item["kind"] == "morning":
+        try:
+            import tafsir_study
+            offer = next(iter(tafsir_study.hifz_offer()), None)
+        except Exception as e:      # the reminder goes out without it
+            print(f"[hifz] tafsir offer: {type(e).__name__}")
     for lang in ("en", "bn"):
         bn = lang == "bn"
         what = "; ".join(f"{_unit_word(kind, lang, n)}, {_span_of(s, n, lang)}" for n in units)
@@ -1300,6 +1307,9 @@ def _reminder_texts(item: dict, s: dict) -> tuple[str, dict, list[dict]]:
             else:
                 t = f"Mahadi, today's revision: {what}." + (f" {quran.cap(weak)} comes back today too." if weak else "")
                 t += (f" It's {st}, keep it going." if st else " Start a fresh streak today.") + (f" {quran.cap(rd)}." if rd else "")
+            if offer:       # tafsir_study.py: the juz's first passage not studied yet
+                t += (f" এর তাফসীরও পড়তে পারো: {offer['passage']['label_bn']}।" if bn else
+                      f" Study its tafsir too: {offer['passage']['label']}.")
         elif item["kind"] == "nudge":
             short = _units_text(kind, units, lang)
             if bn:

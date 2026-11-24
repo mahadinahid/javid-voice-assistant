@@ -3463,6 +3463,154 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .qr-credits a { color: var(--hz-gold); }
 .qr-side { min-width: 0; min-height: 0; overflow-y: auto; padding: 16px; border-left: 1px solid var(--hz-line); background: rgba(var(--hz-shade-rgb), 0.5); }
 
+/* Tafsir study (tafsir.py, tafsir_study.py): the study panel beside the reader (it takes the player's column; the
+   player sits at its top, or whole in its Player tab), word by word, the word card, the Today card. Every colour is a
+   --hz-* variable, so it takes the Hifz page's theme; themes.hifz_checks has lines for the panel's text (Arabic,
+   English, Bangla), its section headers (the accent at HZ_SEC 0.08 over the panel), the ayahs a passage covers (the
+   accent at HZ_BAND 0.08) and the word card (on the drawer). */
+.qr-pane.study { grid-template-columns: 300px minmax(0, 1fr) 440px; }
+.qr-pane.study .qr-side { display: none; }
+.qr-pane.study.cmp { grid-template-columns: minmax(420px, 1fr) minmax(0, 1.3fr); }
+.qr-pane.study.cmp .qr-index { position: absolute; z-index: 6; left: 0; top: 0; bottom: 0; width: min(330px, 92%); background: var(--hz-drawer);
+    transform: translateX(-105%); transition: transform 0.25s; box-shadow: 20px 0 50px rgba(var(--hz-drop-rgb), 0.5); }
+.qr-pane.study.cmp.idx-open .qr-index { transform: none; }
+.qr-pane.study.cmp:not(.idx-open) .qr-index { visibility: hidden; }
+.qr-pane.study.cmp .qr-idx-btn { display: inline-flex; }
+.qr-reader { position: relative; }
+.tf-panel { --tf-size: 15px; min-width: 0; min-height: 0; display: flex; flex-direction: column; border-left: 1px solid var(--hz-line);
+            background: rgba(var(--hz-shade-rgb), 0.5); }
+.tf-panel[hidden] { display: none; }
+.tf-dock { flex: none; padding: 10px 12px 0; }
+.tf-dock:empty { display: none; }
+.tf-tabs { flex: none; display: flex; gap: 4px; padding: 10px 12px 8px; border-bottom: 1px solid var(--hz-line); }
+.tf-tabs button { flex: 1; min-width: 0; padding: 7px 4px; border-radius: 10px; border: 1px solid var(--hz-line); background: none;
+                  color: var(--hz-text-2); font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.tf-tabs button:hover { color: var(--hz-ivory); }
+.tf-tabs button[aria-selected="true"] { border-color: var(--hz-gold); color: var(--hz-gold); background: rgba(var(--hz-gold-rgb), 0.08); }
+.tf-study { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 9px 14px; border-bottom: 1px solid var(--hz-line);
+            font-size: 12.5px; color: var(--hz-text-2); }
+.tf-study:empty { display: none; }
+.tf-study b { color: var(--hz-ivory); font-weight: 700; }
+.tf-study .tf-k { font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-gold); }
+.tf-study .sp { flex: 1; }
+.tf-btn { padding: 5px 11px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: none; color: var(--hz-text-2);
+          font-size: 12px; font-weight: 600; cursor: pointer; }
+.tf-btn:hover { color: var(--hz-ivory); border-color: var(--hz-gold); }
+.tf-btn[aria-pressed="true"] { border-color: var(--hz-gold); background: var(--hz-gold); color: var(--hz-ink); }
+.tf-pane { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 14px 24px; }
+.tf-pane[hidden] { display: none; }
+.tf-pane#tf-pane-player { padding: 12px; }
+.tf-ctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-bottom: 10px; }
+.tf-ctl select { min-width: 0; max-width: 100%; padding: 6px 10px; border-radius: 10px; border: 1px solid var(--hz-line-2);
+                 background: var(--hz-drawer); color: var(--hz-ivory); font-size: 12.5px; }
+.tf-ctl .sp { flex: 1; }
+.tf-ab { display: none; }
+.tf-cols { display: grid; gap: 14px; }
+.tf-cols.two { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+.tf-col { min-width: 0; }
+.tf-head { margin-bottom: 8px; }
+.tf-name { font: 700 15px var(--hz-head); color: var(--hz-ivory); }
+.tf-by { margin-top: 2px; font-size: 12px; line-height: 1.5; color: var(--hz-muted); }
+.tf-by a, .tf-pane a { color: var(--hz-gold); }
+.tf-cover { margin-top: 3px; font-size: 12px; color: var(--hz-text-2); }
+details.tf-sec { margin: 6px 0; border: 1px solid var(--hz-line); border-radius: 12px; overflow: hidden; }
+details.tf-sec > summary { padding: 8px 12px; list-style: none; cursor: pointer; background: rgba(var(--hz-gold-rgb), 0.08);
+                           color: var(--hz-gold); font-size: 13px; font-weight: 600; line-height: 1.45; }
+details.tf-sec > summary::-webkit-details-marker { display: none; }
+details.tf-sec > summary::before { content: '▸'; display: inline-block; margin-inline-end: 8px; transition: transform 0.15s; }
+details.tf-sec[open] > summary::before { transform: rotate(90deg); }
+details.tf-sec > summary[dir="rtl"] { font-family: 'Amiri', var(--qr-ar); font-size: 15px; }
+.tf-body { padding: 8px 12px 4px; }
+.tf-p { margin: 0 0 10px; font-size: var(--tf-size); line-height: 1.75; color: var(--hz-ivory); overflow-wrap: anywhere; }
+.tf-p[dir="rtl"] { font-family: 'Amiri', var(--qr-ar); font-size: calc(var(--tf-size) * 1.3); line-height: 2; text-align: right; }
+.tf-q { font-family: var(--qr-ar); color: var(--hz-gold); }
+.tf-m { color: var(--hz-text-2); font-weight: 600; }
+.tf-r { color: var(--hz-muted); font-size: 0.92em; }
+.tf-none { padding: 10px 2px; font-size: 13px; line-height: 1.6; color: var(--hz-muted); }
+.tf-sum { margin: 0 0 12px; padding: 10px 12px; border-radius: 12px; border: 1px dashed var(--hz-line-2); font-size: 13.5px; line-height: 1.6; color: var(--hz-ivory); }
+.tf-sum .tf-k { display: block; margin-bottom: 4px; font-size: 10.5px; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--hz-gold); }
+.tf-sum .screen-part { margin: 0; }
+.tf-meta { margin: 14px 0 0; font-size: 11.5px; line-height: 1.6; color: var(--hz-muted); }
+.qa.tf-in { background: rgba(var(--hz-gold-rgb), 0.08); }
+.qa.tf-pass { box-shadow: inset 3px 0 0 var(--hz-gold); }
+.qa.now { border-color: var(--hz-hl-edge); background: linear-gradient(100deg, rgba(var(--hz-gold-rgb), 0.17), rgba(var(--hz-gold-rgb), 0.05)); }
+.qr-text.wbw .qa-ar .w, .qr-text.study .qa-ar .w { cursor: help; }
+.qr-text.wbw .qa-ar .w { display: inline-flex; flex-direction: column; align-items: center; vertical-align: top; margin: 0 0.1em 0.3em; line-height: 1.95; }
+.qr-text.wbw .qa-ar .mk { vertical-align: top; }
+.qr-text .wm { display: none; }
+.qr-text.wbw .wm { display: block; max-width: 8.5em; margin-top: -0.35em; font: 500 12px/1.3 var(--font, Inter, sans-serif); color: var(--hz-text-2);
+                   direction: ltr; text-align: center; white-space: normal; }
+.qa-ar .w.tapped { color: var(--hz-gold); }
+.tf-word { position: absolute; z-index: 8; width: min(340px, calc(100% - 24px)); padding: 14px 16px 12px; border-radius: 16px; border: 1px solid var(--hz-line-2);
+           background: var(--hz-drawer); box-shadow: 0 18px 50px rgba(var(--hz-drop-rgb), 0.5); color: var(--hz-ivory); font-size: 13px; }
+.tf-word[hidden] { display: none; }
+.tf-word .x { position: absolute; top: 6px; right: 8px; padding: 4px 6px; border: none; background: none; color: var(--hz-muted); font-size: 14px; cursor: pointer; }
+.tf-wd { text-align: center; }
+.tf-wd .ar { font-family: var(--qr-ar); font-size: 30px; line-height: 1.7; color: var(--hz-gold); direction: rtl; }
+.tf-wd .mean { font-size: 15px; font-weight: 600; color: var(--hz-ivory); }
+.tf-wd .mean + .mean { font-size: 13.5px; font-weight: 500; color: var(--hz-text-2); }
+.tf-wd .tl { margin-top: 2px; font-style: italic; color: var(--hz-muted); }
+.tf-wd dl { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 5px 10px; margin: 10px 0 0; text-align: left; }
+.tf-wd dt { font-size: 11.5px; color: var(--hz-muted); }
+.tf-wd dd { margin: 0; color: var(--hz-text-2); line-height: 1.45; }
+.tf-wd dd .root { font-family: var(--qr-ar); font-size: 19px; color: var(--hz-gold); }
+.tf-wd .acts { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 10px; }
+.tf-wd .cr { margin-top: 8px; font-size: 10.5px; color: var(--hz-muted); }
+.tf-roots { margin: 8px 0 0; padding: 0; list-style: none; }
+.tf-roots li { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 10px; cursor: pointer; }
+.tf-roots li:hover { background: rgba(var(--hz-gold-rgb), 0.08); }
+.tf-roots b { font-size: 12.5px; color: var(--hz-ivory); font-weight: 600; }
+.tf-roots small { color: var(--hz-muted); font-size: 11px; }
+.tf-roots .ar { font-family: var(--qr-ar); font-size: 19px; color: var(--hz-gold); direction: rtl; }
+.tf-h { margin: 14px 0 6px; font: 700 14px var(--hz-head); color: var(--hz-ivory); }
+.tf-h:first-child { margin-top: 0; }
+.tf-facts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tf-facts div { padding: 8px 10px; border-radius: 12px; border: 1px solid var(--hz-line); }
+.tf-facts small { display: block; font-size: 10.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--hz-muted); }
+.tf-facts b { font-size: 14px; color: var(--hz-ivory); }
+.tf-quote { margin: 8px 0; padding: 8px 12px; border-left: 3px solid var(--hz-gold); border-radius: 0 10px 10px 0; background: rgba(var(--hz-gold-rgb), 0.08); }
+.tf-quote p { margin: 0; font-size: var(--tf-size); line-height: 1.7; color: var(--hz-ivory); }
+.tf-quote p[dir="rtl"] { font-family: 'Amiri', var(--qr-ar); font-size: calc(var(--tf-size) * 1.25); text-align: right; }
+.tf-quote cite { display: block; margin-top: 4px; font-style: normal; font-size: 11.5px; color: var(--hz-muted); }
+.tf-form label { display: block; margin: 10px 0 4px; font-size: 11px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; color: var(--hz-muted); }
+.tf-form textarea, .tf-form input[type="text"], .tf-find input { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--hz-line-2);
+    background: rgba(var(--hz-deep-rgb), 0.6); color: var(--hz-ivory); font: inherit; font-size: 13.5px; line-height: 1.5; resize: vertical; }
+.tf-form textarea::placeholder, .tf-form input::placeholder, .tf-find input::placeholder { color: var(--hz-muted); }
+.tf-tagsug { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 6px; }
+.tf-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 12px; }
+.tf-saved { font-size: 12px; color: var(--hz-muted); }
+.tf-find { display: flex; gap: 6px; margin: 18px 0 8px; }
+.tf-notes { margin: 0; padding: 0; list-style: none; }
+.tf-notes li { margin: 6px 0; padding: 9px 11px; border-radius: 12px; border: 1px solid var(--hz-line); cursor: pointer; }
+.tf-notes li:hover { border-color: var(--hz-line-2); }
+.tf-notes b { color: var(--hz-ivory); font-size: 13px; }
+.tf-notes p { margin: 3px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--hz-text-2); }
+.tf-notes small { color: var(--hz-muted); }
+.tf-today .tf-tline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.tf-today .tf-pass-n { font: 700 20px var(--hz-head); color: var(--hz-ivory); }
+.tf-today .tf-pass-n.done { color: var(--hz-text-2); }
+.tf-today .tf-sub { margin-top: 6px; font-size: 13px; line-height: 1.55; color: var(--hz-text-2); }
+.tf-bars { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-top: 12px; }
+.tf-bar small { display: flex; justify-content: space-between; font-size: 11.5px; color: var(--hz-muted); }
+.tf-bar i { display: block; height: 6px; margin-top: 4px; border-radius: 999px; background: rgba(var(--hz-gold-rgb), 0.14); overflow: hidden; }
+.tf-bar i b { display: block; height: 100%; border-radius: inherit; background: var(--hz-gold); }
+.tf-ring .hz-ring-text small { display: block; margin-top: 2px; font-family: inherit; font-size: 13px; line-height: 1.4; color: var(--hz-text-2); }
+@media (max-width: 1279px) {
+    .qr-pane.study { grid-template-columns: minmax(0, 1fr) 400px; }
+    .qr-pane.study.cmp { grid-template-columns: minmax(380px, 1fr) minmax(0, 1.25fr); }
+}
+@media (max-width: 1179px) {      /* not room for two columns of tafsir: A and B take turns */
+    .tf-cols.two { grid-template-columns: minmax(0, 1fr); }
+    .tf-cols.two .tf-col:not(.on) { display: none; }
+    .tf-ab { display: inline-flex; }
+    .qr-pane.study.cmp { grid-template-columns: minmax(0, 1fr) 420px; }
+}
+@media (max-width: 899px) {       /* stacked: the reader, then the study panel under it */
+    .tf-panel { flex: none; max-height: 52vh; border-left: none; border-top: 1px solid var(--hz-line); }
+    .tf-bars, .tf-facts { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) { details.tf-sec > summary::before { transition: none; } }
+
 /* the revision reminder: stays until you log it, choose later, or dismiss it */
 .hz-ring {          /* in .hz-rings (fixed at the top, below), so two reminders stack */
     padding: 16px 18px; border-radius: 20px; border: 1px solid var(--hz-gold);
@@ -3923,6 +4071,8 @@ a.du-ref:hover { border-color: var(--hz-gold); }
                 </div>
             </section>
 
+            <section class="hz-card hz-sec tf-today" id="tf-today" aria-live="polite"></section>
+
             <section class="hz-card hz-sec">
                 <div class="hz-sec-head">
                     <h3 id="hz-map-title">Your Quran</h3>
@@ -3968,6 +4118,8 @@ a.du-ref:hover { border-color: var(--hz-gold); }
                         <div class="qr-seg" id="qr-tr" role="group" aria-label="Translation">
                             <button type="button" data-tr="off" aria-pressed="false">Arabic</button><button type="button" data-tr="en" aria-pressed="true">English</button><button type="button" data-tr="bn" aria-pressed="false" lang="bn">বাংলা</button><button type="button" data-tr="both" aria-pressed="false">Both</button>
                         </div>
+                        <button type="button" class="qr-chip" id="qr-wbw" aria-pressed="false" title="Each word's meaning under it; tap a word for its root and grammar">Word by word</button>
+                        <button type="button" class="qr-chip" id="qr-study" aria-pressed="false" title="Tafsir beside the text, word cards, context and your notes">Study</button>
                         <button type="button" class="qr-chip" id="qr-test" aria-pressed="false" title="Hide the ayahs; tap one, or say “show”, to reveal it">Hifz test</button>
                         <div class="qr-seg" role="group" aria-label="Text size">
                             <button type="button" id="qr-font-down" aria-label="Smaller text" title="Smaller text">A−</button><button type="button" id="qr-font-up" aria-label="Larger text" title="Larger text">A+</button>
@@ -3983,8 +4135,21 @@ a.du-ref:hover { border-color: var(--hz-gold); }
                     <div class="qr-text tr-en" id="qr-text"></div>
                     <p class="qr-credits" id="qr-credits"></p>
                 </div>
+                <div class="tf-word" id="tf-word" role="dialog" aria-label="Word" hidden></div>
             </section>
             <div class="qr-side" id="qr-side"></div>
+            <aside class="tf-panel" id="tf-panel" aria-label="Tafsir study" hidden>
+                <div class="tf-dock" id="tf-dock"></div>
+                <div class="tf-tabs" role="tablist" aria-label="Study">
+                    <button type="button" role="tab" data-tt="tafsir" aria-selected="true">Tafsir</button><button type="button" role="tab" data-tt="words" aria-selected="false">Words</button><button type="button" role="tab" data-tt="context" aria-selected="false">Context</button><button type="button" role="tab" data-tt="notes" aria-selected="false">Notes</button><button type="button" role="tab" data-tt="player" aria-selected="false">Player</button>
+                </div>
+                <div class="tf-study" id="tf-study"></div>
+                <div class="tf-pane" id="tf-pane-tafsir" role="tabpanel"></div>
+                <div class="tf-pane" id="tf-pane-words" role="tabpanel" hidden></div>
+                <div class="tf-pane" id="tf-pane-context" role="tabpanel" hidden></div>
+                <div class="tf-pane" id="tf-pane-notes" role="tabpanel" hidden></div>
+                <div class="tf-pane" id="tf-pane-player" role="tabpanel" hidden></div>
+            </aside>
         </div>
         <div class="hz-pane" id="hz-pane-duas" role="tabpanel" aria-labelledby="hz-tab-duas" hidden>
             <div class="hz-inner du-inner" id="du-inner"></div>
@@ -4047,6 +4212,17 @@ a.du-ref:hover { border-color: var(--hz-gold); }
     <div class="hz-actions">
         <button class="hz-btn" id="du-ring-open" type="button">Open the adhkar</button>
         <button class="hz-later" id="du-ring-later" type="button">Later</button>
+    </div>
+</div>
+<div id="tf-ring" class="hz-scope hz-ring tf-ring" role="alert" hidden>
+    <div class="hz-ring-top">
+        <svg viewBox="0 0 100 100" aria-hidden="true"><path fill="currentColor" d="M50 2L64.1 16.1L83.9 16.1L83.9 35.9L98 50L83.9 64.1L83.9 83.9L64.1 83.9L50 98L35.9 83.9L16.1 83.9L16.1 64.1L2 50L16.1 35.9L16.1 16.1L35.9 16.1Z"/><circle cx="50" cy="50" r="12" fill="#04211A"/></svg>
+        <div><div class="hz-ring-k" id="tf-ring-k">Today's tafsir</div><div class="hz-ring-text" id="tf-ring-text"></div></div>
+    </div>
+    <div class="hz-actions">
+        <button class="hz-btn" id="tf-ring-open" type="button">Open the tafsir</button>
+        <button class="hz-btn ghost" id="tf-ring-done" type="button">✓ Studied</button>
+        <button class="hz-later" id="tf-ring-later" type="button">Later</button>
     </div>
 </div>
 </div>
@@ -5611,6 +5787,7 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     markAgent(ev.name);
                 } else if (ev.type === 'screen') {
                     screen = ev.text;
+                    tafsirUI.screen(ev.text);      // a tafsir summary is shown in the study panel too
                 } else if (ev.type === 'memory_proposal') {
                     proposals.push(ev);
                     vitals.event('memory', 'memory proposed');
@@ -5634,6 +5811,8 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     quranReader.apply(ev);
                 } else if (ev.type === 'duas') {    // "show my after-Maghrib duas": the Dua & Zikr tab, on that list
                     duaUI.show(ev);
+                } else if (ev.type === 'tafsir') {  // "what does Ibn Kathir say about Al-Mulk 2?": the study panel there
+                    tafsirUI.apply(ev);
                 } else if (ev.type === 'lang') {
                     setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
@@ -7669,7 +7848,7 @@ themesReady.then(ok => { if (ok && themeEditor.hidden) applyTheme(savedThemeId()
 // so two open tabs don't both announce. Browsers block sound until the page has been clicked once.
 let timerList = [];                 // [{id, kind, label, due (epoch ms), seconds, announce: {en, bn}}]
 const rungTimers = new Set();
-const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲', hifz: '📖', dua: '🤲' };   // a watch's, a prayer's, zikir, revision, adhkar
+const RING_ICONS = { alert: '🔔', prayer: '🕌', devotion: '🤲', hifz: '📖', dua: '🤲', tafsir: '📖' };   // a watch's, a prayer's, zikir, revision, adhkar
 let ringAudio = null;               // WebAudio context for the chime (a sound, not a voice)
 let ringHideTimer = null;
 
@@ -7750,13 +7929,14 @@ async function ringTimer(t) {
     } catch {}
     if (!first) return;             // another tab is announcing it
     const text = t.announce?.[replyLang] || t.announce?.en || 'Mahadi, your timer is done.';
-    const quiet = t.kind === 'dua' && !t.extra?.dua?.spoken;     // a prayer's adhkar card speaks only when he asked it to
+    const quiet = (t.kind === 'dua' && !t.extra?.dua?.spoken) || (t.kind === 'tafsir' && !t.extra?.tafsir?.spoken);   // spoken only when he asked
     if (recite.isPlaying() && !quiet) recite.pause('ring');      // the announcement first; the recitation goes on after it
     if (t.kind === 'hifz') { hifzUI.ring(t, text); hifzChime(); }
     else if (t.kind === 'dua') { duaUI.ring(t); if (!recite.isPlaying()) hifzChime(); }
+    else if (t.kind === 'tafsir') { tafsirUI.ring(t); if (!recite.isPlaying()) hifzChime(); }
     else { showRing(t, text); chime(); }
     if (quiet) return;
-    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, t.kind === 'hifz' || t.kind === 'dua' ? 1700 : 1000);   // after the chime
+    setTimeout(() => { speechMsg = null; speakChunk(text, 'say'); }, ['hifz', 'dua', 'tafsir'].includes(t.kind) ? 1700 : 1000);   // after the chime
 }
 
 document.getElementById('ring-dismiss').addEventListener('click', () => {
@@ -8528,6 +8708,7 @@ const quranReader = (() => {
         autoScroll = Date.now();
         if (target) target.scrollIntoView({ block: 'start' }); else $('qr-scroll').scrollTop = 0;
         if (target) select(target);
+        if (tafsirUI.study() && target && start && !start.endsWith(':0') && tafsirUI.state().key !== start) tafsirUI.select(start);
         lastOpenMs = Math.round(performance.now() - t0);
         vitals.event('hifz', `${viewTitle().en} · ${hzT('opened', 'খোলা')} ${lastOpenMs} ms`);
         if (!$('qr-q').value.trim()) renderIndex();
@@ -8565,6 +8746,7 @@ const quranReader = (() => {
         $('qr-text').innerHTML = html.join('');
         for (const el of $('qr-text').querySelectorAll('[data-k]')) { idx.set(el.dataset.k, el); order.set(el.dataset.k, n++); }
         lit = litWord = sel = null;
+        tafsirUI.rendered();
         const t = viewTitle();
         $('qr-title').innerHTML = `${esc(t.en)}${t.ar ? `<span lang="ar">${esc(t.ar)}</span>` : ''}<small>${esc(hzT(`${data.count} ayahs`, `${hzNum(data.count)} আয়াত`))}</small>`;
         $('qr-bar2').hidden = false;
@@ -8598,6 +8780,7 @@ const quranReader = (() => {
         if (!['off', 'en', 'bn', 'both'].includes(m)) return;
         tr = m;
         applyModes();
+        if (tafsirUI.wbw()) tafsirUI.rendered();
         if (save) savePrefs({ translation: m });
     }
     function setTest(on, save = true) {
@@ -8719,7 +8902,15 @@ const quranReader = (() => {
         if (on) setTimeout(() => $('qr-q').focus(), 50);
     }
     function state() {
-        return { open: isOpen(), test, translation: tr, view, key: isOpen() ? firstVisible() : null };
+        return { open: isOpen(), test, translation: tr, view, key: isOpen() ? firstVisible() : null,
+                 sel: sel?.dataset.k && !sel.dataset.k.endsWith(':0') ? sel.dataset.k : null, study: tafsirUI.state() };
+    }
+    function focus(k) {             // an ayah already shown: into view, and chosen
+        const el = idx.get(k);
+        if (!el) return;
+        autoScroll = Date.now();
+        el.scrollIntoView({ block: 'center' });
+        select(el);
     }
     function follow(plan) {         // a recitation started while reading something else: the reader opens it
         const start = plan.start || plan.first;
@@ -8766,6 +8957,19 @@ const quranReader = (() => {
         const el = e.target.closest('.qa');
         if (!el) return;
         if (test && !el.classList.contains('shown')) { el.classList.add('shown'); return; }   // the test: reveal it
+        const word = e.target.closest('.qa-ar .w'), k0 = el.dataset.k;
+        if (word && (tafsirUI.study() || tafsirUI.wbw())) {        // a word: its card (meaning, root, grammar)
+            select(el);
+            tafsirUI.wordTap(el, word);
+            if (tafsirUI.study() && tafsirUI.state().key !== k0) tafsirUI.select(k0);
+            return;
+        }
+        if (tafsirUI.study()) {                                     // Study: an ayah is chosen for its tafsir, not played
+            if (k0.endsWith(':0')) return;
+            select(el);
+            if (tafsirUI.state().key !== k0) tafsirUI.select(k0);
+            return;
+        }
         select(el);
         const k = el.dataset.k, a = Number(k.split(':')[1]), s = Number(k.split(':')[0]);
         const pl = recite.plan();
@@ -8779,7 +8983,569 @@ const quranReader = (() => {
         $('qr-scroll')._t = setTimeout(() => { if (Date.now() - userScrollAt < 2000) remember(firstVisible()); }, 400);
     }, { passive: true });
     return { open, show, mark, apply, state, follow, listen, viewOf, title: () => viewTitle(), reveal, setTr, setTest,
-             setIndexOpen, lastOpenMs: () => lastOpenMs, refreshIndex: () => renderIndex(), isOpen };
+             setIndexOpen, lastOpenMs: () => lastOpenMs, refreshIndex: () => renderIndex(), isOpen, focus,
+             elements: () => idx, current: () => ({ view, data }), surahAyahs: n => rows?.[n - 1]?.ayahs ?? 0 };
+})();
+
+// ── Tafsir study (tafsir.py, tafsir_study.py, quran_corpus.py): the study panel beside the reader ─────────────────
+// Study (the reader's chip) puts the panel in the player's column: a tafsir of the ayah tapped (Quran.com's, kept six
+// days on this Mac), or two side by side (Compare); each word's meaning, root and grammar (Words: Quran.com's meanings,
+// the Quranic Arabic Corpus); the surah's context (Context: Tanzil's metadata, Maududi's introduction, and a reason of
+// revelation only where a tafsir open here gives one, quoted); his notes on the passage (Notes); the player (Player).
+// Nothing here is a model's: "Explain simply" asks Javid, whose summary is checked against the text and shown here,
+// labelled as a summary. The Today tab gets the study plan's card; the morning nudge rings its own banner.
+const tafsirUI = (() => {
+    const $ = id => document.getElementById(id);
+    const FONT = [13, 14, 15, 16.5, 18, 20, 22];
+    let list = [], st = { selected: [], compare: false, font: 2, study: false, wbw: false, tab: 'tafsir' }, loaded = false;
+    let key = null, passage = null, note = null, cols = {}, abOn = 0, plan = null, words = {}, wordSel = null, root = null;
+    let ringAlert = null, pendingSummary = false, summary = '', gen = 0, notesQ = '', notesTag = '', ctxSurah = null, ctx = null;
+    const byId = id => list.find(t => t.id === id);
+    const keyIdx = k => k.split(':').map(Number);
+
+    let initP = null;
+    function init() { return (initP ||= load()); }      // once: what's saved, before anything changes it
+    async function load() {
+        try {
+            const out = await (await fetch('/tafsir/list')).json();
+            list = out.tafsirs;
+            st = { ...st, ...out.state };
+            if (!st.selected.length) st.selected = out.chosen.slice(0, 2);
+            loaded = true;
+            applyModes();
+        } catch { initP = null; }
+    }
+    const save = body => fetch('/tafsir/state', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).catch(() => {});
+    const on = () => st.study && !$('hz-pane-read').hidden;
+    function applyModes() {
+        $('hz-pane-read').classList.toggle('study', st.study);
+        $('hz-pane-read').classList.toggle('cmp', st.study && st.compare);
+        $('tf-panel').hidden = !st.study;
+        $('qr-text').classList.toggle('study', st.study);
+        $('qr-text').classList.toggle('wbw', st.wbw);
+        $('qr-study').setAttribute('aria-pressed', String(st.study));
+        $('qr-wbw').setAttribute('aria-pressed', String(st.wbw));
+        $('qr-study').textContent = hzT('Study', 'স্টাডি');
+        $('qr-wbw').textContent = hzT('Word by word', 'শব্দে শব্দে');
+        $('tf-panel').style.setProperty('--tf-size', `${FONT[st.font]}px`);
+        document.querySelectorAll('.tf-tabs [data-tt]').forEach(b => {
+            b.setAttribute('aria-selected', String(b.dataset.tt === st.tab));
+            b.textContent = { tafsir: hzT('Tafsir', 'তাফসীর'), words: hzT('Words', 'শব্দ'), context: hzT('Context', 'প্রেক্ষাপট'),
+                              notes: hzT('Notes', 'নোট'), player: hzT('Player', 'প্লেয়ার') }[b.dataset.tt];
+        });
+        for (const t of ['tafsir', 'words', 'context', 'notes', 'player']) $(`tf-pane-${t}`).hidden = st.tab !== t;
+        hifzUI.placePlayer();
+    }
+    async function setStudy(v) {
+        await init();
+        st.study = !!v;
+        applyModes();
+        save({ study: st.study });
+        if (st.study) { init(); const k = key || quranReader.state().sel || quranReader.state().key; if (k) select(k); else renderAll(); }
+        else { band(); $('tf-word').hidden = true; }
+    }
+    async function setWbw(v) {
+        await init();
+        st.wbw = !!v;
+        applyModes();
+        save({ wbw: st.wbw });
+        if (st.wbw) loadWords();
+    }
+    function setTab(t) {
+        st.tab = t;
+        applyModes();
+        save({ tab: t });
+        renderTab();
+    }
+
+    // ---- the ayah he's studying: its passage, its tafsirs
+    async function select(k, opts = {}) {
+        await init();
+        if (!k) return;
+        const g = ++gen, t0 = performance.now();
+        key = k;
+        if (opts.ids) { st.selected = opts.ids.slice(0, 2); if (st.selected.length < 2 && st.compare) st.compare = false; }
+        if ('compare' in opts) st.compare = !!opts.compare && st.selected.length > 1;
+        if (opts.ids || 'compare' in opts) { applyModes(); save({ selected: st.selected, compare: st.compare }); }
+        summary = opts.keepSummary ? summary : '';
+        const at = fetch(`/tafsir/at?key=${encodeURIComponent(k)}`).then(r => r.json()).catch(() => null);
+        const ids = shownIds();
+        cols = {};
+        renderStudy();
+        $('tf-pane-tafsir').innerHTML = `<div class="tf-none">${esc(hzT('Opening the tafsir…', 'তাফসীর খুলছে…'))}</div>`;
+        const got = await Promise.all(ids.map(id => fetch(`/tafsir/passage?tafsir_id=${id}&key=${encodeURIComponent(k)}`)
+            .then(async r => (r.ok ? { ok: true, ...(await r.json()) } : { ok: false, status: r.status, detail: (await r.json().catch(() => ({}))).detail }))
+            .catch(() => ({ ok: false, status: 0 }))));
+        if (g !== gen) return;
+        ids.forEach((id, i) => { cols[id] = got[i]; });
+        const a = await at;
+        if (g !== gen) return;
+        if (opts.passage) passage = { ...(a?.passage || {}), ...opts.passage };
+        else passage = a?.passage || null;
+        note = a?.note || null;
+        const ms = Math.round(performance.now() - t0);
+        const cached = got.every(x => x.ok && x.cached);
+        vitals.event('hifz', `${hzT('tafsir', 'তাফসীর')} ${k} · ${ms} ms${cached ? hzT(' (on this Mac)', ' (এই ম্যাকে)') : ''}`);
+        $('tf-panel').dataset.ms = String(ms);
+        renderAll();
+        band();
+    }
+    function shownIds() {
+        const s = st.selected.length ? st.selected : [169];
+        return st.compare ? s.slice(0, 2) : s.slice(0, 1);
+    }
+    function band() {
+        const el = quranReader.elements();
+        el.forEach(e => e.classList.remove('tf-in', 'tf-pass'));
+        if (!st.study || !key) return;
+        const inTafsir = new Set(Object.values(cols).flatMap(c => (c.ok ? c.keys : [])));
+        inTafsir.forEach(k => el.get(k)?.classList.add('tf-in'));
+        if (passage?.ranges) {
+            for (const [k, e] of el) {
+                const [s, a] = keyIdx(k);
+                if (!a) continue;
+                if (inPassage(s, a)) e.classList.add('tf-pass');
+            }
+        }
+    }
+    function inPassage(s, a) {
+        if (!passage) return false;
+        const [s1, a1] = keyIdx(passage.first), [s2, a2] = keyIdx(passage.last);
+        if (s1 === s2) return s === s1 && a >= a1 && a <= a2;
+        return (s === s1 && a >= a1) || (s === s2 && a <= a2) || (s > s1 && s < s2);
+    }
+
+    // ---- rendering
+    function renderAll() { renderStudy(); renderTab(); }
+    function renderTab() {
+        if (!st.study) return;
+        if (st.tab === 'tafsir') renderTafsir();
+        else if (st.tab === 'words') renderWords();
+        else if (st.tab === 'context') renderContext();
+        else if (st.tab === 'notes') renderNotes();
+    }
+    function renderStudy() {
+        const box = $('tf-study');
+        if (!passage) { box.innerHTML = key ? '' : `<span>${esc(hzT('Tap an ayah to study it.', 'পড়তে একটি আয়াতে চাপো।'))}</span>`; return; }
+        const today = plan?.today?.some(p => p.first === passage.first && p.last === passage.last);
+        const label = hzBn() ? passage.label_bn : passage.label;
+        box.innerHTML = `<span class="tf-k">${esc(today ? hzT("Today's passage", 'আজকের অংশ') : hzT('Studying', 'পড়ছ'))}</span><b>${esc(hzCap(label))}</b><span class="sp"></span>
+            <button class="tf-btn" type="button" data-act="studied" aria-pressed="${!!passage.done}">${esc(passage.done ? hzT('✓ Studied', '✓ পড়া হয়েছে') : hzT('Mark studied', 'পড়া হয়েছে'))}</button>
+            <button class="tf-btn" type="button" data-act="revisit" aria-pressed="${note?.mark === 'revisit'}">${esc(hzT('↻ Revisit', '↻ আবার দেখব'))}</button>
+            <button class="tf-btn" type="button" data-act="play" title="${esc(hzT('Listen from here', 'এখান থেকে শোনো'))}">▶</button>
+            <button class="tf-btn" type="button" data-act="next">${esc(hzT('Next ▸', 'পরের ▸'))}</button>`;
+    }
+    function optionList(selId) {
+        const groups = { ar: hzT('Arabic', 'আরবি'), en: hzT('English', 'ইংরেজি'), bn: hzT('Bangla', 'বাংলা') };
+        return Object.entries(groups).map(([lang, name]) => `<optgroup label="${esc(name)}">${list.filter(t => t.lang === lang)
+            .map(t => `<option value="${t.id}"${t.id === selId ? ' selected' : ''}>${esc(t.name)}</option>`).join('')}</optgroup>`).join('');
+    }
+    function runs(b) {
+        return b.runs.map(([t, k]) => {
+            const x = esc(t).replace(/\n/g, '<br>');
+            return k === 'q' ? `<span class="tf-q" lang="ar" dir="rtl">${x}</span>` : k === 'b' ? `<b>${x}</b>`
+                : k === 'm' ? `<span class="tf-m">${x}</span>` : k === 'r' ? `<span class="tf-r">${x}</span>` : x;
+        }).join('');
+    }
+    function colHtml(id, i) {
+        const c = cols[id], t = byId(id);
+        if (!t) return '';
+        const pick = `<div class="tf-ctl"><select data-col="${i}" aria-label="${esc(hzT('Tafsir', 'তাফসীর'))}">${optionList(id)}</select></div>`;
+        if (!c) return `<div class="tf-col${i === abOn ? ' on' : ''}">${pick}<div class="tf-none">…</div></div>`;
+        if (!c.ok) {
+            const why = c.status === 404 ? hzT(`Quran.com has no text of ${t.name} for this ayah.`, `এই আয়াতের জন্য Quran.com-এ ${t.name}-এর কোনো লেখা নেই।`)
+                : c.status === 503 ? hzT('It isn’t kept on this Mac, and Quran.com can’t be reached. It opens offline once it has been read here (kept six days).',
+                                         'এটা এই ম্যাকে রাখা নেই, আর Quran.com-এ পৌঁছানো যাচ্ছে না। একবার এখানে পড়লে ছয় দিন অফলাইনে খোলে।')
+                : hzT('The tafsir needs the server.', 'তাফসীরের জন্য সার্ভার লাগবে।');
+            return `<div class="tf-col${i === abOn ? ' on' : ''}">${pick}<div class="tf-none">${esc(why)}</div></div>`;
+        }
+        const secs = c.sections.map((sec, n) => {
+            const body = sec.blocks.map(b => `<p class="tf-p" dir="${b.dir}"${b.dir === 'rtl' ? ' lang="ar"' : ''}>${runs(b)}</p>`).join('');
+            const title = sec.title || (c.sections.length > 1 ? hzT(`Part ${n + 1}`, `অংশ ${hzNum(n + 1)}`) : hzT('The text', 'লেখা'));
+            const rtl = /[؀-ۿ]/.test(title) && !/[A-Za-zঀ-৿]/.test(title);
+            return `<details class="tf-sec"${n === 0 || c.sections.length === 1 ? ' open' : ''}><summary${rtl ? ' dir="rtl" lang="ar"' : ''}>${esc(title)}</summary><div class="tf-body">${body}</div></details>`;
+        }).join('');
+        const age = Math.max(0, Math.floor((Date.now() / 1000 - c.fetched) / 86400));
+        return `<div class="tf-col${i === abOn ? ' on' : ''}">${pick}
+            <div class="tf-head"><div class="tf-name">${esc(c.tafsir.name)}</div>
+                <div class="tf-by">${esc(c.tafsir.author)} · <a href="${esc(c.link)}" target="_blank" rel="noopener">Quran.com ↗</a></div>
+                <div class="tf-cover">${esc(hzT(`Covers ${c.label}`, `${c.label}`))} · ${esc(c.cached ? hzT(`kept on this Mac, ${age === 0 ? 'today' : `${age} day${age === 1 ? '' : 's'} ago`}`, `এই ম্যাকে রাখা`) : hzT('just fetched', 'এইমাত্র আনা'))}</div></div>
+            ${secs}</div>`;
+    }
+    function renderTafsir() {
+        const box = $('tf-pane-tafsir');
+        if (!key) { box.innerHTML = `<div class="tf-none">${esc(hzT('Tap an ayah in the text to see its tafsir. “What does Ibn Kathir say about Al-Mulk 2?” works too.', 'তাফসীর দেখতে লেখায় একটি আয়াতে চাপো। “সূরা মুলক ২-এ ইবনে কাসীর কী বলেছেন?” বললেও হবে।'))}</div>`; return; }
+        const ids = shownIds();
+        const two = ids.length > 1;
+        const ctl = `<div class="tf-ctl">
+            <button class="tf-btn" type="button" data-act="compare" aria-pressed="${st.compare}">${esc(hzT('⇆ Compare', '⇆ তুলনা'))}</button>
+            ${two ? `<span class="tf-ab qr-seg" role="group" aria-label="A or B">${ids.map((id, i) => `<button type="button" data-ab="${i}" aria-pressed="${i === abOn}">${esc(byId(id)?.short || '')}</button>`).join('')}</span>` : ''}
+            <span class="sp"></span>
+            <button class="tf-btn" type="button" data-act="explain">${esc(two ? hzT('Compare summary', 'তুলনামূলক সারাংশ') : hzT('Explain simply', 'সহজ করে বোঝাও'))}</button>
+            <span class="qr-seg" role="group" aria-label="${esc(hzT('Text size', 'লেখার আকার'))}"><button type="button" data-act="font-down" aria-label="${esc(hzT('Smaller text', 'ছোট লেখা'))}"${st.font <= 0 ? ' disabled' : ''}>A−</button><button type="button" data-act="font-up" aria-label="${esc(hzT('Larger text', 'বড় লেখা'))}"${st.font >= FONT.length - 1 ? ' disabled' : ''}>A+</button></span>
+        </div>`;
+        const sum = summary ? `<div class="tf-sum"><span class="tf-k">${esc(hzT("Javid's summary · checked against the text", 'জাভিদের সারাংশ · লেখার সাথে মিলিয়ে দেখা'))}</span>${renderScreen(summary)}</div>` : '';
+        box.innerHTML = ctl + sum + `<div class="tf-cols${two ? ' two' : ''}">${ids.map((id, i) => colHtml(id, i)).join('')}</div>
+            <p class="tf-meta">${esc(hzT('Tafsir from Quran.com (Quran Foundation), kept on this Mac for six days at most, as its terms allow. A summary is a language model’s, checked point by point against the text shown; the tafsir itself is never written by a model.',
+                                     'তাফসীর Quran.com (Quran Foundation) থেকে, এই ম্যাকে সর্বোচ্চ ছয় দিন রাখা, তাদের শর্ত অনুযায়ী। সারাংশটি ভাষা-মডেলের, দেখানো লেখার সাথে প্রতিটি পয়েন্ট মিলিয়ে দেখা; তাফসীর নিজে কখনো মডেল লেখে না।'))}</p>`;
+    }
+    function showSummary(text) { summary = text; if (on() && st.tab === 'tafsir') renderTafsir(); }
+
+    // ---- words: each word's meaning under it, the word card, where else its root is
+    function wordLang() { const tr = quranReader.state().translation; return tr === 'bn' || (tr !== 'en' && hzBn()) ? 'bn' : 'en'; }
+    async function loadWords(onlyKeys = null) {
+        const d = quranReader.current().data;
+        if (!d) return;
+        for (const p of d.parts) {
+            const a1 = p.verses[0].a, a2 = p.verses[p.verses.length - 1].a;
+            if (!onlyKeys && p.verses.every(v => words[v.k])) { paintWords(); continue; }
+            try {
+                const r = await fetch(`/tafsir/words?surah=${p.s}&first=${a1}&last=${a2}`);
+                if (!r.ok) continue;
+                const out = await r.json();
+                Object.assign(words, out.ayahs);
+                if (out.missing?.length && st.wbw) showToast(hzT(`Not on this Mac yet: ${out.missing.join(', ')}.`, `এখনো এই ম্যাকে নেই: ${out.missing.join(', ')}।`));
+            } catch {}
+        }
+        paintWords();
+    }
+    function paintWords() {
+        const lang = wordLang();
+        quranReader.elements().forEach((el, k) => {
+            const w = words[k];
+            el.querySelectorAll('.qa-ar .w').forEach(span => {
+                let m = span.querySelector('.wm');
+                const info = w?.words?.[Number(span.dataset.w) - 1];
+                const text = info?.[`tr_${lang}`] || info?.tr_en || '';
+                if (!text) { m?.remove(); return; }
+                if (!m) { m = document.createElement('small'); m.className = 'wm'; span.appendChild(m); }
+                m.textContent = text;
+                m.lang = lang;
+            });
+        });
+    }
+    function rendered() {          // the reader drew a portion: meanings, the band
+        if (st.wbw) loadWords();
+        band();
+    }
+    async function wordTap(ayahEl, span) {
+        const k = ayahEl.dataset.k, w = Number(span.dataset.w);
+        if (!words[k]) {
+            const [s, a] = keyIdx(k);
+            try { Object.assign(words, (await (await fetch(`/tafsir/words?surah=${s}&first=${a}&last=${a}`)).json()).ayahs); } catch {}
+        }
+        document.querySelectorAll('.qa-ar .w.tapped').forEach(x => x.classList.remove('tapped'));
+        span.classList.add('tapped');
+        const token = [...span.childNodes].filter(n => n.nodeType === 3).map(n => n.textContent).join('').trim();
+        wordSel = { key: k, w, token, info: words[k]?.words?.[w - 1] || null, n: words[k]?.n };
+        showCard(span);
+        if (st.study && st.tab === 'words') renderWords();
+    }
+    function wordHtml(compact) {
+        const x = wordSel?.info, lang = wordLang();
+        if (!wordSel) return '';
+        const meaning = x?.[`tr_${lang}`] || x?.tr_en;
+        const other = lang === 'bn' ? x?.tr_en : x?.tr_bn;
+        const dl = [];
+        if (x?.root) dl.push(`<dt>${esc(hzT('Root', 'মূল'))}</dt><dd><span class="root" lang="ar">${esc(x.root_ar)}</span> · ${esc(hzT(`${x.count} times in the Quran`, `কুরআনে ${hzNum(x.count)} বার`))}</dd>`);
+        if (x?.lemma_ar) dl.push(`<dt>${esc(hzT('Lemma', 'মূল শব্দ'))}</dt><dd><span class="root" lang="ar">${esc(x.lemma_ar)}</span></dd>`);
+        if (x?.en) dl.push(`<dt>${esc(hzT('Form', 'গঠন'))}</dt><dd>${(hzBn() ? x.bn : x.en).map(esc).join(' + ')}</dd>`);
+        const none = !x ? hzT('No word data for this ayah: its words are counted differently in the sources, so none is shown rather than the wrong one.', 'এই আয়াতের শব্দের তথ্য নেই: উৎসগুলোতে শব্দ ভিন্নভাবে গোনা, তাই ভুলটা দেখানোর বদলে কিছুই দেখানো হলো না।') : '';
+        return `<div class="tf-wd"><div class="ar" lang="ar" dir="rtl">${esc(wordSel.token)}</div>
+            ${meaning ? `<div class="mean"${lang === 'bn' ? ' lang="bn"' : ''}>${esc(meaning)}</div>` : ''}
+            ${other && other !== meaning ? `<div class="mean"${lang === 'bn' ? '' : ' lang="bn"'}>${esc(other)}</div>` : ''}
+            ${x?.tl ? `<div class="tl">${esc(x.tl)}</div>` : ''}
+            ${dl.length ? `<dl>${dl.join('')}</dl>` : ''}${none ? `<div class="tf-none">${esc(none)}</div>` : ''}
+            <div class="acts">${x?.root ? `<button class="tf-btn" type="button" data-root="${esc(x.root)}">${esc(hzT(`Where else is this root? (${x.count})`, `এই মূল আর কোথায়? (${hzNum(x.count)})`))}</button>` : ''}
+                ${compact ? '' : ''}</div>
+            <div class="cr">${esc(hzT('Meaning: Quran.com, word by word. Root and grammar:', 'অর্থ: Quran.com, শব্দে শব্দে। মূল ও ব্যাকরণ:'))} <a href="https://corpus.quran.com" target="_blank" rel="noopener">Quranic Arabic Corpus</a> (GNU GPL)</div></div>`;
+    }
+    function showCard(span) {
+        const card = $('tf-word'), host = card.parentElement.getBoundingClientRect(), r = span.getBoundingClientRect();
+        card.innerHTML = `<button class="x" type="button" aria-label="${esc(hzT('Close', 'বন্ধ'))}">✕</button>` + wordHtml(true);
+        card.hidden = false;
+        const w = card.offsetWidth, h = card.offsetHeight;
+        let left = r.left - host.left + r.width / 2 - w / 2, top = r.bottom - host.top + 8;
+        left = Math.max(12, Math.min(left, host.width - w - 12));
+        if (top + h > host.height - 8) top = Math.max(8, r.top - host.top - h - 8);
+        card.style.left = `${left}px`;
+        card.style.top = `${top}px`;
+    }
+    async function openRoot(r) {
+        root = { root: r, data: null };
+        if (!st.study) await setStudy(true);
+        setTab('words');
+        try { root.data = await (await fetch(`/tafsir/root?root=${encodeURIComponent(r)}`)).json(); } catch {}
+        renderWords();
+    }
+    function renderWords() {
+        const box = $('tf-pane-words');
+        const parts = [];
+        parts.push(wordSel ? wordHtml(false) : `<div class="tf-none">${esc(hzT('Tap a word in the text for its meaning, root and grammar.', 'অর্থ, মূল ও ব্যাকরণ দেখতে লেখায় একটি শব্দে চাপো।'))}</div>`);
+        if (root?.data) {
+            const d = root.data;
+            parts.push(`<h4 class="tf-h">${esc(hzT(`The root ${''}`, 'মূল '))}<span class="tf-q" lang="ar">${esc(d.root_ar)}</span> · ${esc(hzT(`${d.count} times in ${d.ayahs} ayahs`, `${hzNum(d.ayahs)}টি আয়াতে ${hzNum(d.count)} বার`))}</h4>
+                <ul class="tf-roots">${d.rows.map(x => `<li data-go="${x.key}"><span><b>${esc(x.surah)} ${hzNum(x.a)}</b>${x.times > 1 ? ` <small>×${hzNum(x.times)}</small>` : ''}</span><span class="ar" lang="ar">${esc(x.word)}</span></li>`).join('')}</ul>
+                ${d.more ? `<div class="tf-none">${esc(hzT(`and ${d.more} more ayahs`, `আরও ${hzNum(d.more)}টি আয়াত`))}</div>` : ''}`);
+        } else if (root) parts.push(`<div class="tf-none">…</div>`);
+        box.innerHTML = parts.join('');
+    }
+
+    // ---- context
+    async function renderContext() {
+        const box = $('tf-pane-context');
+        const s = key ? keyIdx(key)[0] : quranReader.current().data?.parts?.[0]?.s;
+        if (!s) { box.innerHTML = `<div class="tf-none">${esc(hzT('Open a surah first.', 'আগে একটি সূরা খোলো।'))}</div>`; return; }
+        if (ctxSurah !== s) {
+            box.innerHTML = `<div class="tf-none">…</div>`;
+            try { ctx = await (await fetch(`/tafsir/context?surah=${s}`)).json(); ctxSurah = s; } catch { ctx = null; }
+        }
+        if (!ctx) { box.innerHTML = `<div class="tf-none">${esc(hzT('The context needs the server.', 'প্রেক্ষাপটের জন্য সার্ভার লাগবে।'))}</div>`; return; }
+        const ord = n => hzT(`${n}${[, 'st', 'nd', 'rd'][(n % 100 >> 3 ^ 1) && n % 10] || 'th'} of 114`, `১১৪টির মধ্যে ${hzNum(n)}তম`);
+        const facts = `<div class="tf-facts">
+            <div><small>${esc(hzT('Revealed', 'অবতীর্ণ'))}</small><b>${esc(ctx.type === 'makki' ? hzT('Makki (in Makkah)', 'মাক্কি (মক্কায়)') : hzT('Madani (in Madinah)', 'মাদানি (মদীনায়)'))}</b></div>
+            <div><small>${esc(hzT('Order of revelation', 'অবতরণের ক্রম'))}</small><b>${esc(ord(ctx.order))}</b></div>
+            <div><small>${esc(hzT('Ayahs', 'আয়াত'))}</small><b>${hzNum(ctx.ayahs)}</b></div>
+            <div><small>${esc(hzT('Juz · rukus', 'পারা · রুকু'))}</small><b>${ctx.juz.map(hzNum).join('–')} · ${hzNum(ctx.rukus)}</b></div></div>`;
+        const themes = ctx.themes ? ctx.themes.map((sec, n) => `<details class="tf-sec"${n === 0 ? ' open' : ''}><summary>${esc(sec.title || hzT('Introduction', 'পরিচিতি'))}</summary><div class="tf-body">${sec.blocks.map(b => `<p class="tf-p" dir="${b.dir}">${runs(b)}</p>`).join('')}</div></details>`).join('')
+            + `<p class="tf-meta">${esc(hzT(`From Quran.com's introduction to the surah: ${ctx.themes_source}. In English only.`, `Quran.com-এর সূরা-পরিচিতি থেকে: ${ctx.themes_source}। শুধু ইংরেজিতে।`))}</p>`
+            : `<div class="tf-none">${esc(ctx.themes_note || hzT('No introduction for this surah.', 'এই সূরার কোনো পরিচিতি নেই।'))}</div>`;
+        const found = Object.values(cols).filter(c => c.ok).flatMap(c => c.asbab);
+        const asbab = found.length ? found.map(x => `<blockquote class="tf-quote"><p dir="${x.dir}">${esc(x.text)}</p><cite>${esc(x.name)} · Quran.com</cite></blockquote>`).join('')
+            : `<div class="tf-none">${esc(key ? hzT('None of the tafsirs open here gives a reason of revelation for this passage.', 'এখানে খোলা কোনো তাফসীরে এই অংশের শানে নুযূল নেই।') : hzT('Tap an ayah to look for one in its tafsirs.', 'একটি আয়াতে চাপো।'))}</div>`;
+        box.innerHTML = `<h4 class="tf-h">${esc(hzBn() ? ctx.bn : ctx.en)} <span class="tf-q" lang="ar">${esc(ctx.ar)}</span></h4>${facts}
+            <h4 class="tf-h">${esc(hzT('Themes', 'মূল বিষয়'))}</h4>${themes}
+            <h4 class="tf-h">${esc(hzT('Reason of revelation', 'শানে নুযূল'))}</h4>${asbab}
+            <p class="tf-meta">${esc(hzT('Shown only where a tafsir open in the panel gives one, quoted as it is. Makki or Madani and the order: Tanzil’s metadata.', 'শুধু প্যানেলে খোলা কোনো তাফসীর যেখানে দেয়, হুবহু। মাক্কি-মাদানি ও ক্রম: Tanzil-এর মেটাডেটা।'))}</p>`;
+    }
+
+    // ---- notes
+    async function renderNotes() {
+        const box = $('tf-pane-notes');
+        let all = { notes: [], suggestions: [], tags: [] };
+        try { all = await (await fetch(`/tafsir/notes?q=${encodeURIComponent(notesQ)}&tag=${encodeURIComponent(notesTag)}`)).json(); } catch {}
+        const n = note || {};
+        const form = passage ? `<div class="tf-form" data-first="${passage.first}" data-last="${passage.last}">
+            <h4 class="tf-h">${esc(hzT('Your notes on', 'তোমার নোট:'))} ${esc(hzBn() ? passage.label_bn : passage.label)}</h4>
+            <label for="tf-n-ref">${esc(hzT('Reflection', 'ভাবনা'))}</label><textarea id="tf-n-ref" rows="3" placeholder="${esc(hzT('What this passage says to you', 'এই অংশ তোমাকে কী বলে'))}">${esc(n.reflection || '')}</textarea>
+            <label for="tf-n-q">${esc(hzT('A question', 'একটি প্রশ্ন'))}</label><textarea id="tf-n-q" rows="2" placeholder="${esc(hzT('Something to ask a teacher, or to look into', 'শিক্ষককে জিজ্ঞেস করার, বা খুঁজে দেখার মতো কিছু'))}">${esc(n.question || '')}</textarea>
+            <label for="tf-n-a">${esc(hzT('One action', 'একটি কাজ'))}</label><textarea id="tf-n-a" rows="2" placeholder="${esc(hzT('One thing to do because of it', 'এর জন্য একটি করণীয়'))}">${esc(n.action || '')}</textarea>
+            <label for="tf-n-tags">${esc(hzT('Tags', 'ট্যাগ'))}</label><input id="tf-n-tags" type="text" autocomplete="off" value="${esc((n.tags || []).join(', '))}" placeholder="${esc(hzT('Comma between tags: tawakkul, akhirah', 'ট্যাগের মাঝে কমা: tawakkul, akhirah'))}">
+            <div class="tf-tagsug">${all.suggestions.map(t => `<button class="tf-btn" type="button" data-sug="${esc(t)}">${esc(t)}</button>`).join('')}</div>
+            <div class="tf-row"><span class="qr-seg" role="group" aria-label="${esc(hzT('Mark', 'চিহ্ন'))}">
+                ${[['', hzT('No mark', 'কিছু না')], ['studied', hzT('✓ Studied', '✓ পড়া হয়েছে')], ['revisit', hzT('↻ Revisit', '↻ আবার দেখব')]].map(([v, t]) => `<button type="button" data-mark="${v}" aria-pressed="${(n.mark || '') === v}">${esc(t)}</button>`).join('')}</span>
+                <button class="hz-btn" type="button" data-act="save-note">${esc(hzT('Save', 'রাখো'))}</button><span class="tf-saved" id="tf-saved"></span></div></div>`
+            : `<div class="tf-none">${esc(hzT('Tap an ayah to write about its passage.', 'নোট লিখতে একটি আয়াতে চাপো।'))}</div>`;
+        const tags = all.tags.length ? `<div class="tf-tagsug">${all.tags.map(t => `<button class="tf-btn" type="button" data-tag="${esc(t)}" aria-pressed="${t === notesTag}">${esc(t)}</button>`).join('')}</div>` : '';
+        const rows = all.notes.map(x => `<li data-go="${x.first}" data-first="${x.first}" data-last="${x.last}"><b>${esc(hzBn() ? x.label_bn : x.label)}</b>${x.mark === 'revisit' ? ' <small>↻</small>' : x.mark === 'studied' ? ' <small>✓</small>' : ''}
+            ${x.tags.length ? ` <small>· ${esc(x.tags.join(', '))}</small>` : ''}${x.reflection ? `<p>${esc(x.reflection.slice(0, 180))}</p>` : x.question ? `<p>${esc(x.question.slice(0, 180))}</p>` : ''}</li>`).join('');
+        box.innerHTML = form + `<div class="tf-find"><input id="tf-n-find" type="search" autocomplete="off" placeholder="${esc(hzT('Search your notes', 'নোটে খোঁজো'))}" value="${esc(notesQ)}">
+            <button class="tf-btn" type="button" data-act="export">${esc(hzT('Export .md', '.md নামাও'))}</button></div>${tags}
+            <ul class="tf-notes">${rows || `<li class="tf-none">${esc(notesQ || notesTag ? hzT('No notes match.', 'মিলছে না।') : hzT('No notes yet.', 'এখনো কোনো নোট নেই।'))}</li>`}</ul>
+            <p class="tf-meta">${esc(hzT('Your notes stay on this Mac (data/tadabbur.json), never in git, never sent to a model.', 'তোমার নোট এই ম্যাকেই থাকে (data/tadabbur.json), গিটে নয়, কোনো মডেলেও যায় না।'))}</p>`;
+    }
+    async function saveNote(markOverride) {
+        const f = document.querySelector('#tf-pane-notes .tf-form');
+        if (!passage) return null;
+        const pressed = f?.querySelector('[data-mark][aria-pressed="true"]')?.dataset.mark ?? note?.mark ?? '';
+        const body = { first: passage.first, last: passage.last,
+                       reflection: f ? $('tf-n-ref').value : note?.reflection || '', question: f ? $('tf-n-q').value : note?.question || '',
+                       action: f ? $('tf-n-a').value : note?.action || '',
+                       tags: (f ? $('tf-n-tags').value : (note?.tags || []).join(',')).split(',').map(t => t.trim()).filter(Boolean),
+                       mark: markOverride ?? pressed };
+        try {
+            const r = await fetch('/tafsir/notes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const out = await r.json();
+            if (!r.ok) { showToast(out.detail || 'Not saved.'); return null; }
+            note = out.note;
+            plan = out.plan;
+            if (body.mark === 'studied') passage.done = true;
+            return out;
+        } catch { showToast('Not saved: is the server running?'); return null; }
+    }
+    async function exportNotes() {
+        try {
+            const r = await fetch(`/tafsir/notes.md?q=${encodeURIComponent(notesQ)}&tag=${encodeURIComponent(notesTag)}`);
+            const blob = await r.blob();
+            const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: 'tadabbur-notes.md' });
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+        } catch { showToast('Not exported: is the server running?'); }
+    }
+
+    // ---- the plan: the Today card, studied, next
+    async function refreshPlan() {
+        try { plan = await (await fetch('/tafsir/plan')).json(); } catch { return; }
+        renderToday();
+        if (passage) {
+            const t = plan.today.find(p => p.first === passage.first && p.last === passage.last);
+            if (t) passage.done = t.done;
+            renderStudy();
+        }
+    }
+    function bar(k, n, total) {
+        return `<div class="tf-bar"><small><span>${esc(k)}</span><span>${hzNum(n)}/${hzNum(total)}</span></small><i><b style="width:${Math.min(100, total ? (100 * n) / total : 0).toFixed(1)}%"></b></i></div>`;
+    }
+    function renderToday() {
+        const box = $('tf-today');
+        if (!plan) return;
+        const t = plan.today, s = plan.streak;
+        const head = t.length ? t.map(p => `<span class="tf-pass-n${p.done ? ' done' : ''}">${p.done ? '✓ ' : ''}${esc(hzCap(hzBn() ? p.label_bn : p.label))}</span>`).join('') : esc(hzT('All studied, Alhamdulillah', 'সব পড়া হয়েছে, আলহামদুলিল্লাহ'));
+        const first = t.find(p => !p.done) || t[0];
+        const streak = s.days ? hzT(`${s.days} day${s.days === 1 ? '' : 's'} of study${s.status === 'paused' ? ' · resumes whenever you study' : s.status === 'today' ? ' · today ✓' : ''}`,
+                                    `${hzNum(s.days)} দিন পড়া${s.status === 'paused' ? ' · পড়লেই আবার চলবে' : s.status === 'today' ? ' · আজ ✓' : ''}`)
+                             : hzT('Your first day of tafsir study', 'তাফসীর পড়ার প্রথম দিন');
+        const hz = (plan.hifz || [])[0];
+        const hifz = hz ? `<div class="tf-sub">${esc(hzT(`${hzCap(hz.portion)} is due for revision: study its tafsir too, ${hz.passage.label}.`, `${hz.portion_bn || hz.portion} রিভিশনের দিন: এর তাফসীরও পড়ো, ${hz.passage.label_bn}।`))}
+            <button class="tf-btn" type="button" data-open="${hz.passage.first}" data-pfirst="${hz.passage.first}" data-plast="${hz.passage.last}">${esc(hzT('Open', 'খোলো'))}</button></div>` : '';
+        const rv = plan.revisit.length ? `<div class="tf-sub">${esc(hzT('To revisit:', 'আবার দেখার:'))} ${plan.revisit.slice(0, 3).map(n => `<button class="tf-btn" type="button" data-open="${n.first}" data-pfirst="${n.first}" data-plast="${n.last}">${esc(hzBn() ? n.label_bn : n.label)}</button>`).join(' ')}</div>` : '';
+        box.innerHTML = `<div class="hz-sec-head"><h3>${esc(hzT("Today's tafsir", 'আজকের তাফসীর'))} <span lang="ar">تفسير</span></h3></div>
+            <div class="tf-tline">${head}<span class="sp" style="flex:1"></span>
+                ${first ? `<button class="hz-btn" type="button" data-open="${first.first}" data-pfirst="${first.first}" data-plast="${first.last}">${esc(hzT('Open in Study', 'স্টাডিতে খোলো'))}</button>
+                ${!first.done ? `<button class="hz-btn ghost" type="button" data-done="${first.first}" data-dlast="${first.last}">${esc(hzT('✓ Studied', '✓ পড়া হয়েছে'))}</button>` : ''}` : ''}</div>
+            <div class="tf-sub">${esc(streak)}${plan.next ? esc(hzT(` · next: ${plan.next.label}`, ` · এরপর: ${plan.next.label_bn}`)) : ''}</div>
+            ${hifz}${rv}
+            <div class="tf-bars">${bar(hzT('Juz Amma', 'আমপারা'), plan.progress.juz_amma.studied, plan.progress.juz_amma.total)}${bar(hzT('The whole Quran', 'পুরো কুরআন'), plan.progress.overall.studied, plan.progress.overall.total)}</div>`;
+    }
+    async function markStudied(first, last, studied = true) {
+        try {
+            const r = await fetch('/tafsir/studied', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ first, last, studied }) });
+            if (!r.ok) { showToast((await r.json().catch(() => ({}))).detail || 'Not marked.'); return; }
+            plan = await r.json();
+            renderToday();
+            if (passage && passage.first === first && passage.last === last) { passage.done = studied; renderStudy(); }
+            vitals.event('hifz', `${hzT('tafsir studied', 'তাফসীর পড়া')} ${first}–${last}`);
+        } catch { showToast('Not marked: is the server running?'); }
+    }
+    async function openAt(k, opts = {}) {
+        await init();
+        hifzUI.open('read');
+        if (!st.study) { st.study = true; applyModes(); save({ study: true }); }
+        const s = Number(k.split(':')[0]);
+        const cur = quranReader.current();
+        if (!cur.data || !quranReader.elements().has(k)) await quranReader.open({ kind: 'surah', n: s }, k);
+        else quranReader.focus(k);
+        await select(k, opts);
+    }
+
+    // ---- the server's word (a voice command), the reminder
+    function apply(ev) {
+        if (ev.summary) pendingSummary = true;
+        if (ev.open) {
+            if (st.tab !== 'tafsir' && st.tab !== 'player') { st.tab = 'tafsir'; applyModes(); }      // what he asked for: the tafsir
+            openAt(ev.open.key, { ids: ev.open.ids, compare: ev.open.compare, passage: ev.open.passage, keepSummary: !!ev.summary });
+        }
+        if (ev.notes) { init().then(async () => { hifzUI.open('read'); if (!st.study) await setStudy(true); notesQ = ev.notes.q || ''; notesTag = ''; setTab('notes'); }); }
+        if (ev.refresh) { refreshPlan(); if (key) select(key, { keepSummary: true }); }
+    }
+    function screen(text) { if (pendingSummary) { pendingSummary = false; showSummary(text); return true; } return false; }
+    function ring(t) {
+        hzFonts();
+        ringAlert = t;
+        const ps = t.extra?.tafsir?.passages || [];
+        $('tf-ring-k').textContent = hzT("Today's tafsir", 'আজকের তাফসীর');
+        $('tf-ring-text').innerHTML = `${esc(hzCap(ps.map(p => (hzBn() ? p.label_bn : p.label)).join(', ')))}<small>${esc(hzT('A passage to understand what you recite.', 'যা তিলাওয়াত করো, তা বোঝার জন্য একটি অংশ।'))}</small>`;
+        $('tf-ring-open').textContent = hzT('Open the tafsir', 'তাফসীর খোলো');
+        $('tf-ring-done').textContent = hzT('✓ Studied', '✓ পড়া হয়েছে');
+        $('tf-ring-later').textContent = hzT('Later', 'পরে');
+        $('tf-ring').hidden = false;
+    }
+    function state() {
+        return st.study ? { open: on(), key, passage: passage ? { first: passage.first, last: passage.last } : null, ids: shownIds(), compare: st.compare } : { open: false };
+    }
+
+    // ---- clicks
+    $('qr-study').addEventListener('click', () => setStudy(!st.study));
+    $('qr-wbw').addEventListener('click', () => setWbw(!st.wbw));
+    document.querySelectorAll('.tf-tabs [data-tt]').forEach(b => b.addEventListener('click', () => setTab(b.dataset.tt)));
+    $('tf-word').addEventListener('click', e => {
+        if (e.target.closest('.x')) { $('tf-word').hidden = true; return; }
+        const r = e.target.closest('[data-root]');
+        if (r) { $('tf-word').hidden = true; openRoot(r.dataset.root); }
+    });
+    $('tf-panel').addEventListener('change', e => {
+        const sel = e.target.closest('select[data-col]');
+        if (!sel) return;
+        const i = Number(sel.dataset.col), id = Number(sel.value);
+        const s = [...(st.selected.length ? st.selected : [169])];
+        s[i] = id;
+        if (s[0] === s[1]) s.splice(1, 1);
+        st.selected = s.slice(0, 2);
+        save({ selected: st.selected });
+        if (key) select(key);
+    });
+    $('tf-panel').addEventListener('input', e => {
+        if (e.target.id === 'tf-n-find') { clearTimeout(e.target._t); const v = e.target.value; e.target._t = setTimeout(() => { notesQ = v; renderNotes().then(() => { const f = $('tf-n-find'); f.focus(); f.setSelectionRange(v.length, v.length); }); }, 250); }
+    });
+    $('tf-panel').addEventListener('click', async e => {
+        const act = e.target.closest('[data-act]')?.dataset.act;
+        if (act === 'compare') {
+            st.compare = !st.compare;
+            if (st.compare && st.selected.length < 2) st.selected = [st.selected[0] || 169, (st.selected[0] === 91 ? 169 : 91)];
+            abOn = 0;
+            applyModes();
+            save({ compare: st.compare, selected: st.selected });
+            if (key) select(key);
+            return;
+        }
+        if (act === 'font-down' || act === 'font-up') {
+            st.font = Math.max(0, Math.min(FONT.length - 1, st.font + (act === 'font-up' ? 1 : -1)));
+            applyModes(); save({ font: st.font }); renderTafsir(); return;
+        }
+        if (act === 'explain') {
+            if (!key) return;
+            pendingSummary = true;
+            const names = shownIds().map(id => byId(id)?.short).filter(Boolean);
+            submitText(names.length > 1 ? hzT(`Compare ${names.join(' and ')} here`, `এখানে ${names.join(' আর ')} তুলনা করো`)
+                                        : hzT(`Explain ${names[0]}'s tafsir here simply`, `এখানে ${names[0]}-এর তাফসীর সহজ করে বোঝাও`));
+            return;
+        }
+        if (act === 'studied' && passage) { markStudied(passage.first, passage.last, !passage.done); return; }
+        if (act === 'revisit' && passage) { const out = await saveNote(note?.mark === 'revisit' ? '' : 'revisit'); if (out) { renderStudy(); if (st.tab === 'notes') renderNotes(); renderToday(); } return; }
+        if (act === 'play' && passage) { recite.playView(quranReader.current().view, key); return; }
+        if (act === 'next' && passage) {
+            const [s, a] = keyIdx(passage.last), count = quranReader.surahAyahs(s);
+            const nk = a < count ? `${s}:${a + 1}` : plan?.continue?.first;
+            if (nk) openAt(nk);
+            return;
+        }
+        if (act === 'save-note') { const out = await saveNote(); if (out) { $('tf-saved').textContent = hzT('Saved ✓', 'রাখা হলো ✓'); renderStudy(); renderToday(); setTimeout(() => renderNotes(), 900); } return; }
+        if (act === 'export') { exportNotes(); return; }
+        const ab = e.target.closest('[data-ab]');
+        if (ab) { abOn = Number(ab.dataset.ab); renderTafsir(); return; }
+        const mk = e.target.closest('[data-mark]');
+        if (mk) { mk.parentElement.querySelectorAll('[data-mark]').forEach(b => b.setAttribute('aria-pressed', String(b === mk))); return; }
+        const sug = e.target.closest('[data-sug]');
+        if (sug) { const inp = $('tf-n-tags'), have = inp.value.split(',').map(t => t.trim()).filter(Boolean); if (!have.includes(sug.dataset.sug)) inp.value = [...have, sug.dataset.sug].join(', '); return; }
+        const tg = e.target.closest('[data-tag]');
+        if (tg) { notesTag = notesTag === tg.dataset.tag ? '' : tg.dataset.tag; renderNotes(); return; }
+        const r = e.target.closest('[data-root]');
+        if (r) { openRoot(r.dataset.root); return; }
+        const go = e.target.closest('[data-go]');
+        if (go) openAt(go.dataset.go, go.dataset.first ? { passage: undefined } : {});
+    });
+    $('tf-today').addEventListener('click', e => {
+        const o = e.target.closest('[data-open]');
+        if (o) { openAt(o.dataset.open, { passage: { first: o.dataset.pfirst, last: o.dataset.plast } }); return; }
+        const d = e.target.closest('[data-done]');
+        if (d) markStudied(d.dataset.done, d.dataset.dlast);
+    });
+    $('tf-ring-open').addEventListener('click', () => {
+        $('tf-ring').hidden = true;
+        const p = ringAlert?.extra?.tafsir?.passages?.[0];
+        if (p) openAt(p.first, { passage: { first: p.first, last: p.last } });
+    });
+    $('tf-ring-done').addEventListener('click', () => {
+        $('tf-ring').hidden = true;
+        for (const p of ringAlert?.extra?.tafsir?.passages || []) markStudied(p.first, p.last);
+    });
+    $('tf-ring-later').addEventListener('click', () => { $('tf-ring').hidden = true; });
+    document.addEventListener('click', e => {
+        const card = $('tf-word');
+        if (!card.hidden && !card.contains(e.target) && !e.target.closest('.qa-ar .w')) card.hidden = true;
+    });
+    return { init, select, rendered, wordTap, apply, screen, ring, state, refreshPlan, renderToday, applyModes, openAt,
+             on, tab: () => st.tab, study: () => st.study, wbw: () => st.wbw, showSummary, words: () => words };
 })();
 
 const hifzUI = (() => {
@@ -8927,6 +9693,7 @@ const hifzUI = (() => {
         hifzTheme.label();
         render();
         refresh();
+        tafsirUI.refreshPlan();
         if (!was) $('hz-close').focus();
     }
     function close() {
@@ -8947,16 +9714,18 @@ const hifzUI = (() => {
         $('hz-tab-read').textContent = hzT('Read & listen', 'পড়ো ও শোনো');
         $('hz-tab-duas').textContent = hzT('Dua & Zikr', 'দোয়া ও জিকির');
         placePlayer();
-        if (tab === 'read') quranReader.show();
+        if (tab === 'read') { quranReader.show(); tafsirUI.init().then(() => tafsirUI.applyModes()); }
         if (tab === 'duas') duaUI.shown();
     }
     // The player sits in the page's flow wherever it shows, so it never covers anything: under the header on the main
     // page, at the view's foot in Today, beside the text in Read (the full panel, with the reciters and the repeat).
     function placePlayer() {
         const bar = $('recite-bar');
-        const slot = view.hidden ? $('main-dock') : tab === 'read' ? $('qr-side') : $('hz-dock');
+        const study = tab === 'read' && tafsirUI.study();        // Study: at the panel's top, or whole in its Player tab
+        const slot = view.hidden ? $('main-dock') : study ? $(tafsirUI.tab() === 'player' ? 'tf-pane-player' : 'tf-dock')
+            : tab === 'read' ? $('qr-side') : $('hz-dock');
         if (bar.parentElement !== slot) slot.appendChild(bar);
-        bar.classList.toggle('full', slot.id === 'qr-side');
+        bar.classList.toggle('full', slot.id === 'qr-side' || slot.id === 'tf-pane-player');
         recite.render();
     }
     function logPortion(portions, strength) { return log({ portions, strength }); }

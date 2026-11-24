@@ -26,6 +26,7 @@ import gnews
 import hifz
 import markets
 import prayers
+import tafsir_study
 import tracing
 import weather
 
@@ -579,6 +580,10 @@ def _loop() -> None:
             duas.tick()             # each prayer's adhkar card, a few minutes after it begins
         except Exception as e:
             print(f"[duas] {type(e).__name__}: {str(e)[:120]}")
+        try:
+            tafsir_study.tick()     # "Today's tafsir: Al-Mulk 1–5", after Fajr
+        except Exception as e:
+            print(f"[tafsir] {type(e).__name__}: {str(e)[:120]}")
 
 
 def start() -> None:

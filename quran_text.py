@@ -240,9 +240,20 @@ def _split(s: int, a: int) -> tuple[str, bool]:
     """(the ayah's own text, whether a Bismillah was in front of it)."""
     t = _text["ar"][(s, a)]
     b = bismillah()
-    if a == 1 and s not in (1, 9) and b and t.startswith(b + " "):
-        return t[len(b) + 1:], True
+    if a == 1 and s not in (1, 9) and b:
+        if t.startswith(b + " "):
+            return t[len(b) + 1:], True
+        # At-Tin and Al-Qadr: Tanzil writes its Bismillah with a shadda on the first letter (بِّسْمِ, joined in
+        # recitation to the surah before), so it's matched by its letters, not character for character.
+        n = len(b.split())
+        toks = t.split(" ")
+        if len(toks) > n and [_letters(x) for x in toks[:n]] == [_letters(x) for x in b.split()]:
+            return " ".join(toks[n:]), True
     return t, False
+
+
+def _letters(token: str) -> str:
+    return "".join(c for c in token if unicodedata.category(c) == "Lo")
 
 
 def words(s: int, a: int) -> list[list]:

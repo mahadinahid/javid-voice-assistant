@@ -22,6 +22,7 @@ from pydantic import BaseModel
 
 import agents
 import approvals
+import asma
 import documents
 import calendar_tools
 import drive_tools
@@ -98,6 +99,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=prayers.ramadan_start, daemon=True).start()   # Ramadan's date (hifz.py counts down to it)
     threading.Thread(target=quran_text.ensure, daemon=True).start()       # the reader's text: checked, or downloaded once
     threading.Thread(target=duas.prefetch, kwargs={"background": False}, daemon=True).start()   # Quranic duas' text
+    threading.Thread(target=asma.prefetch, kwargs={"background": False}, daemon=True).start()   # the names' Quranic duas
     quran.prune_timings()   # Quran.com's timings are kept under a week (its terms)
     threading.Thread(target=_tafsir_start, daemon=True).start()   # the Corpus, the six-day prune, the next days' tafsir
     if prayers.keep_awake():    # on power, no idle sleep while the server runs: Fajr's reminders go out
@@ -262,6 +264,8 @@ def _reply_event(kind: str, value) -> str | None:
         return _event(type="duas", **value)
     if kind == "tafsir":            # the study panel: open on an ayah (its tafsirs, compare), the notes, refresh
         return _event(type="tafsir", **value)
+    if kind == "asma":              # the Asma ul-Husna tab: open on a name's card, the flashcards, or the grid
+        return _event(type="asma", **value)
     return None
 
 
@@ -811,6 +815,79 @@ def duas_picture(name: str):
         raise HTTPException(404, "No such picture.")
     return FileResponse(path, media_type="image/png" if name.lower().endswith(".png") else "image/jpeg",
                         headers={"Cache-Control": "no-store"})
+
+
+# ---------- Asma ul-Husna (asma.py): the Hifz view's fourth tab ----------
+@app.get("/asma")
+def asma_tab():
+    """The grid: every name (number, Arabic, transliteration, meanings, its lists, his mark), the name of the day,
+    the progress, the page's note, Ibn Uthaymeen's names that aren't in Tirmidhi's list, the settings."""
+    return asma.tab_json()
+
+
+@app.get("/asma/search")
+def asma_search(q: str = ""):
+    return {"q": q, "ns": asma.search(q)}
+
+
+@app.get("/asma/name/{nid}")
+def asma_name(nid: str):
+    """One name's card (everything the approved yaml has; Sa'di's words come from /asma/explain)."""
+    out = asma.name_json(nid)
+    if not out:
+        raise HTTPException(404, "No such name in the list.")
+    return out
+
+
+@app.get("/asma/explain/{nid}")
+def asma_explain(nid: str):
+    """Sa'di's explanation of the name, from Quran.com (kept six days at most), where the yaml says he explains it."""
+    if not asma.get(nid):
+        raise HTTPException(404, "No such name in the list.")
+    try:
+        out = asma.explanation(nid)
+    except tafsir.Unavailable:
+        raise HTTPException(503, "Quran.com can't be reached, and Sa'di's text isn't kept on this Mac.")
+    except LookupError:
+        raise HTTPException(404, "Quran.com has no text of Sa'di's there.")
+    if out is None:
+        raise HTTPException(404, "The list has no explanation of Sa'di's for this name.")
+    return out
+
+
+@app.get("/asma/deck")
+def asma_deck(which: str = "due"):
+    if which not in ("due", "all", "learned", "reviewing"):
+        raise HTTPException(400, "which: due, all, learned or reviewing")
+    return {"which": which, "cards": asma.deck(which)}
+
+
+class AsmaMarkBody(BaseModel):
+    id: str
+    mark: str                            # learned, reviewing, or new (unmarked again)
+
+
+@app.post("/asma/mark")
+def asma_mark(body: AsmaMarkBody, request: Request):
+    _local_page_only(request)
+    try:
+        entry = asma.mark(body.id, body.mark)
+    except KeyError:
+        raise HTTPException(404, "No such name in the list.")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"mark": entry, "tab": asma.tab_json()}
+
+
+@app.post("/asma/settings")
+def asma_settings(body: dict, request: Request):
+    """Names a day to review, days before a name still reviewing comes back, the name of the day in the reminder
+    after Fajr, the meaning's language: kept on this Mac (data/asma_settings.json, 0600)."""
+    _local_page_only(request)
+    now, bad = asma.save_settings(body)
+    if bad:
+        raise HTTPException(400, "; ".join(bad))
+    return now
 
 
 class QuranPlanBody(BaseModel):

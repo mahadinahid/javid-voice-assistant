@@ -494,6 +494,8 @@ HZ_COUNTER = 0.55                  # Dua & Zikr: the counter's face, the view's 
 HZ_SIDE = 0.5                      # Read: the side panels (the surah list, the player, the study panel), shade over the view
 HZ_BAND = 0.08                     # Study: the ayahs a tafsir's passage covers, the accent faintly under them
 HZ_SEC = 0.08                      # Study: a tafsir section's header bar, the accent over the study panel
+HZ_LEARNED_TINT = 0.14             # Asma ul-Husna: a learned name's tile, the accent faintly over the card
+HZ_FLIP_TINT = 0.07                # Asma ul-Husna: a flashcard's back
 MIN_STATUS = 3.0                   # a status colour against what it sits on (WCAG's 3:1 for graphics)
 MIN_APART = 10.0                   # CIEDE2000 between any two of the six (Classic's closest, fresh and steady: 10.5)
 MIN_WEAK_APART = 11.0              # weak against every other (Classic: 11.9)
@@ -573,6 +575,15 @@ def hifz_checks(v: dict) -> list:
             ("Study: their translation", worst(c("--hz-text-2"), band), MIN_TEXT),
             ("Study: the word card (meaning, root, grammar)",
              min(worst(c(k), s["drawer"]) for k in ("--hz-ivory", "--hz-gold", "--hz-text-2", "--hz-muted")), MIN_TEXT)]
+    learned = [_over(s["gold"], HZ_LEARNED_TINT, x) for x in s["cards"]]
+    flip = [_over(s["gold"], HZ_FLIP_TINT, x) for x in s["cards"]]
+    out += [("Asma ul-Husna: a name's Arabic and meaning on its tile",
+             min(worst(c(k), s["cards"]) for k in ("--hz-ivory", "--hz-text-2", "--hz-gold")), MIN_TEXT),
+            ("Asma ul-Husna: a learned name's tile", min(worst(c(k), learned) for k in ("--hz-ivory", "--hz-text-2", "--hz-gold")), MIN_TEXT),
+            ("Asma ul-Husna: the name's card (Arabic, meanings, sources)",
+             min(worst(c(k), s["drawer"]) for k in ("--hz-ivory", "--hz-text-2", "--hz-muted", "--hz-gold", "--hz-weak-text")), MIN_TEXT),
+            ("Asma ul-Husna: a flashcard's back", min(worst(c(k), flip) for k in ("--hz-ivory", "--hz-text-2", "--hz-gold")), MIN_TEXT),
+            ("Asma ul-Husna: a name still reviewing, its edge", worst(c("--hz-weak"), s["cards"]), MIN_STATUS)]
     under = s["cards"] + s["dash"]
     for key, word in (("fresh", "Fresh"), ("steady", "Steady"), ("soon", "Due soon"), ("over", "Past its cycle")):
         out.append((f"{word}: against the card", worst(c(f"--hz-{key}"), under), MIN_STATUS))

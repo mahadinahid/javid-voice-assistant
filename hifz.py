@@ -1288,7 +1288,13 @@ def _reminder_texts(item: dict, s: dict) -> tuple[str, dict, list[dict]]:
                          {"kind": "surah", "n": quran.verse(w["lo"])[0], "ranges": [[w["lo"], w["hi"]]]})
     texts = {}
     offer = None
+    names_line = {"en": "", "bn": ""}
     if item["kind"] == "morning":
+        try:
+            import asma
+            names_line = {lang: asma.morning_line(lang, s["today"]) for lang in ("en", "bn")}
+        except Exception as e:      # the reminder goes out without it
+            print(f"[hifz] name of the day: {type(e).__name__}")
         try:
             import tafsir_study
             offer = next(iter(tafsir_study.hifz_offer()), None)
@@ -1310,6 +1316,7 @@ def _reminder_texts(item: dict, s: dict) -> tuple[str, dict, list[dict]]:
             if offer:       # tafsir_study.py: the juz's first passage not studied yet
                 t += (f" এর তাফসীরও পড়তে পারো: {offer['passage']['label_bn']}।" if bn else
                       f" Study its tafsir too: {offer['passage']['label']}.")
+            t += names_line[lang]      # asma.py: the name of the day (its number and meaning, never the name)
         elif item["kind"] == "nudge":
             short = _units_text(kind, units, lang)
             if bn:

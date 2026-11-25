@@ -35,6 +35,7 @@ import calc
 import calendar_tools
 import documents
 import drive_tools
+import asma
 import duas
 import edge_pool
 import hifz
@@ -276,6 +277,8 @@ SYSTEM_PROMPT = (
     "the Dua & Zikr tab on the Hifz page ('show my evening adhkar'). "
     "Never say what a tafsir or a mufassir says, never explain an ayah's tafsir from memory, and never give a fatwa "
     "or a ruling: Javid shows tafsir from Quran.com ('what does Ibn Kathir say about Al-Mulk 2?'). "
+    "Never give the meaning of one of Allah's names, a number of times to recite it or a benefit of it: his approved "
+    "list is the Asma ul-Husna tab on the Hifz page ('what does Al-Wadud mean?'). "
     "A timer exists only "
     "once set_timer says so. "
     "Mahadi lives in Bangladesh, where the weekend is Friday and Saturday. "
@@ -2694,7 +2697,8 @@ def _personal_call(call: dict) -> bool:
 
 def _code_answer(user_text: str, player: dict | None = None, previous: dict | None = None, via: str = "page",
                  docs: list | None = None):
-    """A watch to set, list or cancel, the recitation player or a question about the Quran's structure, a dua request,
+    """A watch to set, list or cancel, a name of Allah's meaning or dua (asma.request), the recitation player or a
+    question about the Quran's structure, a dua request,
     a revision log or question, a prayer-time question, a rates question, a market brief or a news request that code
     answers whole (watches.request, tafsir.request, quran.request, duas.request, hifz.request, prayers.request, rates.request,
     markets.brief_request, news.request): a function of the reply language giving the answer's generator. None leaves
@@ -2704,6 +2708,8 @@ def _code_answer(user_text: str, player: dict | None = None, previous: dict | No
         return lambda lang: watches.answer(req, lang)
     if (req := tafsir.request(user_text, player)):   # before quran.py: "the tafsir of Al-Mulk 2" isn't its text
         return lambda lang: tafsir.answer(req, lang, via)
+    if (req := asma.request(user_text)):    # before quran.py and duas.py: "what does Ar-Rahman mean?", "dua with Al-'Afuww"
+        return lambda lang: asma.answer(req, lang, via)
     if (req := quran.request(user_text, player)):    # before the prayers: "play Surah Al-Asr" isn't about Asr
         return lambda lang: quran.answer(req, lang)
     if (req := duas.request(user_text, docs)):     # before the prayers: "after-Maghrib duas" isn't a time question
@@ -2912,6 +2918,7 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
         retried_quran = False
         retried_dua = False
         retried_tafsir = False
+        retried_asma = False
         required = [(tool, note) for pattern, tool, note in REQUIRED_TOOLS if pattern.search(user_text)
                     and not (skill_first and tool in WEB_TOOLS)   # the skill answers without the web
                     and not (agent_first and tool != "delegate" and tool not in agents.agent_tools(agent_first))]
@@ -3080,6 +3087,20 @@ def think_stream(user_text: str, gate=None, blocked: frozenset = frozenset(), ye
                     text = tafsir.strip_reply(text, lang)
                     if via_agent and via_agent.get("screen"):
                         via_agent["screen"] = tafsir.strip_reply(via_agent["screen"], lang)
+                # Nor a name of Allah's meaning, a count or a benefit (asma.py): his approved list is the Asma ul-Husna
+                # tab. One rewrite, then those sentences go.
+                whole = text + ("\n" + via_agent["screen"] if via_agent and via_agent.get("screen") else "")
+                if (aq := asma.reply_problem(whole)) and not retried_asma:
+                    retried_asma = True
+                    print(f"[asma] reply explains a name from memory, asking for a rewrite: {text[:60]!r}")
+                    notes.append((len(messages), [{"role": "assistant", "content": text, "_personal": True},
+                                                  {"role": "user", "content": asma.correction(aq)}]))
+                    continue
+                if aq:
+                    print("[asma] rewrite still explains a name; those sentences are dropped")
+                    text = asma.strip_reply(text, lang)
+                    if via_agent and via_agent.get("screen"):
+                        via_agent["screen"] = asma.strip_reply(via_agent["screen"], lang)
             skill = skills.active()
             if not tool_calls and via_agent and not screen:
                 screen = via_agent["screen"]

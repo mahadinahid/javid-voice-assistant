@@ -70,6 +70,18 @@ and is now a web app with 25 tools, two agents, a Telegram bot, a reader for you
   and "compare Sa'di and Ibn Kathir here" give a language model's summary of the text fetched for that ayah only,
   labelled as one, every point quoted from and checked against that text. Javid never tells tafsir from memory,
   never gives fatwas, and says so when the text isn't there. `python tafsir.py --check` checks the twelve tafsirs.
+- **Asma ul-Husna, from sound sources only.** The Hifz view's fourth tab: Allah's names in Tirmidhi 3507's order,
+  each marked with Ibn Uthaymeen's list (al-Qawa'id al-Muthla) or as in one list only, with a note that the hadith of
+  the 99 names is sahih and the enumerated list weak. A grid in Amiri; each name's card has its Arabic, transliteration
+  and meaning in English and Bangla with their sources, its ayahs in the Quran (opening the reader), Sa'di's
+  explanation live from Quran.com where he gives one, and how to use it: a dua or dhikr containing it from a hadith
+  graded sahih or hasan (its reference and grading), a Quranic dua, an entry of your Dua & Zikr list, and always
+  "call upon Allah by this name in your own dua" (7:180). No counts or promised benefits without a sound hadith; no
+  audio (no verified source publishes the names recited). Search by number, Arabic, transliteration, English or
+  Bangla; the name of the day (in the reminder after Fajr), flashcards both ways, learned / reviewing marks spaced as
+  hifz revision is, and a reflection per name in your tadabbur notebook. "What does Al-Wadud mean?", "today's name"
+  and "dua with Al-'Afuww" are answered in code; Javid's voice never says a name. The list is your approved
+  `data/asma_ul_husna.yaml` (never in git); `python asma.py --check` checks it.
 - **It remembers, with your say-so.** Nothing goes into its memory until you approve it, and secrets are refused.
   Past chats are searchable.
 - **On your phone.** A Telegram bot, paired by scanning a QR code. Anything that changes your data waits for an
@@ -173,11 +185,13 @@ else. What does leave the machine: each voice clip goes to Groq for transcriptio
 reply to Microsoft's edge-tts, your city and prayer settings to Aladhan, the surah your browser plays to Quran.com's
 audio hosts (or everyayah.com), the reciter and surah whose timings Javid fetches from Quran.com, Tanzil's download of
 the text (once), the ayahs of your Quranic duas to Quran.com (kept six days), the tafsir, word meanings and surah
-introductions you study from Quran.com (kept six days, as Quran Foundation's terms allow), and your requests to the language model
+introductions you study from Quran.com (kept six days, as Quran Foundation's terms allow), Sa'di's explanations of
+Allah's names and the ayahs of their Quranic duas from Quran.com (kept six days), and your requests to the language model
 and search providers that are on. Where you left off reading and listening stays on your Mac
 (`data/quran_state.json`), and so do your dua list, counters and reminder settings (`data/duas.yaml`,
 `data/dua_progress.json`, `data/dua_settings.json`), your tafsir progress and tadabbur notes (`data/tafsir_study.json`,
-`data/tadabbur.json`: never sent to a model); a dua picture you add is read on the Mac. Calendar,
+`data/tadabbur.json`: never sent to a model), and your marks and settings for Allah's names (`data/asma_progress.json`,
+`data/asma_settings.json`); a dua picture you add is read on the Mac. Calendar,
 tasks, memory, chats, your revision log and the files you give it go only to providers with `personal_ok: true`; a file's text is
 treated as data, so nothing written in a file can change your tasks, calendar or memory without your Approve.
 
@@ -186,7 +200,7 @@ treated as data, so nothing written in a file can change your tasks, calendar or
 ## Testing
 
 ```bash
-python regression.py                         # 217 scripted checks: no network, no API tokens
+python regression.py                         # 228 scripted checks: no network, no API tokens
 python regression.py -k "news"               # only the cases whose names contain "news"
 python regression.py --live                  # one tiny real call to each provider that's on
 python regression.py --llm -k "task: add"    # a case through the real model (spends quota)
@@ -215,9 +229,10 @@ prayer times, Quran.com, Tanzil, Telegram and Drive, so it never touches your da
 | `quran.py`, `quran_meta.json` | The Quran's structure (surahs, juz, manzils, pages; the names people say in English and Bangla), the reciters and their timings from Quran.com, the reader's search and saved place, and the rule that Quran text never comes from a model. The structure is from [Tanzil's Quran metadata](https://tanzil.net/docs/quran_metadata) (CC BY 3.0), checked against Quran.com with `python quran.py --check` |
 | `duas.py`, `dua_check.py` | Dua & Zikr: your list (`data/duas.yaml`, never in git), the counters, each prayer's card on the page and Telegram, the voice requests, the rule that a model never writes out a dua; and the check a dua picture goes through (Tesseract on the Mac, then the Quran, Hisnul Muslim and the six hadith books) before it waits for your approval |
 | `tafsir.py`, `tafsir_study.py`, `config/tafsir.yaml` | Tafsir study: the twelve tafsirs and the word meanings from [Quran.com](https://quran.com) (kept six days in `data/tafsir/`, never in git), the text and its sections, a reason of revelation only where a tafsir gives it, Javid's answers and the checked summaries; the study path, the nudge after Fajr, the streak and the tadabbur notebook (`data/tadabbur.json`) |
+| `asma.py` | Asma ul-Husna: your approved list (`data/asma_ul_husna.yaml`, never in git) checked name by name (sound gradings, no counts without a sound hadith), the search in every script, the name of the day, the learned / reviewing spacing, Sa'di's explanations from Quran.com, the voice answers, and the rule that a model never gives a name's meaning or practice |
 | `quran_corpus.py` | Each word's root, lemma and grammar from the [Quranic Arabic Corpus](https://corpus.quran.com) 0.4 (GNU GPL, verbatim), a file you download yourself into `data/quran_corpus/` (corpus.quran.com asks for an email address) |
 | `quran_text.py` | The reader's text, downloaded once into `data/quran/` and checked (6,236 ayahs): [Tanzil's Uthmani text](https://tanzil.net) (CC BY 3.0, verbatim) and its translations by Saheeh International and Muhiuddin Khan (non-commercial use) |
-| `fonts/` | [Amiri Quran](https://github.com/aliftype/amiri) for the reader, under the SIL Open Font License (`fonts/OFL-AmiriQuran.txt`) |
+| `fonts/` | [Amiri Quran](https://github.com/aliftype/amiri) for the reader, under the SIL Open Font License (`fonts/OFL-AmiriQuran.txt`); Amiri itself (names, headings, Allah's names) comes from Google Fonts, under the same licence |
 | `telegram_bot.py`, `telegram.html` | The Telegram bot and its setup page |
 | `approvals.py` | Approve cards: a delete or a move waits for a tap or your yes (every write, on Telegram) |
 | `documents.py`, `fixtures/files/` | Reading PDFs, Word and text files and pictures (parsed locally; Tesseract, then a vision model only for pictures without text), and the sample files its tests use |

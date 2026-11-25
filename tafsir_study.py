@@ -595,23 +595,46 @@ def _notes() -> list[dict]:
     return _read_json(NOTES_FILE, {}).get("notes", []) if isinstance(_read_json(NOTES_FILE, {}), dict) else []
 
 
+def _is_name(n: dict) -> bool:
+    """A note on one of Allah's names (asma.py's tab) rather than on a passage."""
+    return "name" in n
+
+
+def _name_of(n: dict) -> dict | None:
+    import asma
+    return asma.get(n["name"])
+
+
 def notes(q: str = "", tag: str = "") -> list[dict]:
-    """His notes, in the Quran's order; q: words in any of them (or a surah's name), tag: one tag."""
-    out = sorted(_notes(), key=lambda n: (_idx(n["first"]), _idx(n["last"])))
+    """His notes: the passages' in the Quran's order, then the names' in the list's order; q: words in any of them
+    (or a surah's name, or a name's meaning or transliteration), tag: one tag."""
+    passages = sorted((n for n in _notes() if not _is_name(n)), key=lambda n: (_idx(n["first"]), _idx(n["last"])))
+    on_names = sorted((n for n in _notes() if _is_name(n) and _name_of(n)), key=lambda n: _name_of(n)["n"])
+    out = passages + on_names
     if tag:
         t = tag.strip().lower()
         out = [n for n in out if t in n["tags"]]
     if q.strip():
         words = [w for w in quran.tokens(q) if w]
         def text(n):
+            mine = [n["reflection"], n["question"], n["action"], " ".join(n["tags"])]
+            if _is_name(n):
+                import asma
+                e = _name_of(n)
+                return " ".join(mine + [e["arabic"], *e["transliteration"].values(), asma._lat(e["transliteration"].get("en", "")),
+                                        *e["meaning"].values(), str(e["n"]), "name names asma"]).lower()
             s = int(n["first"].split(":")[0])
-            return " ".join([n["reflection"], n["question"], n["action"], " ".join(n["tags"]), quran.name(s),
-                             quran.name(s, "bn"), quran.surah(s)["ar"]] + list(quran.surah(s).get("aka", []))).lower()
+            return " ".join(mine + [quran.name(s), quran.name(s, "bn"), quran.surah(s)["ar"]] +
+                            list(quran.surah(s).get("aka", []))).lower()
         out = [n for n in out if all(w in text(n) or any(w in tg for tg in n["tags"]) for w in words)]
     return [_note_public(n) for n in out]
 
 
 def _note_public(n: dict) -> dict:
+    if _is_name(n):
+        import asma
+        e = _name_of(n)
+        return {**n, "label": asma.label(e), "label_bn": asma.label(e, "bn"), "n": e["n"], "arabic": e["arabic"]}
     lo, hi = _idx(n["first"]), _idx(n["last"])
     return {**n, "label": quran.span_text(lo, hi), "label_bn": quran.span_text(lo, hi, "bn")}
 
@@ -633,10 +656,30 @@ def _clean_tags(v) -> list[str]:
     return out
 
 
+def _fields(body: dict) -> dict:
+    fields = {}
+    for k in ("reflection", "question", "action"):
+        v = body.get(k, "")
+        if not isinstance(v, str) or len(v) > MAX_TEXT:
+            raise ValueError(f"{k}: text up to {MAX_TEXT} characters")
+        fields[k] = v.strip()
+    fields["tags"] = _clean_tags(body.get("tags"))
+    return fields
+
+
+def _write_notes(all_notes: list[dict]) -> None:
+    data = _read_json(NOTES_FILE, {})
+    data = data if isinstance(data, dict) else {}
+    _write_json(NOTES_FILE, {**data, "notes": all_notes})       # whatever else the file holds stays
+
+
 def save_note(body: dict) -> dict:
-    """Add or change the note on a passage (first..last): reflection, question, action, tags, mark."""
+    """Add or change the note on a passage (first..last): reflection, question, action, tags, mark; or, with `name`
+    (one of Allah's names, asma.py), the note on that name (no mark: a name's learning marks are asma.py's)."""
     if not isinstance(body, dict):
         raise ValueError("a note is a JSON object")
+    if "name" in body:
+        return save_name_note(body)
     try:
         first, last = str(body["first"]), str(body["last"])
         lo, hi = _idx(first), _idx(last)
@@ -646,20 +689,14 @@ def save_note(body: dict) -> dict:
         raise ValueError("first and last in order, at most 300 ayahs")
     if quran.key(lo) != first or quran.key(hi) != last:
         raise ValueError("those aren't ayahs")
-    fields = {}
-    for k in ("reflection", "question", "action"):
-        v = body.get(k, "")
-        if not isinstance(v, str) or len(v) > MAX_TEXT:
-            raise ValueError(f"{k}: text up to {MAX_TEXT} characters")
-        fields[k] = v.strip()
-    fields["tags"] = _clean_tags(body.get("tags"))
+    fields = _fields(body)
     m = body.get("mark", "") or ""
     if m not in ("", "studied", "revisit"):
         raise ValueError("mark: studied, revisit or nothing")
     fields["mark"] = m
     with _lock:
         all_notes = _notes()
-        n = next((x for x in all_notes if x["first"] == first and x["last"] == last), None)
+        n = next((x for x in all_notes if not _is_name(x) and x["first"] == first and x["last"] == last), None)
         was = n["mark"] if n else ""
         if n is None:
             n = {"id": secrets.token_hex(5), "first": first, "last": last, "created": _time()}
@@ -667,9 +704,31 @@ def save_note(body: dict) -> dict:
         n.update(fields, updated=_time())
         if not any(n[k] for k in ("reflection", "question", "action", "tags", "mark")):
             all_notes = [x for x in all_notes if x is not n]
-        _write_json(NOTES_FILE, {"notes": all_notes})
+        _write_notes(all_notes)
     if m == "studied" and was != "studied":
         mark(first, last, True, "note")
+    return _note_public(n)
+
+
+def save_name_note(body: dict) -> dict:
+    """The note on one of Allah's names: his reflection, a question, an action, tags. An empty one is removed."""
+    import asma
+    e = asma.get(str(body.get("name") or ""))
+    if not e:
+        raise ValueError("name: one of the names' ids, like al-wadud")
+    if body.get("mark"):
+        raise ValueError("a name's note has no mark: learned and reviewing are on its card")
+    fields = _fields(body)
+    with _lock:
+        all_notes = _notes()
+        n = next((x for x in all_notes if _is_name(x) and x["name"] == e["id"]), None)
+        if n is None:
+            n = {"id": secrets.token_hex(5), "name": e["id"], "created": _time()}
+            all_notes.append(n)
+        n.update(fields, mark="", updated=_time())
+        if not any(n[k] for k in ("reflection", "question", "action", "tags")):
+            all_notes = [x for x in all_notes if x is not n]
+        _write_notes(all_notes)
     return _note_public(n)
 
 
@@ -679,12 +738,16 @@ def delete_note(nid: str) -> bool:
         keep = [n for n in all_notes if n["id"] != nid]
         if len(keep) == len(all_notes):
             return False
-        _write_json(NOTES_FILE, {"notes": keep})
+        _write_notes(keep)
         return True
 
 
 def note_for(first: str, last: str) -> dict | None:
-    return next((_note_public(n) for n in _notes() if n["first"] == first and n["last"] == last), None)
+    return next((_note_public(n) for n in _notes() if not _is_name(n) and n["first"] == first and n["last"] == last), None)
+
+
+def note_for_name(nid: str) -> dict | None:
+    return next((_note_public(n) for n in _notes() if _is_name(n) and n["name"] == nid and _name_of(n)), None)
 
 
 def export_md(found: list[dict] | None = None, q: str = "", tag: str = "") -> str:
@@ -694,6 +757,8 @@ def export_md(found: list[dict] | None = None, q: str = "", tag: str = "") -> st
              (f" · search: {q}" if q else "") + (f" · tag: {tag}" if tag else "") + f" · {len(found)} notes", ""]
     surah = None
     for n in found:
+        if _is_name(n):
+            continue
         s = int(n["first"].split(":")[0])
         if s != surah:
             surah = s
@@ -707,11 +772,25 @@ def export_md(found: list[dict] | None = None, q: str = "", tag: str = "") -> st
             meta.append({"studied": "✓ studied", "revisit": "↻ revisit"}[n["mark"]])
         meta.append("updated " + datetime.fromtimestamp(n["updated"], prayers._zone()).strftime("%Y-%m-%d"))
         lines += [" · ".join(meta), ""]
-        for k, word in (("reflection", "Reflection"), ("question", "Question"), ("action", "Action")):
-            if n[k]:
-                body = n[k].replace("\n", "\n> ")
-                lines += [f"**{word}**", "", f"> {body}", ""]
+        lines += _note_body(n)
+    named = [n for n in found if _is_name(n)]
+    if named:
+        lines += ["## The names of Allah (Asma ul-Husna)", ""]
+        for n in named:
+            lines.append(f"### {n['n']}. {n['arabic']} · {n['label'].split(': ', 1)[1]}")
+            meta = (["tags: " + ", ".join(n["tags"])] if n["tags"] else []) + \
+                ["updated " + datetime.fromtimestamp(n["updated"], prayers._zone()).strftime("%Y-%m-%d")]
+            lines += [" · ".join(meta), ""] + _note_body(n)
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _note_body(n: dict) -> list[str]:
+    out = []
+    for k, word in (("reflection", "Reflection"), ("question", "Question"), ("action", "Action")):
+        if n[k]:
+            body = n[k].replace("\n", "\n> ")
+            out += [f"**{word}**", "", f"> {body}", ""]
+    return out
 
 
 # ---------- answers (tafsir.answer hands these over) ----------

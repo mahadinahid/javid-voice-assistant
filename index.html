@@ -3161,8 +3161,9 @@ html[data-theme="overdrive"] .ring button { background: var(--od-red); }
 .hz-dock:not(:has(> .hz-player:not([hidden]))) { display: none; }
 .hz-head { display: flex; align-items: center; gap: 16px; }
 .hz-tabs { display: inline-flex; gap: 4px; padding: 4px; margin-left: auto; border-radius: 999px; border: 1px solid var(--hz-line-2);
-           background: rgba(var(--hz-deep-rgb), 0.6); }
-.hz-tabs button { padding: 8px 16px; border-radius: 999px; border: none; background: none; color: var(--hz-text-2);
+           background: rgba(var(--hz-deep-rgb), 0.6); min-width: 0; overflow-x: auto; scrollbar-width: none; }
+.hz-tabs::-webkit-scrollbar { display: none; }      /* four tabs: on a narrow window they scroll, the page doesn't */
+.hz-tabs button { flex: none; white-space: nowrap; padding: 8px 16px; border-radius: 999px; border: none; background: none; color: var(--hz-text-2);
                   font-size: 13.5px; font-weight: 600; cursor: pointer; }
 .hz-tabs button:hover { color: var(--hz-ivory); }
 .hz-tabs button[aria-selected="true"] { background: linear-gradient(135deg, var(--hz-btn-1), var(--hz-btn-2)); color: var(--hz-ink); }
@@ -3758,6 +3759,150 @@ a.du-ref:hover { border-color: var(--hz-gold); }
     .du-card, .du-count .arc { transition: none; }
     .du-count:active { transform: none; }
 }
+/* ── Asma ul-Husna (asma.py): the Hifz view's fourth tab. Every colour is the Hifz theme's (themes.hifz_checks has
+   lines for the tile, a learned tile, the name's card on the drawer and the flashcard's back). ── */
+.as-inner { max-width: 1120px; padding-top: 0; position: relative; }
+.as-pane { position: relative; }
+.as-ar { font-family: var(--hz-ar); direction: rtl; color: var(--hz-ivory); }
+.as-note { margin-top: 16px; padding: 12px 18px; }
+.as-note summary { cursor: pointer; font-size: 13.5px; line-height: 1.55; color: var(--hz-text-2); }
+.as-note summary b { color: var(--hz-ivory); }
+.as-note[open] summary { margin-bottom: 8px; }
+.as-note p, .as-note li { margin: 8px 0 0; font-size: 13px; line-height: 1.6; color: var(--hz-text-2); overflow-wrap: anywhere; }
+.as-note .as-ar { display: block; margin: 6px 0 2px; font-size: 19px; line-height: 1.9; text-align: right; }
+.as-note a, .as-credits a, .as-src a { color: var(--hz-gold); }
+.as-note ul { margin: 6px 0 0; padding-left: 18px; }
+.as-hero { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+.as-day { padding: 20px 24px 18px; overflow: hidden; }
+.as-day::before { content: ''; position: absolute; left: -50px; bottom: -60px; width: 230px; height: 230px; opacity: 0.07;
+                  background: center / contain no-repeat var(--hz-today-star); }
+.as-day .as-ar { display: block; margin: 8px 0 0; font-size: clamp(46px, 6vw, 66px); line-height: 1.8; text-align: center; }
+.as-day-tl { text-align: center; font-size: 15px; color: var(--hz-text-2); }
+.as-day-tl b { color: var(--hz-gold); font: 700 16px var(--hz-head); margin-right: 6px; }
+.as-day-mean { margin-top: 4px; text-align: center; font: 400 21px/1.35 var(--hz-head); color: var(--hz-ivory); }
+.as-day .hz-actions { justify-content: center; margin-top: 14px; }
+.as-stats { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
+.as-stat-row { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.as-stat-row div { text-align: center; padding: 8px 4px; border-radius: 14px; background: rgba(var(--hz-deep-rgb), 0.45); }
+.as-stat-row b { display: block; font: 700 26px/1.1 var(--hz-head); color: var(--hz-ivory); }
+.as-stat-row span { font-size: 12px; color: var(--hz-text-2); }
+.as-stats p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--hz-muted); }
+.as-stats .hz-btn { justify-content: center; }
+.as-bar { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; margin: 18px 0 12px;
+          padding: 10px 0; background: linear-gradient(var(--hz-view-2) 78%, transparent); }
+.as-find { flex: 1 1 240px; min-width: 0; }
+.as-find input { width: 100%; padding: 9px 14px; border-radius: 999px; border: 1px solid var(--hz-line-2); background: rgba(var(--hz-deep-rgb), 0.65);
+                 color: var(--hz-ivory); font: inherit; font-size: 14px; }
+.as-find input::placeholder { color: var(--hz-muted); }
+.as-find input:focus { outline: none; border-color: var(--hz-gold); }
+.as-filters { display: flex; flex-wrap: wrap; gap: 6px; }
+.as-count { font-size: 12.5px; color: var(--hz-muted); }
+.as-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(158px, 1fr)); gap: 12px; }
+.as-tile { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 22px 10px 12px; min-height: 170px;
+           border-radius: 18px; border: 1px solid var(--hz-line-2); background: linear-gradient(160deg, var(--hz-card-2), var(--hz-card));
+           color: inherit; font: inherit; text-align: center; cursor: pointer; transition: border-color 0.2s, transform 0.2s; }
+.as-tile:hover { border-color: var(--hz-gold); transform: translateY(-1px); }
+.as-tile:focus-visible { outline: 2px solid var(--hz-gold); outline-offset: 2px; }
+.as-tile.learned { background: linear-gradient(rgba(var(--hz-gold-rgb), 0.14), rgba(var(--hz-gold-rgb), 0.14)), linear-gradient(160deg, var(--hz-card-2), var(--hz-card)); }
+.as-tile.reviewing { border-color: var(--hz-weak); }
+.as-tile.today { box-shadow: 0 0 0 2px var(--hz-gold); }
+.as-tile .no { position: absolute; left: 10px; top: 8px; font: 700 13px var(--hz-head); color: var(--hz-gold); }
+.as-tile .mk { position: absolute; right: 10px; top: 7px; font-size: 12px; font-weight: 700; }
+.as-tile .mk.l { color: var(--hz-gold); }
+.as-tile .mk.r { color: var(--hz-weak-text); }
+.as-tile .as-ar { font-size: 31px; line-height: 1.75; }
+.as-tile .tl { font-size: 13px; font-weight: 600; color: var(--hz-ivory); }
+.as-tile .mn { font-size: 12px; line-height: 1.4; color: var(--hz-text-2); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.as-tile .ls { margin-top: auto; padding-top: 6px; font-size: 10.5px; letter-spacing: 0.04em; color: var(--hz-muted); }
+.as-tile.learned .ls { color: var(--hz-text-2); }     /* the accent's tint under it: the muted colour isn't checked there */
+.as-empty { padding: 24px 4px; font-size: 13.5px; color: var(--hz-muted); }
+.as-uth { margin-top: 22px; }
+.as-uth-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 8px 14px; margin: 0; padding: 0; list-style: none; }
+.as-uth-list li { display: flex; align-items: baseline; gap: 8px; padding: 6px 0; border-bottom: 1px solid rgba(var(--hz-gold-rgb), 0.12); font-size: 12px; color: var(--hz-muted); }
+.as-uth-list .as-ar { font-size: 21px; line-height: 1.7; }
+.as-credits { margin: 24px auto 0; max-width: 800px; text-align: center; font-size: 11.5px; line-height: 1.7; color: var(--hz-muted); }
+/* the name's card: a sheet over the tab, on the drawer's colour */
+.as-scrim { position: fixed; inset: 0; z-index: 40; background: rgba(var(--hz-shade-rgb), 0.55); }
+.as-scrim[hidden], .as-sheet[hidden] { display: none; }
+.as-sheet { position: fixed; z-index: 41; top: 0; right: 0; bottom: 0; width: min(560px, 100vw); overflow-y: auto; overscroll-behavior: contain;
+            background: var(--hz-drawer); border-left: 1px solid var(--hz-line-2); box-shadow: -24px 0 60px rgba(var(--hz-drop-rgb), 0.5); }
+.as-sheet-in { padding: 18px 22px 30px; }
+.as-sheet-top { position: sticky; top: -18px; z-index: 2; display: flex; align-items: center; gap: 8px; margin: -18px -22px 0; padding: 14px 22px 10px;
+                background: var(--hz-drawer); border-bottom: 1px solid var(--hz-line); }
+.as-sheet-top .hz-k2 { flex: 1; }
+.as-nav { width: 34px; height: 34px; border-radius: 50%; border: 1px solid var(--hz-line-2); background: none; color: var(--hz-ivory); cursor: pointer; font-size: 15px; }
+.as-nav:hover { border-color: var(--hz-gold); color: var(--hz-gold); }
+.as-big { margin: 14px 0 0; padding-top: 6px; font-size: clamp(54px, 9vw, 74px); line-height: 1.9; text-align: center; }
+.as-names { text-align: center; }
+.as-names .tl { font: 700 20px var(--hz-head); color: var(--hz-ivory); }
+.as-names .tlb { margin-left: 8px; font-size: 15px; color: var(--hz-text-2); }
+.as-mean { margin: 12px 0 0; display: grid; gap: 6px; }
+.as-mean p { margin: 0; font-size: 16px; line-height: 1.5; color: var(--hz-ivory); }
+.as-mean p[lang="bn"] { font-size: 15.5px; color: var(--hz-text-2); }
+.as-src { display: block; margin-top: 2px; font-size: 11px; line-height: 1.45; color: var(--hz-muted); }
+.as-h { margin: 22px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--hz-gold); }
+.as-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; font-size: 13px; color: var(--hz-text-2); }
+.as-pill { padding: 3px 10px; border-radius: 999px; border: 1px solid var(--hz-line-2); font-size: 11.5px; color: var(--hz-text-2); background: none; text-decoration: none; }
+.as-pill.gold { background: rgba(var(--hz-gold-rgb), 0.12); color: var(--hz-gold); border-color: var(--hz-gold); }
+.as-pill.weak { background: rgba(var(--hz-weak-rgb), 0.16); color: var(--hz-weak-text); border-color: transparent; }
+button.as-pill { cursor: pointer; font: inherit; font-size: 11.5px; }
+button.as-pill:hover, a.as-pill:hover { border-color: var(--hz-gold); color: var(--hz-ivory); }
+.as-marks { display: flex; flex-wrap: wrap; gap: 8px; }
+.as-marks .hz-btn[aria-pressed="false"] { background: rgba(var(--hz-gold-rgb), 0.08); color: var(--hz-gold); box-shadow: none; border-color: var(--hz-line-2); }
+.as-marks .hz-btn.rv[aria-pressed="false"] { color: var(--hz-weak-text); }
+.as-saadi .as-ar { display: block; font-size: 22px; line-height: 2; text-align: right; }
+.as-saadi .as-ar q { color: var(--hz-gold); quotes: none; }
+.as-use { margin-top: 10px; padding: 12px 14px; border-radius: 14px; border: 1px solid var(--hz-line); background: rgba(var(--hz-deep-rgb), 0.4); }
+.as-use .as-ar { display: block; margin: 6px 0 4px; font-size: 22px; line-height: 2; text-align: right; }
+.as-use .as-ar.qr { font-family: 'Amiri Quran', 'Amiri', 'Geeza Pro', serif; }
+.as-use-k { font-size: 12.5px; font-weight: 700; color: var(--hz-ivory); }
+.as-use p { margin: 6px 0 0; font-size: 13px; line-height: 1.6; color: var(--hz-text-2); overflow-wrap: anywhere; }
+.as-use details summary { cursor: pointer; margin-top: 6px; font-size: 12px; color: var(--hz-muted); }
+.as-use details summary:hover { color: var(--hz-ivory); }
+.as-ayahs { display: flex; flex-wrap: wrap; gap: 6px; }
+.as-form label { display: block; margin: 10px 0 4px; font-size: 12px; color: var(--hz-muted); }
+.as-form textarea, .as-form input { width: 100%; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--hz-line-2);
+                                     background: rgba(var(--hz-deep-rgb), 0.6); color: var(--hz-ivory); font: inherit; font-size: 13.5px; resize: vertical; }
+.as-form textarea:focus, .as-form input:focus { outline: none; border-color: var(--hz-gold); }
+.as-form .hz-actions { margin-top: 10px; }
+.as-checks { margin: 8px 0 0; padding-left: 18px; font-size: 12.5px; line-height: 1.55; color: var(--hz-text-2); }
+.as-checks [lang="ar"] { font-family: var(--hz-ar); font-size: 15px; }
+/* the flashcards */
+.as-cards { max-width: 620px; margin: 6px auto 0; }
+.as-cards-top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; justify-content: center; }
+.as-flip { display: block; width: 100%; margin-top: 14px; min-height: 290px; padding: 26px 22px; border-radius: 24px; cursor: pointer;
+           border: 1px solid var(--hz-line-2); background: linear-gradient(160deg, var(--hz-card-2), var(--hz-card)); color: inherit; font: inherit; text-align: center; }
+.as-flip.back { background: linear-gradient(rgba(var(--hz-gold-rgb), 0.07), rgba(var(--hz-gold-rgb), 0.07)), linear-gradient(160deg, var(--hz-card-2), var(--hz-card)); }
+.as-flip:focus-visible { outline: 2px solid var(--hz-gold); outline-offset: 3px; }
+.as-flip .no { font: 700 14px var(--hz-head); color: var(--hz-gold); }
+.as-flip .as-ar { display: block; font-size: clamp(56px, 10vw, 84px); line-height: 1.6; }
+.as-flip .mn { font: 400 24px/1.4 var(--hz-head); color: var(--hz-ivory); }
+.as-flip .mnb { margin-top: 6px; font-size: 17px; color: var(--hz-text-2); }
+.as-flip .tl { margin-top: 6px; font-size: 15px; color: var(--hz-text-2); }
+.as-flip .hint { margin-top: 14px; font-size: 12px; color: var(--hz-muted); }
+.as-cards .hz-actions { justify-content: center; }
+.as-cards-n { margin-top: 10px; text-align: center; font-size: 12.5px; color: var(--hz-muted); }
+.as-set { margin-top: 12px; }
+.as-today-k { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.as-today-k .as-ar { font-size: 36px; line-height: 1.6; }
+.as-today-k .mn { font: 400 17px var(--hz-head); color: var(--hz-ivory); }
+.as-today-k small { display: block; font-size: 12.5px; color: var(--hz-text-2); }
+@media (max-width: 860px) {
+    .as-hero { grid-template-columns: 1fr; }
+}
+@media (max-width: 520px) {
+    .as-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+    .as-tile { min-height: 150px; padding: 20px 6px 10px; }
+    .as-tile .as-ar { font-size: 27px; }
+    .as-bar { margin: 12px -14px 10px; padding: 10px 14px; }
+    .as-sheet-in { padding: 14px 14px 24px; }
+    .as-sheet-top { top: -14px; margin: -14px -14px 0; padding: 12px 14px 8px; }
+    .as-flip { min-height: 240px; }
+}
+@media (prefers-reduced-motion: reduce) {
+    .as-tile { transition: none; }
+    .as-tile:hover { transform: none; }
+}
 
 @media (max-width: 1279px) {      /* the index becomes a drawer over the reader, opened by "☰ Surahs" */
     .qr-pane { grid-template-columns: minmax(0, 1fr) 320px; }
@@ -3774,6 +3919,9 @@ a.du-ref:hover { border-color: var(--hz-gold); }
     .qr-bar, .qr-bar2 { padding: 8px 12px; }
     .qr-scroll { padding: 4px 10px 18px; }
     .hz-tabs button { padding: 7px 12px; }
+}
+@media (max-width: 1080px) {
+    .hz-titles { display: none; }                    /* the star mark stays: the four tabs need the room */
 }
 @media (max-width: 860px) {
     .hz-hero, .hz-two { grid-template-columns: 1fr; }
@@ -4039,6 +4187,7 @@ a.du-ref:hover { border-color: var(--hz-gold); }
                 <button type="button" role="tab" id="hz-tab-today" data-tab="today" aria-selected="true" aria-controls="hz-pane-today">Today</button>
                 <button type="button" role="tab" id="hz-tab-read" data-tab="read" aria-selected="false" aria-controls="hz-pane-read">Read &amp; listen</button>
                 <button type="button" role="tab" id="hz-tab-duas" data-tab="duas" aria-selected="false" aria-controls="hz-pane-duas">Dua &amp; Zikr</button>
+                <button type="button" role="tab" id="hz-tab-asma" data-tab="asma" aria-selected="false" aria-controls="hz-pane-asma">Asma ul-Husna</button>
             </div>
             <div class="hz-theme-pick">
                 <button class="hz-theme-btn" id="hz-theme-btn" type="button" aria-haspopup="dialog" aria-expanded="false"
@@ -4072,6 +4221,7 @@ a.du-ref:hover { border-color: var(--hz-gold); }
             </section>
 
             <section class="hz-card hz-sec tf-today" id="tf-today" aria-live="polite"></section>
+            <section class="hz-card hz-sec as-today" id="as-today" hidden></section>
 
             <section class="hz-card hz-sec">
                 <div class="hz-sec-head">
@@ -4153,6 +4303,11 @@ a.du-ref:hover { border-color: var(--hz-gold); }
         </div>
         <div class="hz-pane" id="hz-pane-duas" role="tabpanel" aria-labelledby="hz-tab-duas" hidden>
             <div class="hz-inner du-inner" id="du-inner"></div>
+        </div>
+        <div class="hz-pane as-pane" id="hz-pane-asma" role="tabpanel" aria-labelledby="hz-tab-asma" hidden>
+            <div class="hz-inner as-inner" id="as-inner"></div>
+            <div class="as-scrim" id="as-scrim" hidden></div>
+            <aside class="as-sheet" id="as-sheet" role="dialog" aria-modal="true" aria-label="The name's card" hidden tabindex="-1"></aside>
         </div>
     </div>
     <div class="hz-dock" id="hz-dock"></div>
@@ -5813,6 +5968,8 @@ async function streamReply(url, init, { onTranscript, onIgnored, quiet = false, 
                     duaUI.show(ev);
                 } else if (ev.type === 'tafsir') {  // "what does Ibn Kathir say about Al-Mulk 2?": the study panel there
                     tafsirUI.apply(ev);
+                } else if (ev.type === 'asma') {    // "what does Al-Wadud mean?": the Asma ul-Husna tab, on its card
+                    asmaUI.show(ev);
                 } else if (ev.type === 'lang') {
                     setLang(ev.lang);       // switched by voice: speak this reply in the new language
                 } else if (ev.type === 'delta') {
@@ -9337,7 +9494,7 @@ const tafsirUI = (() => {
                 <button class="hz-btn" type="button" data-act="save-note">${esc(hzT('Save', 'রাখো'))}</button><span class="tf-saved" id="tf-saved"></span></div></div>`
             : `<div class="tf-none">${esc(hzT('Tap an ayah to write about its passage.', 'নোট লিখতে একটি আয়াতে চাপো।'))}</div>`;
         const tags = all.tags.length ? `<div class="tf-tagsug">${all.tags.map(t => `<button class="tf-btn" type="button" data-tag="${esc(t)}" aria-pressed="${t === notesTag}">${esc(t)}</button>`).join('')}</div>` : '';
-        const rows = all.notes.map(x => `<li data-go="${x.first}" data-first="${x.first}" data-last="${x.last}"><b>${esc(hzBn() ? x.label_bn : x.label)}</b>${x.mark === 'revisit' ? ' <small>↻</small>' : x.mark === 'studied' ? ' <small>✓</small>' : ''}
+        const rows = all.notes.map(x => `<li ${x.name ? `data-asma="${esc(x.name)}"` : `data-go="${x.first}" data-first="${x.first}" data-last="${x.last}"`}><b>${x.name ? `<span lang="ar" dir="rtl">${esc(x.arabic)}</span> ` : ''}${esc(hzBn() ? x.label_bn : x.label)}</b>${x.mark === 'revisit' ? ' <small>↻</small>' : x.mark === 'studied' ? ' <small>✓</small>' : ''}
             ${x.tags.length ? ` <small>· ${esc(x.tags.join(', '))}</small>` : ''}${x.reflection ? `<p>${esc(x.reflection.slice(0, 180))}</p>` : x.question ? `<p>${esc(x.question.slice(0, 180))}</p>` : ''}</li>`).join('');
         box.innerHTML = form + `<div class="tf-find"><input id="tf-n-find" type="search" autocomplete="off" placeholder="${esc(hzT('Search your notes', 'নোটে খোঁজো'))}" value="${esc(notesQ)}">
             <button class="tf-btn" type="button" data-act="export">${esc(hzT('Export .md', '.md নামাও'))}</button></div>${tags}
@@ -9522,7 +9679,9 @@ const tafsirUI = (() => {
         const r = e.target.closest('[data-root]');
         if (r) { openRoot(r.dataset.root); return; }
         const go = e.target.closest('[data-go]');
-        if (go) openAt(go.dataset.go, go.dataset.first ? { passage: undefined } : {});
+        if (go) { openAt(go.dataset.go, go.dataset.first ? { passage: undefined } : {}); return; }
+        const nm = e.target.closest('[data-asma]');      // a note on one of the names: its card on the Asma ul-Husna tab
+        if (nm) asmaUI.show({ open: nm.dataset.asma });
     });
     $('tf-today').addEventListener('click', e => {
         const o = e.target.closest('[data-open]');
@@ -9694,6 +9853,7 @@ const hifzUI = (() => {
         render();
         refresh();
         tafsirUI.refreshPlan();
+        asmaUI.refresh();
         if (!was) $('hz-close').focus();
     }
     function close() {
@@ -9704,18 +9864,21 @@ const hifzUI = (() => {
         placePlayer();
         $('hifz-btn').focus();
     }
-    function setTab(t) {            // Today (the tracker), Read & listen (the reader) or Dua & Zikr (duaUI)
-        tab = ['read', 'duas'].includes(t) ? t : 'today';
-        for (const k of ['today', 'read', 'duas']) {
+    function setTab(t) {            // Today (the tracker), Read & listen (the reader), Dua & Zikr (duaUI), Asma ul-Husna (asmaUI)
+        tab = ['read', 'duas', 'asma'].includes(t) ? t : 'today';
+        if (tab !== 'asma' && asmaUI.sheetOpen()) asmaUI.closeCard();
+        for (const k of ['today', 'read', 'duas', 'asma']) {
             $(`hz-pane-${k}`).hidden = tab !== k;
             $(`hz-tab-${k}`).setAttribute('aria-selected', String(tab === k));
         }
         $('hz-tab-today').textContent = hzT('Today', 'আজ');
         $('hz-tab-read').textContent = hzT('Read & listen', 'পড়ো ও শোনো');
         $('hz-tab-duas').textContent = hzT('Dua & Zikr', 'দোয়া ও জিকির');
+        $('hz-tab-asma').textContent = hzT('Asma ul-Husna', 'আসমাউল হুসনা');
         placePlayer();
         if (tab === 'read') { quranReader.show(); tafsirUI.init().then(() => tafsirUI.applyModes()); }
         if (tab === 'duas') duaUI.shown();
+        if (tab === 'asma') asmaUI.shown();
     }
     // The player sits in the page's flow wherever it shows, so it never covers anything: under the header on the main
     // page, at the view's foot in Today, beside the text in Read (the full panel, with the reciters and the repeat).
@@ -9798,6 +9961,7 @@ const hifzUI = (() => {
         if (e.key !== 'Escape' || view.hidden) return;
         e.stopImmediatePropagation();      // closing the view doesn't stop Javid or the recitation
         if (hifzTheme.isOpen()) { hifzTheme.close(true); return; }
+        if (asmaUI.sheetOpen()) { asmaUI.closeCard(); return; }
         if ($('hz-pane-read').classList.contains('idx-open')) { quranReader.setIndexOpen(false); return; }
         close();
     }, true);
@@ -10164,6 +10328,474 @@ const duaUI = (() => {
     // a new day: the counters start again (the server's date is the city's; this only asks for the list again)
     setInterval(() => { if (data && isOpen()) refresh(); }, 60000);
     return { refresh, show, shown, ring, render };
+})();
+
+// ── Asma ul-Husna (asma.py): the Hifz view's fourth tab ─────────────────────────────────────────────────────
+// Allah's names from Mahadi's approved list (data/asma_ul_husna.yaml), in Tirmidhi 3507's order, each marked with
+// Ibn Uthaymeen's list: a grid in Amiri (Google Fonts, OFL), a card for each (its meanings and their sources, the
+// Quran's ayahs opening the reader, Sa'di's words live from Quran.com, how to use it from sound hadith only, his
+// learned / reviewing mark, his reflection in the Tadabbur notebook), a search in every script (server-side:
+// /asma/search), the name of the day, and flashcards both ways. Nothing here is spoken: Javid never says a name.
+const asmaUI = (() => {
+    const $ = id => document.getElementById(id);
+    const pane = $('hz-pane-asma'), box = $('as-inner'), sheet = $('as-sheet'), scrim = $('as-scrim');
+    const END = String.fromCharCode(0x06DD);
+    const arNum = n => String(n).replace(/\d/g, d => String.fromCharCode(0x0660 + Number(d)));
+    let data = null, view = 'grid', filter = 'all', q = '', found = null, openId = null, card = null, saadi = null;
+    let deck = [], at = 0, flipped = false, which = 'due', dir = 'ar', setOpen = false, lastFocus = null;
+
+    async function refresh() {
+        try {
+            const r = await fetch('/asma');
+            if (!r.ok) return;
+            data = await r.json();
+            render();
+            renderToday();
+        } catch {}
+    }
+    const isOpen = () => !!data && !pane.hidden && !$('hifz').hidden;
+    const meaningLang = () => {
+        const m = data?.settings?.meaning || 'auto';
+        return m === 'auto' ? (hzBn() ? 'bn' : 'en') : m;
+    };
+    const byN = n => data.names.find(x => x.n === n);
+    const byId = id => data.names.find(x => x.id === id);
+    const mean = x => x.meaning[meaningLang()] || x.meaning.en;
+    const listWord = x => x.only_in === 'tirmidhi' || !x.uthaymeen ? hzT("Only in Tirmidhi's list", 'শুধু তিরমিযীর তালিকায়')
+        : x.uthaymeen === 'quran' ? hzT('Ibn Uthaymeen: Quran', 'ইবনে উসাইমীন: কুরআন')
+        : x.uthaymeen === 'sunnah' ? hzT('Ibn Uthaymeen: Sunnah', 'ইবনে উসাইমীন: সুন্নাহ') : hzT('Ibn Uthaymeen: compound', 'ইবনে উসাইমীন: যৌগিক');
+    const markWord = m => (m === 'learned' ? hzT('✓ Learned', '✓ শেখা') : m === 'reviewing' ? hzT('↻ Reviewing', '↻ রিভিউ') : '');
+
+    // ---- the tab
+    function noteHtml() {
+        const n = data.note || {}, L = n.list || {}, U = n.uthaymeen || {};
+        const sahih = (n.sahih || []).map(h => `<li><a href="${esc(h.link || '#')}" target="_blank" rel="noopener">${esc(h.reference)}</a>
+            <span class="as-pill gold">${esc(h.grade)}</span><p>${esc(hzBn() && h.bn ? h.bn : h.en)}</p></li>`).join('');
+        const uth = ['not_fixed', 'ihsa', 'gathered', 'idafa'].filter(k => U[k]).map(k => `<span class="as-ar" lang="ar" dir="rtl">${esc(U[k])}</span>`).join('');
+        return `<details class="hz-card as-note"><summary><b>${esc(hzT('About this list.', 'এই তালিকা সম্পর্কে।'))}</b> ${esc(hzBn() ? L.bn || '' : L.en || '')}</summary>
+            <div class="as-h">${hzT('The hadith of the 99 names: sahih', '৯৯ নামের হাদিস: সহীহ')}</div><ul>${sahih}</ul>
+            <div class="as-h">${hzT('The list itself', 'নামের তালিকাটি')}</div>
+            <p><a href="${esc(L.link || '#')}" target="_blank" rel="noopener">${esc(L.reference || '')}</a>: ${(L.grades || []).map(g => `<span class="as-pill weak">${esc(g)}</span>`).join(' ')}
+                ${L.tirmidhi_said ? `${esc(hzT('At-Tirmidhi:', 'তিরমিযী:'))} «<bdi lang="ar" dir="rtl">${esc(L.tirmidhi_said)}</bdi>»` : ''}</p>
+            <div class="as-h">${hzT('Ibn Uthaymeen, al-Qawa‘id al-Muthla', 'ইবনে উসাইমীন, আল-কাওয়াইদ আল-মুসলা')}</div>${uth}
+            <p><a href="${esc(U.source?.link || '#')}" target="_blank" rel="noopener">${esc(U.source?.title || '')}</a> · ${esc(U.source?.where || '')}</p></details>`;
+    }
+    function heroHtml() {
+        const t = byN(data.today), p = data.progress;
+        const day = t ? `<div class="hz-card as-day">
+                <div class="hz-k2">${hzT('Name of the day', 'আজকের নাম')}</div>
+                <span class="as-ar" lang="ar" dir="rtl">${esc(t.arabic)}</span>
+                <div class="as-day-tl"><b>${hzNum(t.n)}</b>${esc(t.transliteration.en || '')}${t.transliteration.bn ? ` · ${esc(t.transliteration.bn)}` : ''}</div>
+                <div class="as-day-mean" lang="${meaningLang()}">${esc(mean(t))}</div>
+                <div class="hz-actions"><button class="hz-btn" type="button" data-open="${esc(t.id)}">${hzT('Open its card', 'কার্ড খোলো')}</button>
+                    ${t.mark !== 'learned' ? `<button class="hz-btn ghost" type="button" data-mark-id="${esc(t.id)}" data-mark="learned">${hzT('✓ Learned', '✓ শিখেছি')}</button>` : `<span class="as-pill gold">${markWord('learned')}</span>`}</div>
+            </div>` : '';
+        return `<section class="as-hero">${day}
+            <div class="hz-card as-stats">
+                <div class="as-stat-row"><div><b>${hzNum(p.learned)}</b><span>${hzT('learned', 'শেখা')}</span></div>
+                    <div><b>${hzNum(p.reviewing)}</b><span>${hzT('reviewing', 'রিভিউতে')}</span></div>
+                    <div><b>${hzNum(p.new)}</b><span>${hzT('not yet', 'এখনো না')}</span></div></div>
+                <button class="hz-btn" type="button" data-view="cards">${hzT(`Flashcards · ${p.due} today`, `ফ্ল্যাশকার্ড · আজ ${hzNum(p.due)}টি`)}</button>
+                <p>${esc(hzT(`A learned name comes back every ${p.cycle} days (${p.daily} a day); one still reviewing, ${p.weak_days} days after you mark it.`,
+                    `শেখা নাম ${hzNum(p.cycle)} দিন পরপর ফিরে আসে (দিনে ${hzNum(p.daily)}টি); রিভিউতে থাকা নাম চিহ্ন দেওয়ার ${hzNum(p.weak_days)} দিন পর।`))}
+                    ${p.streak ? esc(hzT(` ${p.streak} day${p.streak === 1 ? '' : 's'} in a row.`, ` টানা ${hzNum(p.streak)} দিন।`)) : ''}</p>
+                <button type="button" class="du-gear" id="as-gear" aria-expanded="${setOpen}">${hzT('Settings', 'সেটিংস')}</button>
+            </div></section>${setOpen ? settingsHtml() : ''}`;
+    }
+    function settingsHtml() {
+        const s = data.settings;
+        return `<section class="hz-card hz-sec du-set as-set">
+            <div class="du-set-grid">
+                <label class="du-field">${hzT('Learned names to review a day', 'দিনে কতটি শেখা নাম রিভিউ')}
+                    <input type="number" id="as-daily" min="1" max="33" value="${s.daily}"></label>
+                <label class="du-field">${hzT('Days before a name still reviewing comes back', 'রিভিউতে থাকা নাম কত দিন পর ফিরবে')}
+                    <input type="number" id="as-weak" min="1" max="14" value="${s.weak_days}"></label>
+                <label class="du-toggle"><input type="checkbox" id="as-morning"${s.morning ? ' checked' : ''}> ${hzT('The name of the day in the reminder after Fajr', 'ফজরের পরের রিমাইন্ডারে আজকের নাম')}</label>
+            </div>
+            <p class="du-note">${hzT('Kept on this Mac, out of git (data/asma_settings.json; your marks in data/asma_progress.json).', 'এই ম্যাকেই থাকে, git-এ যায় না (data/asma_settings.json; তোমার চিহ্ন data/asma_progress.json)।')}</p></section>`;
+    }
+    const FILTERS = [['all', 'All', 'সব'], ['learned', 'Learned', 'শেখা'], ['reviewing', 'Reviewing', 'রিভিউ'], ['new', 'Not yet', 'এখনো না'],
+                     ['due', 'Due today', 'আজ রিভিউ'], ['both', 'In both lists', 'দুই তালিকায়'], ['tirmidhi', "Only Tirmidhi's", 'শুধু তিরমিযী']];
+    function shownNames() {
+        const due = new Set([...(data.progress.review_today || []), ...(data.progress.reviewing_due || [])]);
+        let list = found ? found.map(byN).filter(Boolean) : data.names;
+        if (filter === 'learned') list = list.filter(x => x.mark === 'learned');
+        else if (filter === 'reviewing') list = list.filter(x => x.mark === 'reviewing');
+        else if (filter === 'new') list = list.filter(x => !x.mark);
+        else if (filter === 'due') list = list.filter(x => due.has(x.n));
+        else if (filter === 'both') list = list.filter(x => x.uthaymeen);
+        else if (filter === 'tirmidhi') list = list.filter(x => !x.uthaymeen);
+        return list;
+    }
+    function tileHtml(x) {
+        const cls = [x.mark === 'learned' && 'learned', x.mark === 'reviewing' && 'reviewing', x.n === data.today && 'today'].filter(Boolean).join(' ');
+        const mk = x.mark === 'learned' ? '<span class="mk l" aria-hidden="true">✓</span>' : x.mark === 'reviewing' ? '<span class="mk r" aria-hidden="true">↻</span>' : '';
+        const label = `${x.n}. ${x.transliteration.en || ''}: ${mean(x)}${x.mark ? ` (${x.mark})` : ''}`;
+        return `<button type="button" class="as-tile ${cls}" data-open="${esc(x.id)}" aria-label="${esc(label)}">
+            <span class="no">${hzNum(x.n)}</span>${mk}<span class="as-ar" lang="ar" dir="rtl">${esc(x.arabic)}</span>
+            <span class="tl">${esc(hzBn() && x.transliteration.bn ? x.transliteration.bn : x.transliteration.en || '')}</span>
+            <span class="mn" lang="${meaningLang()}">${esc(mean(x))}</span><span class="ls">${esc(listWord(x))}</span></button>`;
+    }
+    function gridHtml() {
+        const list = shownNames();
+        const lang = meaningLang();
+        return `<div class="as-bar">
+                <div class="as-find"><input id="as-q" type="search" autocomplete="off" spellcheck="false" value="${esc(q)}"
+                    placeholder="${esc(hzT('Search: 48, الودود, Wadud, Loving, প্রেমময়', 'খোঁজো: ৪৮, الودود, ওয়াদুদ, Loving'))}" aria-label="${esc(hzT('Find a name', 'নাম খোঁজো'))}"></div>
+                <div class="du-seg" role="group" aria-label="${esc(hzT('Meaning in', 'অর্থ'))}"><button type="button" data-meaning="en" aria-pressed="${lang === 'en'}">English</button><button type="button" data-meaning="bn" aria-pressed="${lang === 'bn'}">বাংলা</button></div>
+                <div class="as-filters" role="group" aria-label="${esc(hzT('Show', 'দেখাও'))}">${FILTERS.map(([k, en, bn]) => `<button type="button" class="du-chip" data-filter="${k}" aria-pressed="${filter === k}">${esc(hzT(en, bn))}</button>`).join('')}</div>
+                <span class="as-count" aria-live="polite">${esc(hzT(`${list.length} of ${data.names.length}`, `${hzNum(data.names.length)}টির মধ্যে ${hzNum(list.length)}টি`))}</span>
+            </div>
+            <div class="as-grid" id="as-grid">${list.map(tileHtml).join('') || `<p class="as-empty">${esc(hzT('No name matches.', 'কোনো নাম মিলছে না।'))}</p>`}</div>`;
+    }
+    function uthHtml() {
+        const u = data.uthaymeen_only || [];
+        if (!u.length) return '';
+        return `<details class="hz-card hz-sec as-uth"><summary class="hz-sec-head" style="cursor:pointer"><h3>${esc(hzT(`In Ibn Uthaymeen's list only (${u.length})`, `শুধু ইবনে উসাইমীনের তালিকায় (${hzNum(u.length)})`))}</h3></summary>
+            <p class="du-note">${esc(hzT("Names in al-Qawa'id al-Muthla that Tirmidhi 3507's list doesn't have, as he wrote them, with the source he gives for each from the Sunnah. They have no card: the approved list has no meaning or references for them.",
+                'আল-কাওয়াইদ আল-মুসলায় আছে কিন্তু তিরমিযী ৩৫০৭-এর তালিকায় নেই, যেভাবে তিনি লিখেছেন, সুন্নাহর নামের সাথে তাঁর দেওয়া উৎস। এগুলোর কার্ড নেই: অনুমোদিত তালিকায় এদের অর্থ বা রেফারেন্স নেই।'))}</p>
+            <ul class="as-uth-list">${u.map(x => `<li><span class="as-ar" lang="ar" dir="rtl">${esc(x.arabic)}</span><span>${esc(x.list === 'sunnah' ? hzT('Sunnah', 'সুন্নাহ') : hzT('Quran', 'কুরআন'))}${x.his_source ? `: <bdi lang="ar" dir="rtl">${esc(x.his_source)}</bdi>` : ''}</span></li>`).join('')}</ul></details>`;
+    }
+    function cardsHtml() {
+        const top = `<div class="as-cards-top">
+            <div class="du-seg" role="group" aria-label="${esc(hzT('Which names', 'কোন নাম'))}">${[['due', 'Today', 'আজ'], ['all', 'All 99', 'সব'], ['learned', 'Learned', 'শেখা'], ['reviewing', 'Reviewing', 'রিভিউ']]
+                .map(([k, en, bn]) => `<button type="button" data-deck="${k}" aria-pressed="${which === k}">${esc(hzT(en, bn))}</button>`).join('')}</div>
+            <div class="du-seg" role="group" aria-label="${esc(hzT('Direction', 'দিক'))}"><button type="button" data-dir="ar" aria-pressed="${dir === 'ar'}">${hzT('Arabic → meaning', 'আরবি → অর্থ')}</button><button type="button" data-dir="mean" aria-pressed="${dir === 'mean'}">${hzT('Meaning → Arabic', 'অর্থ → আরবি')}</button></div>
+            <button type="button" class="hz-btn ghost" data-view="grid">${hzT('Back to the grid', 'গ্রিডে ফেরো')}</button></div>`;
+        if (!deck.length) return `<div class="as-cards">${top}<p class="as-empty" style="text-align:center">${esc(which === 'due' ? hzT('Nothing due today: every name you marked is resting. Pick “All 99” to practise any.', 'আজ কিছু বাকি নেই। যেকোনোটি অনুশীলন করতে “সব” বেছে নাও।') : hzT('No names here yet.', 'এখানে এখনো কোনো নাম নেই।'))}</p></div>`;
+        if (at >= deck.length) return `<div class="as-cards">${top}<div class="as-flip back" style="cursor:default"><div class="mn">${esc(hzT('That’s all of them for now.', 'আপাতত এ-ই সব।'))}</div>
+            <div class="hint">${esc(hzT(`${deck.length} card${deck.length === 1 ? '' : 's'} gone through.`, `${hzNum(deck.length)}টি কার্ড দেখা হলো।`))}</div></div>
+            <div class="hz-actions"><button class="hz-btn" type="button" data-again="1">${hzT('Go through them again', 'আবার দেখো')}</button></div></div>`;
+        const x = byN(deck[at].n);
+        const front = dir === 'ar' ? !flipped : flipped;
+        const face = front
+            ? `<span class="no">${hzNum(x.n)}</span><span class="as-ar" lang="ar" dir="rtl">${esc(x.arabic)}</span><div class="hint">${esc(hzT('Tap, or Space, for its meaning', 'অর্থ দেখতে চাপো, বা Space'))}</div>`
+            : `<span class="no">${hzNum(x.n)}</span><div class="mn">${esc(x.meaning.en)}</div><div class="mnb" lang="bn">${esc(x.meaning.bn)}</div>
+               ${flipped ? `<div class="tl">${esc(x.transliteration.en || '')}</div>` : `<div class="hint">${esc(hzT('Which name is it? Tap, or Space, to see', 'কোন নাম? দেখতে চাপো, বা Space'))}</div>`}`;
+        const why = { reviewing: hzT('still reviewing', 'রিভিউতে'), review: hzT('due for review', 'রিভিউর সময়'), today: hzT('the name of the day', 'আজকের নাম'), new: hzT('new', 'নতুন') }[deck[at].why] || '';
+        return `<div class="as-cards">${top}
+            <button type="button" class="as-flip${flipped ? ' back' : ''}" id="as-flip" aria-live="polite">${face}</button>
+            <div class="hz-actions">
+                <button class="hz-btn ghost" type="button" data-card="reviewing">${hzT('↻ Still reviewing', '↻ আরও রিভিউ')}</button>
+                <button class="hz-btn" type="button" data-card="learned">${hzT('✓ Learned', '✓ শিখেছি')}</button>
+                <button class="hz-btn ghost" type="button" data-card="skip">${hzT('Skip →', 'পরে →')}</button>
+                <button class="hz-btn ghost" type="button" data-open="${esc(x.id)}">${hzT('Its card', 'কার্ড')}</button></div>
+            <div class="as-cards-n">${esc(hzT(`${at + 1} of ${deck.length}`, `${hzNum(deck.length)}টির ${hzNum(at + 1)} নম্বর`))}${why ? ` · ${esc(why)}` : ''}</div></div>`;
+    }
+    function render() {
+        if (!isOpen()) return;
+        hzFonts();
+        const problems = data.problems?.length ? `<p class="du-problems">${esc(hzT('Some of data/asma_ul_husna.yaml couldn’t be used: ', 'data/asma_ul_husna.yaml-এর কিছু অংশ ব্যবহার করা যায়নি: '))}${esc(data.problems.join('; '))}</p>` : '';
+        const unapproved = data.approved ? '' : `<p class="du-problems">${esc(hzT('This list isn’t marked approved yet (its status in data/asma_ul_husna.yaml).', 'এই তালিকা এখনো অনুমোদিত হিসেবে চিহ্নিত নয় (data/asma_ul_husna.yaml-এর status)।'))}</p>`;
+        const head = `<div class="du-head"><h3>${hzT('Asma ul-Husna', 'আসমাউল হুসনা')}<span lang="ar">الأسماء الحسنى</span></h3>
+            <span class="du-progress">${esc(hzT('Learn them, understand them, live by them.', 'জানো, বোঝো, জীবনে ধারণ করো।'))}</span></div>`;
+        const had = box.contains(document.activeElement) ? document.activeElement.id : '';     // a refresh keeps the focus
+        const keep = had === 'as-q' ? [document.activeElement.selectionStart, document.activeElement.selectionEnd] : null;
+        box.innerHTML = head + problems + unapproved + noteHtml() + (view === 'cards' ? cardsHtml() : heroHtml() + gridHtml() + uthHtml()) +
+            `<p class="as-credits">${hzT(
+                `The names in the order of <a href="https://sunnah.com/tirmidhi:3507" target="_blank" rel="noopener">Jami' at-Tirmidhi 3507</a> (its Arabic, English and Bengali editions, fawazahmed0/hadith-api), each marked with Ibn Uthaymeen's list in <a href="https://usul.ai/t/the-fundamental-principles-on-the-names-and-attributes-of-allah/14" target="_blank" rel="noopener">al-Qawa'id al-Muthla</a>. Sa'di's explanations and the Quranic duas' ayahs from <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a>, kept six days at most; the ayahs' references found in Tanzil's text. Duas only from hadith graded sahih or hasan, each with its grading. No counts or promised benefits without a sound hadith. No audio: no verified source publishes the names recited. Javid never says a name aloud. Arabic in Amiri (SIL Open Font License).`,
+                `নামগুলো <a href="https://sunnah.com/tirmidhi:3507" target="_blank" rel="noopener">জামে তিরমিযী ৩৫০৭</a>-এর ক্রমে (এর আরবি, ইংরেজি ও বাংলা সংস্করণ, fawazahmed0/hadith-api), প্রতিটিতে <a href="https://usul.ai/t/the-fundamental-principles-on-the-names-and-attributes-of-allah/14" target="_blank" rel="noopener">আল-কাওয়াইদ আল-মুসলা</a>-য় ইবনে উসাইমীনের তালিকার চিহ্ন। সা'দীর ব্যাখ্যা আর কুরআনি দোয়ার আয়াত <a href="https://quran.com" target="_blank" rel="noopener">Quran.com</a> থেকে, ছয় দিনের বেশি রাখা হয় না। দোয়া শুধু সহীহ বা হাসান হাদিস থেকে, মানসহ। সহীহ হাদিস ছাড়া কোনো সংখ্যা বা ফযীলত নেই। কোনো অডিও নেই: যাচাই করা কোনো উৎসে নামগুলোর তিলাওয়াত নেই। জাভিদ কখনো কোনো নাম উচ্চারণ করে না। আরবি Amiri ফন্টে (SIL Open Font License)।`)}</p>`;
+        if (keep) { const i = $('as-q'); i.focus(); i.setSelectionRange(...keep); }
+        else if (had && $(had)) $(had).focus();
+    }
+    function renderToday() {            // the Today tab's card: the name of the day beside the tafsir and the revision
+        const el = $('as-today');
+        if (!el || !data) return;
+        const t = byN(data.today);
+        el.hidden = !t;
+        if (!t) return;
+        el.innerHTML = `<div class="hz-sec-head"><h3>${hzT('Name of the day', 'আজকের নাম')}<span lang="ar">الأسماء الحسنى</span></h3></div>
+            <div class="as-today-k"><span class="as-ar" lang="ar" dir="rtl">${esc(t.arabic)}</span>
+                <div><div class="mn">${hzNum(t.n)} · ${esc(mean(t))}</div><small>${esc(t.transliteration.en || '')}${t.mark ? ` · ${esc(markWord(t.mark))}` : ''}</small></div>
+                <button class="hz-btn ghost" type="button" data-asma-open="${esc(t.id)}" style="margin-left:auto">${hzT('Open its card', 'কার্ড খোলো')}</button></div>`;
+    }
+
+    // ---- the name's card
+    async function openCard(id, focusBack = true) {
+        if (focusBack && sheet.hidden) lastFocus = document.activeElement;
+        openId = id;
+        card = null;
+        saadi = null;
+        sheet.hidden = false;
+        scrim.hidden = false;
+        sheet.innerHTML = `<div class="as-sheet-in"><p class="as-empty">${esc(hzT('Opening…', 'খুলছে…'))}</p></div>`;
+        sheet.focus();
+        try {
+            const r = await fetch(`/asma/name/${encodeURIComponent(id)}`);
+            if (!r.ok) { sheet.innerHTML = `<div class="as-sheet-in"><p class="as-empty">${esc(hzT('That name isn’t in the list.', 'এই নাম তালিকায় নেই।'))}</p></div>`; return; }
+            card = await r.json();
+        } catch { return; }
+        if (openId !== id) return;
+        renderCard();
+        if (card.explanation) loadSaadi(id);
+    }
+    async function loadSaadi(id) {
+        try {
+            const r = await fetch(`/asma/explain/${encodeURIComponent(id)}`);
+            const out = await r.json().catch(() => ({}));
+            saadi = r.ok ? out : { error: out.detail || hzT('Not available.', 'পাওয়া যায়নি।') };
+        } catch { saadi = { error: hzT('Not available: is the server running?', 'পাওয়া যায়নি: সার্ভার চলছে তো?') }; }
+        if (openId === id && card) renderCard();
+    }
+    function closeCard() {
+        sheet.hidden = true;
+        scrim.hidden = true;
+        openId = null;
+        card = null;
+        if (lastFocus?.isConnected) lastFocus.focus();
+    }
+    const KIND = { 'dua (You are …)': ['A dua: “You are …”', 'দোয়া: “তুমিই …”'], 'dua (calling: yā …)': ['A dua calling on Him: “Yā …”', 'ডেকে দোয়া: “ইয়া …”'],
+                   dhikr: ['Dhikr', 'জিকির'], 'Quranic dua': ['A dua in the Quran', 'কুরআনের দোয়া'],
+                   'from your Dua & Zikr list': ['In your Dua & Zikr list', 'তোমার দোয়া ও জিকির তালিকায়'], 'your own dua': ['Your own dua', 'নিজের দোয়া'] };
+    function useHtml(u) {
+        const k = esc(hzT(...(KIND[u.kind] || [u.kind, u.kind])));
+        const ref = (u.reference || []).map(r => `<span class="as-pill">${esc(r)}</span>`).join(' ');
+        const link = u.link ? `<a class="as-pill" href="${esc(u.link)}" target="_blank" rel="noopener">↗ ${esc(u.link.replace(/^https:\/\/(www\.)?/, '').split('/')[0])}</a>` : '';
+        if (u.kind === 'your own dua') return `<div class="as-use"><div class="as-use-k">${k}</div><p>${esc(hzBn() ? u.bn : u.en)}</p>
+            <div class="as-row"><button type="button" class="as-pill" data-ayah="7:180">${esc(hzT('Al-A‘raf 7:180 in the reader', 'রিডারে আল-আ‘রাফ ৭:১৮০'))}</button>${link}</div></div>`;
+        if (u.kind === 'Quranic dua') {
+            const t = u.text;
+            const ar = t ? `<span class="as-ar qr" lang="ar" dir="rtl">${esc(t.text)}&nbsp;<span class="qa-end">${END}${arNum(t.a)}</span></span>
+                <span class="as-src">${esc(t.source === 'Quran.com' ? 'Quran.com' : hzT("Tanzil's text on this Mac", 'এই ম্যাকে রাখা Tanzil-এর পাঠ'))}</span>`
+                : `<p>${esc(hzT("The ayah's text isn't on this Mac yet: see it on Quran.com.", 'আয়াতের লেখা এখনো এই ম্যাকে নেই: Quran.com-এ দেখো।'))}</p>`;
+            return `<div class="as-use"><div class="as-use-k">${k}</div>${ar}
+                <div class="as-row">${ref}<button type="button" class="as-pill" data-ayah="${esc(u.key)}">${esc(hzT('Open in the reader', 'রিডারে খোলো'))}</button>
+                <button type="button" class="as-pill" data-listen="${esc(u.key)}">▶ ${esc(hzT('Listen', 'শোনো'))}</button>${link}</div></div>`;
+        }
+        if (u.kind === 'from your Dua & Zikr list') {
+            const it = u.item || {};
+            const lang = meaningLang();
+            const m = it.meaning?.[lang] || it.meaning?.en || it.meaning?.bn || '';
+            return `<div class="as-use"><div class="as-use-k">${k}: ${esc(it.title || u.title || '')}</div>
+                <span class="as-ar" lang="ar" dir="rtl">${esc(u.arabic)}</span>${m ? `<p>${esc(m)}</p>` : ''}
+                <div class="as-row">${ref}<button type="button" class="as-pill" data-dua="${esc(u.id)}">${esc(hzT('Open in Dua & Zikr', 'দোয়া ও জিকিরে খোলো'))}</button>${link}</div></div>`;
+        }
+        const hadith = hzBn() ? u.hadith?.bn || u.hadith?.en : u.hadith?.en || u.hadith?.bn;
+        const from = hzBn() ? u.text_from?.hadith_bn : u.text_from?.hadith_en;
+        return `<div class="as-use"><div class="as-use-k">${k}</div><span class="as-ar" lang="ar" dir="rtl">${esc(u.arabic)}</span>
+            <span class="as-src">${esc(hzT('The Arabic as', 'আরবি:'))} ${esc(u.arabic_from || '')}</span>
+            <div class="as-row" style="margin-top:6px">${ref}<span class="as-pill gold">${esc(u.grade || '')}</span>${link}</div>
+            ${u.note ? `<p>${esc(u.note)}</p>` : ''}
+            ${hadith ? `<details><summary>${esc(hzT('The hadith in full', 'পুরো হাদিস'))}</summary><p>${esc(hadith)}</p>${from ? `<span class="as-src">${esc(from)}</span>` : ''}</details>` : ''}</div>`;
+    }
+    function renderCard() {
+        const c = card;
+        if (!c) return;
+        const n = c.note || {};
+        const quran = c.quran || {};
+        const ayahs = [...(quran.definite || []), ...(quran.indefinite || [])];
+        const qLine = c.n === 1 ? hzT(`${quran.count_words?.toLocaleString('en-US')} times, in ${quran.count_ayahs?.toLocaleString('en-US')} ayahs`, `${hzNum(quran.count_words)} বার, ${hzNum(quran.count_ayahs)}টি আয়াতে`)
+            : ayahs.length ? hzT(`${ayahs.length} time${ayahs.length === 1 ? '' : 's'}${quran.definite?.length && quran.indefinite?.length ? ` (${quran.definite.length} with al-, ${quran.indefinite.length} without)` : ''}`,
+                                 `${hzNum(ayahs.length)} বার`)
+            : hzT('Not in the Quran in this form.', 'কুরআনে এই রূপে নেই।');
+        const chips = ayahs.map(k => `<button type="button" class="as-pill${k === quran.key ? ' gold' : ''}" data-ayah="${esc(k)}">${esc(k)}</button>`).join('')
+            || (quran.key ? `<button type="button" class="as-pill gold" data-ayah="${esc(quran.key)}">${esc(quran.key)}</button>` : '');
+        let sa = '';
+        if (c.explanation) {
+            const x = saadi;
+            sa = `<div class="as-h">${hzT("Sa'di's explanation", 'সা‘দীর ব্যাখ্যা')}</div><div class="as-saadi">` + (!x ? `<p class="as-src">${esc(hzT('From Quran.com…', 'Quran.com থেকে…'))}</p>`
+                : x.error ? `<p class="as-src">${esc(x.error)} <a href="${esc(c.explanation.link || 'https://quran.com')}" target="_blank" rel="noopener">Quran.com</a></p>`
+                : x.missing ? `<p class="as-src">${esc(hzT('Quran.com’s text there no longer quotes the name as it did: read it there.', 'Quran.com-এর লেখায় নামটি আর আগের মতো নেই: সেখানে পড়ো।'))} <a href="${esc(x.link)}" target="_blank" rel="noopener">Quran.com</a></p>`
+                : `<span class="as-ar" lang="ar" dir="rtl"><q>${esc(x.quoted)}</q> ${esc(x.text)}</span>
+                   <span class="as-src">${esc(x.tafsir)} (${esc(x.author)}) ${esc(hzT('on', 'ঃ'))} ${esc(x.label)}, <a href="${esc(x.link)}" target="_blank" rel="noopener">Quran.com</a>${x.with?.length ? ` · ${esc(hzT('explained with', 'সাথে ব্যাখ্যা:'))} <bdi lang="ar" dir="rtl">${esc(x.with.join('، '))}</bdi>` : ''}</span>
+                   <div class="as-row" style="margin-top:6px"><button type="button" class="as-pill" data-study="${esc(x.key)}">${esc(hzT('Read it in Study', 'স্টাডিতে পড়ো'))}</button></div>`) + '</div>';
+        }
+        const tl = c.transliteration || {};
+        const src = c.text_from || {};
+        const checks = c.checks?.length ? `<details><summary class="as-src" style="cursor:pointer">${esc(hzT(`Still to check (${c.checks.length})`, `যাচাই বাকি (${hzNum(c.checks.length)})`))}</summary>
+            <ul class="as-checks">${c.checks.map(t => `<li>${esc(t).replace(/«([^»]*)»/g, (_, a) => `«<bdi dir="rtl" lang="ar">${a}</bdi>»`)}</li>`).join('')}</ul></details>` : '';
+        const u = c.lists?.uthaymeen;
+        const lists = `<span class="as-pill">${esc(hzT(`Tirmidhi 3507: no. ${c.n}`, `তিরমিযী ৩৫০৭: ${hzNum(c.n)} নম্বর`))}</span>` +
+            (u ? `<span class="as-pill">${esc(listWord({ uthaymeen: u.list }))}${u.as_written ? ` · <bdi lang="ar" dir="rtl">${esc(u.as_written)}</bdi>` : ''}</span>` : `<span class="as-pill weak">${esc(hzT("Not in Ibn Uthaymeen's list", 'ইবনে উসাইমীনের তালিকায় নেই'))}</span>`);
+        const mk = c.mark;
+        const due = c.due ? hzT(` · back on ${new Date(c.due + 'T12:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })}`, ` · আবার ${new Date(c.due + 'T12:00').toLocaleDateString('bn-BD', { day: 'numeric', month: 'long' })}`) : '';
+        sheet.innerHTML = `<div class="as-sheet-in">
+            <div class="as-sheet-top"><span class="hz-k2">${esc(hzT(`Name ${c.n} of ${data?.names.length || 99}`, `${hzNum(data?.names.length || 99)}টির ${hzNum(c.n)} নম্বর নাম`))}</span>
+                <button type="button" class="as-nav" data-step="-1" aria-label="${esc(hzT('The name before', 'আগের নাম'))}">‹</button>
+                <button type="button" class="as-nav" data-step="1" aria-label="${esc(hzT('The next name', 'পরের নাম'))}">›</button>
+                <button type="button" class="as-nav" data-close="1" aria-label="${esc(hzT('Close the card', 'কার্ড বন্ধ করো'))}">✕</button></div>
+            <div class="as-big as-ar" lang="ar" dir="rtl">${esc(c.arabic)}</div>
+            <span class="as-src" style="text-align:center">${esc(c.arabic_from)}</span>
+            <div class="as-names"><span class="tl">${esc(tl.en || '')}</span>${tl.bn ? `<span class="tlb" lang="bn">${esc(tl.bn)}</span>` : ''}</div>
+            <div class="as-mean"><div><p lang="en">${esc(c.meaning.en)}</p><span class="as-src">${esc(src.meaning_en || '')}</span></div>
+                <div><p lang="bn">${esc(c.meaning.bn)}</p><span class="as-src">${esc(src.meaning_bn || '')}</span></div></div>
+            <div class="as-row" style="margin-top:12px">${lists}<span class="as-pill${c.status === 'verified' ? ' gold' : ''}">${esc(c.status === 'verified' ? hzT('verified', 'যাচাই করা') : hzT('to check', 'যাচাই বাকি'))}</span></div>
+            ${checks}
+            <div class="as-h">${hzT('Learning', 'শেখা')}</div>
+            <div class="as-marks">${[['learned', hzT('✓ Learned', '✓ শিখেছি'), ''], ['reviewing', hzT('↻ Still reviewing', '↻ আরও রিভিউ'), 'rv'], ['new', hzT('Not yet', 'এখনো না'), '']]
+                .map(([m, t, cls]) => `<button type="button" class="hz-btn ${cls}" data-mark-id="${esc(c.id)}" data-mark="${m}" aria-pressed="${(mk || 'new') === m}">${esc(t)}</button>`).join('')}</div>
+            <p class="as-src">${esc(mk ? `${markWord(mk)}${c.last ? hzT(` since ${c.last}`, ` ${c.last} থেকে`) : ''}${due}` : hzT('Not marked yet.', 'এখনো চিহ্ন দেওয়া হয়নি।'))}</p>
+            ${sa}
+            <div class="as-h">${hzT('In the Quran', 'কুরআনে')}</div>
+            <p class="as-src" style="font-size:13px;color:var(--hz-text-2)">${esc(qLine)}</p>
+            ${quran.note ? `<p class="as-src">${esc(quran.note).replace(/«([^»]*)»/g, (_, a) => `«<bdi dir="rtl" lang="ar">${a}</bdi>»`)}</p>` : ''}
+            <div class="as-ayahs">${chips}</div>
+            <div class="as-h">${hzT('How to use this name', 'এই নাম কীভাবে কাজে লাগাবে')}</div>
+            ${(c.use || []).map(useHtml).join('')}
+            <div class="as-h">${hzT('Your reflection', 'তোমার ভাবনা')}</div>
+            <div class="as-form" data-name="${esc(c.id)}">
+                <label for="as-n-ref">${esc(hzT('What this name means to you', 'এই নাম তোমাকে কী বলে'))}</label><textarea id="as-n-ref" rows="3">${esc(n.reflection || '')}</textarea>
+                <label for="as-n-q">${esc(hzT('A question', 'একটি প্রশ্ন'))}</label><textarea id="as-n-q" rows="2">${esc(n.question || '')}</textarea>
+                <label for="as-n-a">${esc(hzT('One way to live by it', 'জীবনে ধারণের একটি উপায়'))}</label><textarea id="as-n-a" rows="2">${esc(n.action || '')}</textarea>
+                <label for="as-n-tags">${esc(hzT('Tags', 'ট্যাগ'))}</label><input id="as-n-tags" type="text" autocomplete="off" value="${esc((n.tags || []).join(', '))}" placeholder="${esc(hzT('Comma between tags: mercy, tawakkul', 'ট্যাগের মাঝে কমা: mercy, tawakkul'))}">
+                <div class="hz-actions"><button class="hz-btn" type="button" data-save-note="1">${esc(hzT('Save', 'রাখো'))}</button><span class="as-src" id="as-saved"></span></div>
+                <p class="as-src">${esc(hzT('Kept in your Tadabbur notebook with your passage notes (data/tadabbur.json): on this Mac, out of git, never sent to a model; exported with them.', 'তোমার তাদাব্বুর নোটবুকে, আয়াতের নোটের সাথে (data/tadabbur.json): এই ম্যাকেই, git-এ নয়, কোনো মডেলে যায় না; একসাথে এক্সপোর্ট হয়।'))}</p></div>
+            <div class="as-h">${hzT('Sources', 'উৎস')}</div>
+            <p class="as-src">${esc(hzT('Arabic:', 'আরবি:'))} ${esc(c.arabic_from)}<br>${esc(hzT('Transliteration:', 'উচ্চারণ:'))} ${esc(src.transliteration_en || '')}${src.transliteration_bn ? ` · ${esc(src.transliteration_bn)}` : ''}<br>
+                ${(c.links || []).map(l => `<a href="${esc(l)}" target="_blank" rel="noopener">${esc(l.replace(/^https:\/\//, ''))}</a>`).join(' · ')}</p></div>`;
+    }
+    async function saveNote() {
+        const f = sheet.querySelector('.as-form');
+        if (!f || !card) return;
+        const body = { name: card.id, reflection: $('as-n-ref').value, question: $('as-n-q').value, action: $('as-n-a').value,
+                       tags: $('as-n-tags').value.split(',').map(t => t.trim()).filter(Boolean) };
+        try {
+            const r = await fetch('/tafsir/notes', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) { showToast(out.detail || hzT('Not saved.', 'রাখা হয়নি।')); return; }
+            card.note = out.note;
+            $('as-saved').textContent = hzT('Saved in your notebook.', 'নোটবুকে রাখা হলো।');
+            vitals.event('hifz', hzT(`reflection on name ${card.n}`, `${hzNum(card.n)} নম্বর নামের ভাবনা`));
+        } catch { showToast(hzT('Not saved: is the server running?', 'রাখা হয়নি: সার্ভার চলছে তো?')); }
+    }
+    async function setMark(id, mark) {
+        try {
+            const r = await fetch('/asma/mark', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, mark }) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) { showToast(out.detail || hzT('Not marked.', 'চিহ্ন দেওয়া হয়নি।')); return false; }
+            data = out.tab;
+            const x = byId(id);
+            vitals.event('hifz', hzT(`name ${x?.n}: ${mark === 'new' ? 'not yet' : mark}`, `${hzNum(x?.n)} নম্বর নাম: ${mark === 'learned' ? 'শেখা' : mark === 'reviewing' ? 'রিভিউ' : 'এখনো না'}`));
+            if (openId === id && card) { card.mark = mark === 'new' ? null : mark; card.last = mark === 'new' ? null : data.day; const b = byId(id); card.due = b?.due; renderCard(); }
+            if (view !== 'cards') render();
+            renderToday();
+            return true;
+        } catch { showToast(hzT('Not marked: is the server running?', 'চিহ্ন দেওয়া হয়নি: সার্ভার চলছে তো?')); return false; }
+    }
+    function openAyah(k) {               // the reader at that ayah (the Read tab)
+        const [s] = k.split(':').map(Number);
+        closeCard();
+        hifzUI.open('read');
+        quranReader.open({ kind: 'surah', n: s }, k);
+    }
+    async function listen(k) {           // the ayah from the Hifz player's reciter: never Javid's voice
+        const [s, a] = k.split(':').map(Number);
+        try {
+            const r = await fetch('/quran/plan', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ portions: [{ kind: 'surah', n: s, a1: a, a2: a }] }) });
+            if (!r.ok) { showToast((await r.json().catch(() => ({}))).detail || hzT('Nothing to play.', 'চালানোর কিছু নেই।')); return; }
+            stopSpeech();
+            recite.apply(await r.json());
+        } catch {}
+    }
+    async function loadDeck() {
+        try { deck = (await (await fetch(`/asma/deck?which=${which}`)).json()).cards || []; } catch { deck = []; }
+        at = 0;
+        flipped = false;
+        render();
+        $('as-flip')?.focus();
+    }
+    let searchTimer = null;
+    async function runSearch(v) {
+        q = v;
+        if (!v.trim()) { found = null; render(); return; }
+        try { const out = await (await fetch(`/asma/search?q=${encodeURIComponent(v)}`)).json(); if (out.q === q) { found = out.ns; render(); } } catch {}
+    }
+    async function saveSettings(change) {
+        try {
+            const r = await fetch('/asma/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(change) });
+            const out = await r.json().catch(() => ({}));
+            if (!r.ok) { showToast(out.detail || hzT('Not saved.', 'সেভ হয়নি।')); render(); return; }
+            refresh();
+        } catch { showToast(hzT('Not saved: is the server running?', 'সেভ হয়নি: সার্ভার চলছে তো?')); }
+    }
+    async function cardMark(m) {
+        const x = deck[at];
+        if (!x) return;
+        if (m !== 'skip' && !(await setMark(byN(x.n).id, m))) return;
+        at += 1;
+        flipped = false;
+        render();
+        $('as-flip')?.focus() || box.querySelector('[data-again]')?.focus();
+    }
+    function onClick(e) {
+        const t = e.target;
+        const op = t.closest('[data-open]');
+        if (op) { openCard(op.dataset.open); return; }
+        const mk = t.closest('[data-mark-id]');
+        if (mk) { setMark(mk.dataset.markId, mk.dataset.mark); return; }
+        const v = t.closest('[data-view]');
+        if (v) { view = v.dataset.view; if (view === 'cards') loadDeck(); else render(); pane.scrollTop = 0; return; }
+        const f = t.closest('[data-filter]');
+        if (f) { filter = f.dataset.filter; render(); return; }
+        const m = t.closest('[data-meaning]');
+        if (m) { saveSettings({ meaning: m.dataset.meaning }); return; }
+        if (t.closest('#as-gear')) { setOpen = !setOpen; render(); return; }
+        const dk = t.closest('[data-deck]');
+        if (dk) { which = dk.dataset.deck; loadDeck(); return; }
+        const dr = t.closest('[data-dir]');
+        if (dr) { dir = dr.dataset.dir; flipped = false; render(); return; }
+        if (t.closest('#as-flip')) { flipped = !flipped; render(); $('as-flip')?.focus(); return; }
+        const cm = t.closest('[data-card]');
+        if (cm) { cardMark(cm.dataset.card); return; }
+        if (t.closest('[data-again]')) { at = 0; flipped = false; render(); $('as-flip')?.focus(); }
+    }
+    box.addEventListener('click', onClick);
+    box.addEventListener('input', e => {
+        if (e.target.id !== 'as-q') return;
+        clearTimeout(searchTimer);
+        const v = e.target.value;
+        searchTimer = setTimeout(() => runSearch(v), 160);
+    });
+    box.addEventListener('change', e => {
+        const t = e.target;
+        const num = (id, lo, hi) => { const v = Number(t.value); return Number.isInteger(v) && v >= lo && v <= hi ? v : null; };
+        if (t.id === 'as-daily') { const v = num('as-daily', 1, 33); if (v) saveSettings({ daily: v }); else { showToast(hzT('1 to 33 names.', '১ থেকে ৩৩টি নাম।')); render(); } }
+        else if (t.id === 'as-weak') { const v = num('as-weak', 1, 14); if (v) saveSettings({ weak_days: v }); else { showToast(hzT('1 to 14 days.', '১ থেকে ১৪ দিন।')); render(); } }
+        else if (t.id === 'as-morning') saveSettings({ morning: t.checked });
+    });
+    // Space on the flashcard flips it, rather than starting push-to-talk (the page's Space, which waits on document)
+    box.addEventListener('keydown', e => {
+        if (e.code !== 'Space' || e.target.id !== 'as-flip') return;
+        e.preventDefault();
+        e.stopPropagation();
+        if (!e.repeat) { flipped = !flipped; render(); $('as-flip')?.focus(); }
+    });
+    box.addEventListener('keyup', e => { if (e.code === 'Space' && e.target.id === 'as-flip') { e.preventDefault(); e.stopPropagation(); } });
+    sheet.addEventListener('click', e => {
+        const t = e.target;
+        if (t.closest('[data-close]')) { closeCard(); return; }
+        const st = t.closest('[data-step]');
+        if (st && card) { const L = data.names, i = L.findIndex(x => x.id === card.id); const nx = L[(i + Number(st.dataset.step) + L.length) % L.length]; openCard(nx.id, false); return; }
+        const mk = t.closest('[data-mark-id]');
+        if (mk) { setMark(mk.dataset.markId, mk.dataset.mark); return; }
+        const ay = t.closest('[data-ayah]');
+        if (ay) { openAyah(ay.dataset.ayah); return; }
+        const ls = t.closest('[data-listen]');
+        if (ls) { listen(ls.dataset.listen); return; }
+        const sd = t.closest('[data-study]');
+        if (sd) { const k = sd.dataset.study; closeCard(); tafsirUI.openAt(k); return; }
+        const du = t.closest('[data-dua]');
+        if (du) { const id = du.dataset.dua; closeCard(); duaUI.show({ ids: [id] }); return; }
+        if (t.closest('[data-save-note]')) saveNote();
+    });
+    scrim.addEventListener('click', closeCard);
+    $('as-today')?.addEventListener('click', e => { const b = e.target.closest('[data-asma-open]'); if (b) show({ open: b.dataset.asmaOpen }); });
+    function sheetOpen() { return !sheet.hidden; }
+    function show(opts = {}) {           // "what does Al-Wadud mean?", "today's name", the Today card, a notebook row
+        hifzUI.open('asma');
+        if (opts.cards) { view = 'cards'; loadDeck(); }
+        else if (opts.alike) { view = 'grid'; filter = 'all'; q = ''; found = opts.alike.map(id => byId(id)?.n).filter(Boolean); render(); }
+        else if (opts.open === true) { view = 'grid'; render(); }
+        if (typeof opts.open === 'string') openCard(opts.open);
+        pane.scrollTop = 0;
+    }
+    function shown() {                   // the tab came up (hifzUI.setTab)
+        if (data) render();
+        refresh();
+    }
+    setInterval(() => { if (data && isOpen() && !sheetOpen()) refresh(); }, 120000);
+    refresh();
+    return { refresh, show, shown, render, closeCard, sheetOpen };
 })();
 
 // ── Init: load sidebar on page open ───────────────────────────────────────

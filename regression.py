@@ -62,6 +62,7 @@ import yaml
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import approvals  # noqa: E402
+import asma  # noqa: E402
 import calendar_tools as ct  # noqa: E402
 import documents  # noqa: E402
 import drive_tools  # noqa: E402
@@ -438,14 +439,14 @@ def prayer_fresh(fake=None):
 
 @contextlib.contextmanager
 def prayer_clock(when: datetime):
-    """prayers', hifz's, duas', tafsir's and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
+    """prayers', hifz's, duas', tafsir's, asma's and timers' clock at `when`; .at(datetime) moves it, .now() reads it."""
     now = [when.timestamp()]
-    saved = prayers._time, timers._now, hifz._time, duas._time, tafsir._time, tafsir_study._time
-    prayers._time = timers._now = hifz._time = duas._time = tafsir._time = tafsir_study._time = lambda: now[0]
+    saved = prayers._time, timers._now, hifz._time, duas._time, tafsir._time, tafsir_study._time, asma._time
+    prayers._time = timers._now = hifz._time = duas._time = tafsir._time = tafsir_study._time = asma._time = lambda: now[0]
     try:
         yield types.SimpleNamespace(at=lambda dt: now.__setitem__(0, dt.timestamp()), now=lambda: now[0])
     finally:
-        prayers._time, timers._now, hifz._time, duas._time, tafsir._time, tafsir_study._time = saved
+        prayers._time, timers._now, hifz._time, duas._time, tafsir._time, tafsir_study._time, asma._time = saved
 
 
 def _dhaka(*args) -> datetime:
@@ -472,12 +473,14 @@ def hifz_settings(**changes) -> dict:
 
 
 def hifz_fresh() -> None:
-    """No revision log, nothing raised, no backup copy."""
-    for f in (hifz.LOG_FILE, hifz.STATE_FILE):
+    """No revision log, nothing raised, no backup copy; no list of the names (so a reminder has no name of the day
+    unless an asma: case writes one)."""
+    for f in (hifz.LOG_FILE, hifz.STATE_FILE, asma.LIST_FILE, asma.PROGRESS_FILE, asma.SETTINGS_FILE):
         with contextlib.suppress(OSError):
             os.remove(f)
     for f in glob.glob(hifz.LOG_FILE + ".bak-*"):
         os.remove(f)
+    asma.reload()
 
 
 def fake_words(s: int, a: int) -> list[str]:
@@ -912,6 +915,110 @@ def tafsir_fresh(corpus: bool = True, **wrong) -> "FakeQuranCom":
     quran_fresh(text=True)
     fake = FakeQuranCom(wrong=wrong)
     tafsir._get_json = fake.get
+    return fake
+
+
+# ---------- Asma ul-Husna (asma.py), 2026-11-25: the suite's own list of 99 made-up names, never Mahadi's ----------
+asma.LIST_FILE = os.path.join(SCRATCH, "asma_ul_husna.yaml")       # never his approved list
+asma.PROGRESS_FILE = os.path.join(SCRATCH, "asma_progress.json")   # nor his marks
+asma.SETTINGS_FILE = os.path.join(SCRATCH, "asma_settings.json")
+asma.BACKGROUND = False             # Quran.com (the fake) is asked in line
+_AS_C = {"b": ("ب", "ব"), "d": ("د", "দ"), "f": ("ف", "ফ"), "g": ("غ", "গ"), "j": ("ج", "জ"), "l": ("ل", "ল"),
+         "m": ("م", "ম"), "n": ("ن", "ন"), "p": ("ط", "প"), "r": ("ر", "র"), "t": ("ت", "ত"), "v": ("ث", "থ"), "z": ("ز", "য")}
+_AS_V = {"a": ("َ", "া", "a"), "i": ("ِ", "ি", "i"), "u": ("ُ", "ু", "u"),
+         "ā": ("َا", "া", "ā"), "ī": ("ِي", "ী", "ī"), "ū": ("ُو", "ূ", "ū")}
+
+
+def _asma_word(k: int) -> tuple[str, str, str]:
+    """The k-th made-up name: (Latin, Arabic with harakat, Bangla), Latin letters Arabic doesn't have (p, g, v)
+    first, so nothing in the suite is one of the real names (checked against the approved list, 2026-11-25)."""
+    cs, vs = "pgvbdfjlmnrtz", ["a", "i", "u"]
+    longs = ["ā", "ī", "ū"]
+    c1, c2, c3 = cs[k % 3], cs[3 + (k // 3) % 10], cs[(k * 7 + 2) % 13]
+    v1, v2 = vs[(k // 30) % 3], longs[k % 3]
+    lat = c1 + v1 + c2 + v2 + c3
+    ar = "".join(_AS_C[c][0] + _AS_V[v][0] for c, v in ((c1, v1), (c2, v2))) + _AS_C[c3][0] + "ُ"
+    bn = _AS_C[c1][1] + _AS_V[v1][1] + _AS_C[c2][1] + _AS_V[v2][1] + _AS_C[c3][1] + "ু"
+    return lat, ar, bn
+
+
+ASMA_MEANINGS = {7: ("the Made-up Kind", "বানানো দয়ালু"), 12: ("the Made-up Forgiver", "বানানো ক্ষমাকারী"),
+                 13: ("the Made-up Forgiving", "বানানো ক্ষমাশীল")}
+ASMA_SRC = "A made-up edition (regression.py)"
+
+
+def asma_entry(n: int, uses: list | None = None, **changes) -> dict:
+    if n == 1:
+        lat, ar, bn = "Pagūfu", "طَغُوفُ", "পাগুফু"
+    else:
+        lat, ar, bn = _asma_word(n)
+    en, bn_m = ASMA_MEANINGS.get(n, (f"the made-up name {n}", f"বানানো নাম {quran.bn_digits(n)}"))
+    own = {"kind": "your own dua", "reference": "Quran 7:180", "key": "7:180", "link": "https://quran.com/7/180",
+           "en": "Call upon Allah by this name in your own dua (Al-A'raf 7:180).", "bn": "নিজের দোয়ায় এই নামে আল্লাহকে ডাকুন (আল-আ'রাফ ৭:১৮০)।"}
+    e = {"n": n, "id": f"al-{asma._lat(lat)}" if n > 1 else "pagufu", "arabic": "الْ" + ar if n > 1 else ar,
+         "arabic_from": ASMA_SRC, "transliteration": {"en": f"Al-{lat.capitalize()}" if n > 1 else lat, "bn": f"আল-{bn}" if n > 1 else bn},
+         "meaning": {"en": en, "bn": bn_m},
+         "text_from": {k: ASMA_SRC for k in ("transliteration_en", "meaning_en", "transliteration_bn", "meaning_bn")},
+         "lists": {"tirmidhi_3507": n, "uthaymeen": {"list": "quran", "as_written": "ال" + ar} if n % 4 else None,
+                   "only_in": "tirmidhi" if not n % 4 else None},
+         "quran": {"definite": [f"{n}:1"] if n % 3 else [], "indefinite": [], "count": 1 if n % 3 else 0,
+                   "key": f"{n}:1" if n % 3 else None},
+         "explanation": None, "use": (uses or []) + [own], "links": ["https://sunnah.com/tirmidhi:3507"],
+         "status": "verified" if n % 5 else "check", "checks": [] if n % 5 else ["A made-up thing to check."], "notes": []}
+    e.update(changes)
+    return e
+
+
+ASMA_USES = {   # every kind of "how to use it", sound and not
+    7: [{"kind": "dua (You are …)", "arabic": fake_dua(40), "arabic_from": "Sahih al-Bukhari 9001 (made up)",
+         "reference": "Sahih al-Bukhari 9001", "grade": "Sahih (in Sahih al-Bukhari)", "link": "https://sunnah.com/bukhari:9001",
+         "hadith_en": "A made-up hadith.", "hadith_bn": "একটি বানানো হাদিস।"},
+        {"kind": "dhikr", "arabic": fake_dua(41), "arabic_from": "Sunan Abi Dawud 9002 (made up)",
+         "reference": "Sunan Abi Dawud 9002", "grade": "Hasan Sahih (Al-Albani)", "link": "https://sunnah.com/abudawud:9002",
+         "note": "The hadith gives a number of times or a reward: it's in the hadith's own words below, nowhere else."},
+        {"kind": "Quranic dua", "reference": "Quran 2:201", "key": "2:201", "link": "https://quran.com/2/201"}],
+    9: [{"kind": "dua (calling: yā …)", "arabic": fake_dua(42), "arabic_from": "Sunan Ibn Majah 9003 (made up)",
+         "reference": "Sunan Ibn Majah 9003", "grade": "Da'if (Al-Albani)"},                         # weak: left out
+        {"kind": "from your Dua & Zikr list", "id": "salah-a", "title": "First after salah (3x)",
+         "reference": ["Sunan an-Nasa'i 9004 (Sahih (Al-Albani))"], "arabic": fake_dua(1), "arabic_from": "Hisnul Muslim #1"}],
+    11: [{"kind": "Quranic dua", "reference": "Quran 3:8", "key": "3:8", "note": "Recite it 129 times for ease."}],   # a count: out
+    13: [{"kind": "dhikr", "arabic": "�" + fake_dua(43), "arabic_from": "Sahih Muslim 9005 (made up)",
+          "reference": "Sahih Muslim 9005", "grade": "Sahih (in Sahih Muslim)"}],                     # damaged: out
+}
+
+
+def asma_data(names: list | None = None, **top) -> dict:
+    return {"version": 1, "built": "2026-11-25", "status": "approved 2026-11-25 (the suite's)", "sources": {},
+            "note": {"sahih": [{"reference": "Sahih al-Bukhari 9000", "link": "https://sunnah.com/bukhari:9000",
+                                "grade": "Sahih (in Sahih al-Bukhari)", "en": "A made-up report.",
+                                "bn": "অন্য একটি বানানো বর্ণনা। ৯০০০. আসল বানানো হাদিসটি।"}],
+                     "list": {"reference": "Jami' at-Tirmidhi 3507", "link": "https://sunnah.com/tirmidhi:3507",
+                              "grades": ["Daif (made up)"], "en": "A made-up note.", "bn": "বানানো নোট।"},
+                     "uthaymeen": {"not_fixed": fake_dua(44, 3), "source": {"title": "made up", "link": "https://usul.ai/t/x/14"}}},
+            "names": names if names is not None else [asma_entry(n, ASMA_USES.get(n)) for n in range(1, 100)],
+            "uthaymeen_only": [{"arabic_as_written": "الْ" + _asma_word(200)[1], "list": "sunnah", "his_no": 82, "his_source": "مسلم"}],
+            **top}
+
+
+def write_asma_list(data: dict | None = None, raw: str | None = None) -> None:
+    with open(asma.LIST_FILE, "w", encoding="utf-8") as f:
+        f.write(raw if raw is not None else "# The suite's made-up names (regression.py): none of them real.\n" +
+                yaml.safe_dump(data or asma_data(), allow_unicode=True, sort_keys=False, width=110))
+    asma.reload()
+
+
+def asma_fresh(**settings) -> "FakeQuranCom":
+    """The suite's list, no marks, settings (the defaults, with changes), no notes; the Tanzil text and the fake
+    Quran.com for the Quranic duas' ayahs (returned)."""
+    write_asma_list()
+    for f in (asma.PROGRESS_FILE, asma.SETTINGS_FILE, tafsir_study.NOTES_FILE):
+        with contextlib.suppress(OSError):
+            os.remove(f)
+    if settings:
+        asma.save_settings(settings)
+    dua_fresh()
+    fake = FakeQuranCom()
+    duas._get_json = fake.get
     return fake
 
 
@@ -5556,6 +5663,572 @@ def dua_routes():
     return {"problems": problems}
 
 
+# ---------- Asma ul-Husna (asma.py), 2026-11-25 ----------
+REAL_ASMA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "asma_ul_husna.yaml")
+ASMA_7 = "the Made-up Kind"
+
+
+def _asma_rules(names: list[dict]) -> list[str]:
+    """The brief's rules on a loaded list: 99 names, none twice; each with its Arabic, both meanings and a source for
+    each; every dua or dhikr with a reference and a grading of sahih or hasan; no count without a sound hadith."""
+    out = []
+    if len(names) != 99:
+        out.append(f"{len(names)} names, not 99")
+    for what, key in (("number", lambda e: e["n"]), ("id", lambda e: e["id"]), ("Arabic", lambda e: asma._ar_full(e["arabic"]))):
+        seen = [key(e) for e in names]
+        if len(set(seen)) != len(seen):
+            out.append(f"a {what} twice")
+    for e in names:
+        src = e["text_from"]
+        if not e["arabic"] or not e["arabic_from"] or set(e["meaning"]) != {"en", "bn"} or \
+                not (src.get("meaning_en") and src.get("meaning_bn")):
+            out.append(f"name {e['n']}: Arabic, both meanings or their sources missing")
+        if any(asma._COUNT.search(t) for t in e["meaning"].values()):
+            out.append(f"name {e['n']}: a count in its meaning")
+        for u in e["use"]:
+            if not u["reference"]:
+                out.append(f"name {e['n']}: a use without a reference")
+            if u["kind"] in asma.HADITH_KINDS and not asma.sound_grade(u.get("grade") or ""):
+                out.append(f"name {e['n']}: {u['reference'][0]} graded {u.get('grade')}")
+            if u["kind"] == "from your Dua & Zikr list" and not any(asma._SOUND_REF.search(r) for r in u["reference"]):
+                out.append(f"name {e['n']}: {u['id']} has no sound reference")
+            said = " ".join(str(u.get(k) or "") for k in ("title", "note", "en", "bn"))
+            if (asma._COUNT.search(said) or asma._BENEFIT.search(said)) and not u.get("sound"):
+                out.append(f"name {e['n']}: a count or a benefit without a sound hadith ({u['reference'][0]})")
+        if not any(u["kind"] == "your own dua" for u in e["use"]):
+            out.append(f"name {e['n']}: no 'your own dua' line")
+    return out
+
+
+def asma_approved_list():
+    """Mahadi's approved list itself (data/asma_ul_husna.yaml, only read: nothing is written or kept), by the brief's
+    rules: 99 entries, no duplicates, each with its Arabic, both meanings and a source; every dua or dhikr with a
+    reference and a sahih or hasan grading; no count without a sound hadith. What it leaves out is only text the
+    hadith data itself has damaged. (The file is gitignored: on a machine without it there's nothing to check.)"""
+    if not os.path.exists(REAL_ASMA):
+        return {"problems": []}
+    with open(REAL_ASMA, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    v = asma._validate(raw)
+    problems = [f"the approved list: {p}" for p in v["problems"]] + _asma_rules(v["names"])
+    problems += [f"left out: {d}" for d in v["dropped"] if "U+FFFD" not in d]
+    for x in raw["names"]:
+        for u in x.get("use") or []:
+            if u.get("kind") in asma.HADITH_KINDS and not asma.sound_grade(str(u.get("grade") or "")):
+                problems.append(f"the file itself has {u.get('reference')} graded {u.get('grade')}")
+    return {"problems": problems}
+
+
+def asma_list():
+    """The suite's list loads by the same rules: a weak-graded dua, a Quranic dua's line with a count and a use whose
+    text the source damaged are left out and said; a name with one meaning, no sources, an Arabic twice, a count in
+    its meaning or no 7:180 line is left out and said; a broken file keeps the last good list, no file is said;
+    `python asma.py --check` says what it holds; the page's note quotes each hadith from its own number; the Hifz
+    theme's checks have the tab's lines, passed by Classic and every preset."""
+    problems = []
+    asma_fresh()
+    if not asma.LIST_FILE.startswith(SCRATCH):
+        problems.append(f"the list read is {asma.LIST_FILE}")
+    problems += _asma_rules(asma.names())
+    dropped = " ".join(asma._load()["dropped"])
+    for part in ("name 9: Sunan Ibn Majah 9003: graded Da'if", "name 11: Quran 3:8: a Quranic dua's line gives a count",
+                 "name 13: Sahih Muslim 9005: its text came out damaged"):
+        if part not in dropped:
+            problems.append(f"not left out: {part!r} ({dropped!r})")
+    if [u["kind"] for u in asma.get(7)["use"]] != ["dua (You are …)", "dhikr", "Quranic dua", "your own dua"] or \
+            [u["kind"] for u in asma.get(9)["use"]] != ["from your Dua & Zikr list", "your own dua"]:
+        problems.append(f"the uses kept: {[u['kind'] for u in asma.get(7)['use']]}, {[u['kind'] for u in asma.get(9)['use']]}")
+    if not asma.get(9)["use"][0]["counted"] or not asma.get(7)["use"][1]["counted"] or asma.get(7)["use"][0]["counted"]:
+        problems.append("a sound hadith's own count isn't marked as its own")
+    bad = [asma_entry(n, ASMA_USES.get(n)) for n in range(1, 100)]
+    bad[1]["meaning"] = {"en": "only English"}
+    bad[2]["text_from"] = {}
+    bad[4]["arabic"] = bad[3]["arabic"]
+    bad[5]["meaning"] = {"en": "say it 33 times", "bn": "বানানো"}
+    bad[6]["use"] = [u for u in bad[6]["use"] if u["kind"] != "your own dua"]
+    bad[7]["use"].insert(0, {"kind": "dhikr", "arabic": fake_dua(45), "arabic_from": "x", "grade": "Sahih"})   # no reference
+    bad[9]["use"][-1]["en"] += " Say it 3 times."                                                            # a count
+    write_asma_list(asma_data(bad))
+    said = " | ".join(asma.problems())
+    for part in ("name 2: needs its meaning in English and Bangla", "name 3: no source for", "name 5: its number, id or Arabic is there twice",
+                 "name 6: a count in its meaning", "name 7: no own-dua line", "name 10: no own-dua line", "93 names, not 99"):
+        if part not in said:
+            problems.append(f"broken entries: {part!r} not in {said!r}")
+    if len(asma.names()) != 93 or "dhikr without a reference" not in " ".join(asma._load()["dropped"]) or \
+            "name 10: the own-dua line gives a count" not in " ".join(asma._load()["dropped"]):
+        problems.append(f"broken entries: {len(asma.names())} kept")
+    write_asma_list(raw="names: [ {n: unclosed")
+    if len(asma.names()) != 93 or "can't be read" not in " ".join(asma.problems()):
+        problems.append(f"a broken file: {len(asma.names())} names, {asma.problems()}")
+    os.remove(asma.LIST_FILE)
+    asma.reload()
+    if asma.names() or "There's no data/asma_ul_husna.yaml." not in asma.problems() or asma.request("today's name"):
+        problems.append("no file, yet a list")
+    asma_fresh()
+    lines, bad_ones = asma.check_report()
+    text = "\n".join(lines)
+    for part in ("99 names: 80 verified, 19 to check (approved)", "Lists: 75 in Ibn Uthaymeen's too, 24 only in Tirmidhi 3507's, 1 only",
+                 "left out: name 9", "Names with a sound dua, dhikr or Quranic dua: 2"):
+        if part not in text:
+            problems.append(f"--check lacks {part!r}: {text!r}")
+    if bad_ones:
+        problems.append(f"--check found {bad_ones}")
+    if asma.tab_json()["note"]["sahih"][0]["bn"] != "৯০০০. আসল বানানো হাদিসটি।":
+        problems.append(f"the note's hadith: {asma.tab_json()['note']['sahih'][0]['bn']!r}")
+    lines_on = lambda checks: [c for c in checks if c["what"].startswith("Asma ul-Husna")]
+    if len(lines_on(themes.hifz_classic()["checks"])) != 5 or not all(c["ok"] for c in lines_on(themes.hifz_classic()["checks"])):
+        problems.append(f"Classic's Asma ul-Husna checks: {lines_on(themes.hifz_classic()['checks'])}")
+    for t in themes.listing()["themes"]:
+        if t.get("hifz") and (len(lines_on(t["hifz"]["checks"])) != 5 or not all(c["ok"] for c in lines_on(t["hifz"]["checks"]))):
+            problems.append(f"{t['id']}'s Asma ul-Husna checks: {[c for c in lines_on(t['hifz']['checks']) if not c['ok']]}")
+    return {"problems": problems}
+
+
+def asma_search():
+    """The search box in every script: a number in Latin, Arabic-Indic, Persian or Bengali digits; the Arabic with
+    its harakat, without, without al-; the transliteration in other spellings and cases, a beginning of it; the
+    English meaning (a word's other forms too); the Bangla transliteration (short or long vowels) and meaning."""
+    problems = []
+    asma_fresh()
+    e = asma.get(7)
+    bare = "".join(ch for ch in e["arabic"] if not ("ً" <= ch <= "ْ"))
+    for q, want in [("7", [7]), ("٧", [7]), ("۷", [7]), ("৭", [7]), ("100", []), ("0", []),
+                    (e["arabic"], [7]), (bare, [7]), (bare[2:], [7]),
+                    ("Al-Gafīz", [7]), ("al gafeez", [7]), ("GAFIZ", [7]), ("Ya Gafiz", [7]),
+                    ("kind", [7]), ("made-up kind", [7]), ("forgiver", [12, 13]),
+                    ("আল-গাফীযু", [7]), ("গাফিয", [7]), ("দয়ালু", [7]), ("nothing like it", [])]:
+        got = asma.search(q)
+        if got[:len(want)] != want or (not want and got):
+            problems.append(f"search {q!r}: {got[:6]}")
+    begun = asma.search("gaf")
+    if not begun or begun[0] != 7 or not all(asma.get(n)["transliteration"]["en"].lower().startswith("al-gaf") for n in begun):
+        problems.append(f"a beginning: {begun}")
+    if len(asma.search("")) != 99:
+        problems.append("an empty search isn't all of them")
+    return {"problems": problems}
+
+
+def asma_rotation():
+    """The name of the day: the list in order from the first day it's opened (kept, owner-only), one a day, all 99
+    once each, round again on the 100th; the same all day; the day turns at Fajr (from the prayer times, or 05:00
+    without them); the reminder after Fajr carries its number and meaning, never the name, and not when it's off."""
+    problems = []
+    fake = prayer_fresh()
+    prayer_settings()
+    asma_fresh()
+    noon = _dhaka(2026, 11, 25, 12, 0)
+    with prayer_clock(noon) as clock:
+        if asma.name_of_day()["n"] != 1 or json.load(open(asma.PROGRESS_FILE))["start"] != "2026-11-25" or \
+                os.stat(asma.PROGRESS_FILE).st_mode & 0o077:
+            problems.append("the first day: not name 1, or its start isn't kept owner-only")
+        seen = []
+        for i in range(100):
+            clock.at(noon + timedelta(days=i))
+            seen.append(asma.name_of_day()["n"])
+        if seen[:99] != list(range(1, 100)) or seen[99] != 1:
+            problems.append(f"the rotation: {seen[:5]}…{seen[95:]}")
+        fajr = prayers._at(prayers.times_for(date(2026, 11, 26)), "Fajr")
+        clock.at(fajr - timedelta(minutes=1))
+        before = asma.name_of_day()["n"]
+        clock.at(fajr + timedelta(minutes=1))
+        after = asma.name_of_day()["n"]
+        clock.at(_dhaka(2026, 11, 26, 23, 50))
+        late = asma.name_of_day()["n"]
+        if (before, after, late) != (1, 2, 2):
+            problems.append(f"the day at Fajr: {before}, {after}, {late}")
+        prayer_fresh(FakeAladhan(down=True))
+        clock.at(_dhaka(2027, 3, 2, 4, 59))
+        a = asma.learning_day()
+        clock.at(_dhaka(2027, 3, 2, 5, 1))
+        if (a, asma.learning_day()) != (date(2027, 3, 1), date(2027, 3, 2)):
+            problems.append(f"without prayer times: {a}, {asma.learning_day()}")
+        prayer_fresh()
+        prayer_settings()
+        clock.at(noon + timedelta(days=6))
+        line = asma.morning_line("en")
+        if line != " Today's name of Allah: number 7, “the Made-up Kind”, on the Hifz page." or not asma.speakable(line):
+            problems.append(f"the morning line: {line!r}")
+        if "৭ নম্বর" not in asma.morning_line("bn") or not asma.speakable(asma.morning_line("bn")):
+            problems.append(f"the morning line in Bangla: {asma.morning_line('bn')!r}")
+        asma.save_settings({"morning": False})
+        if asma.morning_line("en"):
+            problems.append("the morning line when it's off")
+    return {"problems": problems}
+
+
+def asma_reminder():
+    """The hifz reminder after Fajr says the name of the day with its number and meaning, on the page and Telegram,
+    and its words reach edge-tts without the name."""
+    problems = []
+    prayer_fresh()
+    prayer_settings()
+    hifz_fresh()
+    hifz_settings()
+    with contextlib.suppress(OSError):
+        os.remove(timers.TIMERS_FILE)
+    asma_fresh()
+    with prayer_clock(_dhaka(2026, 11, 24, 12, 0)) as clock:
+        asma.name_of_day()                       # the rotation starts on the 24th
+        fajr = prayers._at(prayers.times_for(date(2026, 11, 25)), "Fajr")
+        clock.at(fajr + timedelta(minutes=25))
+        raised = hifz.tick()
+        morning = [a for a in raised if a["extra"]["hifz"]["kind"] == "morning"]
+        if not morning:
+            problems.append(f"no morning reminder: {raised}")
+        else:
+            en, bn = morning[0]["announce"]["en"], morning[0]["announce"]["bn"]
+            if "Today's name of Allah: number 2, “the made-up name 2”, on the Hifz page." not in en or "২ নম্বর" not in bn:
+                problems.append(f"the reminder: {en!r} / {bn!r}")
+            if not asma.speakable(en) or not asma.speakable(bn):
+                problems.append("the reminder says a name")
+            TTS_CALLS.clear()
+            with fake_edge_tts():
+                speak_like_page(page_speech([], en), "en")
+            if not TTS_CALLS or not all(asma.speakable(t) and _no_arabic(t) for t, _ in TTS_CALLS):
+                problems.append(f"edge-tts got a name: {TTS_CALLS}")
+    hifz_fresh()
+    return {"problems": problems}
+
+
+def asma_spacing():
+    """Learned and still reviewing, spaced as hifz.py spaces its juz: a learned name comes back after a cycle (99 /
+    daily, 20 days at 5), stalest first, daily a day, fewer once some are reviewed today, overdue ones marked behind;
+    one still reviewing comes back weak_days after it was marked; "not yet" clears a mark; the flashcards' deck puts
+    what's due first, then the name of the day, then a few new; a learned 99 reviewed every day stay on time for 60
+    days; marks owner-only; a bad mark or name refused."""
+    problems = []
+    prayer_fresh()
+    prayer_settings()
+    asma_fresh(daily=5, weak_days=2)
+    day0 = _dhaka(2026, 11, 25, 12, 0)
+    with prayer_clock(day0) as clock:
+        go = lambda d: clock.at(day0 + timedelta(days=d))
+        for n in range(1, 11):
+            asma.mark(n, "learned")
+        asma.mark(11, "reviewing")
+        asma.mark(12, "reviewing")
+        st = asma.state()
+        if st["cycle"] != 20 or st["review_today"] or st["reviewing_due"] or (st["learned"], st["reviewing"], st["new"]) != (10, 2, 87):
+            problems.append(f"day 0: {st['cycle']}, {st['review_today']}, {st['reviewing_due']}, {st['learned']}/{st['reviewing']}/{st['new']}")
+        go(1)
+        if asma.state()["reviewing_due"]:
+            problems.append("a reviewing name came back after one day")
+        go(2)
+        if asma.state()["reviewing_due"] != [11, 12]:
+            problems.append(f"day 2: {asma.state()['reviewing_due']}")
+        asma.mark(11, "learned")
+        asma.mark(12, "reviewing")
+        go(4)
+        if asma.state()["reviewing_due"] != [12]:
+            problems.append(f"day 4: {asma.state()['reviewing_due']}")
+        go(19)
+        if asma.state()["review_today"]:
+            problems.append(f"day 19: {asma.state()['review_today']}")
+        go(20)
+        st = asma.state()
+        if st["review_today"] != [1, 2, 3, 4, 5] or st["behind"]:
+            problems.append(f"day 20: {st['review_today']}, behind {st['behind']}")
+        asma.mark(1, "learned")
+        asma.mark(2, "learned")
+        if asma.state()["review_today"] != [3, 4, 5] or asma.state()["reviewed_today"] != 2:
+            problems.append(f"day 20 after two: {asma.state()['review_today']}")
+        go(21)
+        st = asma.state()
+        if st["review_today"] != [3, 4, 5, 6, 7] or st["behind"] != [3, 4, 5, 6, 7, 8, 9, 10]:
+            problems.append(f"day 21: {st['review_today']}, behind {st['behind']}")
+        asma.mark(10, "new")
+        if asma.state()["per"][asma.get(10)["id"]]["mark"] or 10 in asma.state()["behind"]:
+            problems.append("'not yet' didn't clear the mark")
+        deck = asma.deck("due")
+        today = asma.name_of_day()["n"]
+        want = [(12, "reviewing")] + [(n, "review") for n in (3, 4, 5, 6, 7)]
+        if [(c["n"], c["why"]) for c in deck[:6]] != want or (today, "today") not in [(c["n"], c["why"]) for c in deck] or \
+                len([c for c in deck if c["why"] == "new"]) != asma.NEW_IN_DECK:
+            problems.append(f"the deck: {[(c['n'], c['why']) for c in deck]}")
+        if [c["n"] for c in asma.deck("reviewing")] != [12] or len(asma.deck("all")) != 99 or 10 in [c["n"] for c in asma.deck("learned")]:
+            problems.append("the other decks")
+        if os.stat(asma.PROGRESS_FILE).st_mode & 0o077:
+            problems.append("the marks aren't owner-only")
+        for bad, err in (((7, "maybe"), ValueError), ((150, "learned"), KeyError), (("al-nothing", "learned"), KeyError)):
+            try:
+                asma.mark(*bad)
+                problems.append(f"marked {bad}")
+            except err:
+                pass
+        asma.save_settings({"daily": 10})
+        if asma.state()["cycle"] != 10:
+            problems.append(f"10 a day: a cycle of {asma.state()['cycle']}")
+        # all 99 learned over 20 days, then every day's reviews done for 60 days: nothing falls behind
+        with contextlib.suppress(OSError):
+            os.remove(asma.PROGRESS_FILE)
+        asma.save_settings({"daily": 5})
+        for d in range(20):
+            go(100 + d)
+            for n in range(d * 5 + 1, min(d * 5 + 6, 100)):
+                asma.mark(n, "learned")
+        last = {}
+        for d in range(20, 80):
+            go(100 + d)
+            st = asma.state()
+            if st["behind"]:
+                problems.append(f"day {d}: behind {st['behind']}")
+                break
+            for n in st["review_today"]:
+                asma.mark(n, "learned")
+                last[n] = d
+        late = [n for n, d in last.items() if 80 - d > 21]
+        if len(last) != 99 or late:
+            problems.append(f"60 days: {len(last)} reviewed, {late} left too long")
+    return {"problems": problems}
+
+
+def asma_voice():
+    """Asked by voice, answered in code with no model request: a name's meaning (its transliteration in other
+    spellings, a number, Bangla, Arabic), today's name, a dua with a name (only the sound ones: a weak one never
+    shows), none but your own dua, the tab and the flashcards, "recite" refused; two names that sound alike both
+    shown; a mixed message goes to the model. What's spoken never holds a name; the screen holds its Arabic."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayer_fresh()
+    prayer_settings()
+    asma_fresh()
+    names = [asma_entry(n, ASMA_USES.get(n)) for n in range(1, 100)]
+    names[49]["transliteration"]["en"] = "Al-Gāfiz"          # sounds like no. 7, written apart
+    names[19]["meaning"]["en"] = "the One Al-Padar is said of"   # a meaning holding a name: it isn't spoken
+    write_asma_list(asma_data(names))
+    spoken = []
+    with prayer_clock(_dhaka(2026, 11, 25, 12, 0)):
+        asma.name_of_day()
+        asked = SCRIPTED_REQUESTS
+        for text, lang, event, want in [
+                ("what does Al-Gafīz mean?", "en", {"open": "al-gafiz", "alike": ["al-gafiz", names[49]["id"]]}, None),
+                ("what does al-padar mean?", "en", {"open": "al-padar"}, "Name 3 in your list means “the made-up name 3”. Its card is open on your screen."),
+                ("What does al padaar mean", "en", {"open": "al-padar"}, "Name 3 in your list means “the made-up name 3”. Its card is open on your screen."),
+                ("name 3", "en", {"open": "al-padar"}, "Name 3 in your list means “the made-up name 3”. Its card is open on your screen."),
+                ("what is the 3rd name?", "en", {"open": "al-padar"}, "Name 3 in your list means “the made-up name 3”. Its card is open on your screen."),
+                ("আল-পাদারু মানে কী?", "bn", {"open": "al-padar"}, "তালিকার ৩ নম্বর নামের অর্থ “বানানো নাম ৩”। কার্ডটি পর্দায় খোলা।"),
+                (f"ما معنى {asma.get(3)['arabic']}", "en", {"open": "al-padar"}, "Name 3 in your list means “the made-up name 3”. Its card is open on your screen."),
+                ("today's name", "en", {"open": "pagufu"}, "Today's name is number 1: “the made-up name 1”. Its card is open on your screen."),
+                ("dua with al-pajap", "en", {"open": "al-pajap"}, "There is 1 authentic dua with name 9 in your list and the sources checked; "
+                 "the first is Sunan an-Nasa'i 9004, graded sahih by Al-Albani. Its card is open on your screen."),
+                ("a dua with Al-Vabub", "en", {"open": "al-vabub"}, "No dua in the sources checked calls on Allah by name 2. Call upon Him by "
+                 "it in your own dua, as Al-A'raf 7:180 says. Its card is open on your screen."),
+                ("open asma ul husna", "en", {"open": True, "cards": False}, None),
+                ("flashcards of the names of Allah", "en", {"open": True, "cards": True}, None),
+                ("recite the names of Allah", "en", None, "I don't recite Allah's names aloud: their Arabic and meanings are on the Hifz page's Asma ul-Husna tab."),
+                ("name 20", "en", {"open": names[19]["id"]}, "Name 20's card is on your screen.")]:
+            events, reply = _dua_turn(text, lang=lang)
+            seen = [v for k, v in events if k == "asma"]
+            if (want and reply != want) or (seen[:1] != [event] if event else seen):
+                problems.append(f"{text!r}: {reply!r}, {seen}")
+            if not asma.speakable(reply) or not _no_arabic(reply):
+                problems.append(f"{text!r}: the reply says a name: {reply!r}")
+            spoken.append(reply)
+        if SCRIPTED_REQUESTS != asked:
+            problems.append("a model was asked")
+        _, reply = _dua_turn("dua with Al-Gafiz")
+        if "2 names sound like that: number 7, “the Made-up Kind” and number 50" not in reply:
+            problems.append(f"alike: {reply!r}")
+        _, screen = _drain(asma.answer(asma.request("dua with Al-Pajap"), "en", "page"))
+        if "9003" in screen or fake_dua(42) in screen or fake_dua(1) not in screen or "Sunan an-Nasa'i 9004" not in screen:
+            problems.append(f"the dua's screen: {screen!r}")
+        said, _ = _drain(asma.answer(asma.request("what does al-padar mean?"), "en", "telegram"))
+        if said != "Name 3 in your list means “the made-up name 3”.":
+            problems.append(f"Telegram: {said!r}")
+        for text in ("what does Al-Padar mean and set a timer for 5 minutes", "what does Al-Padar mean and Al-Pajap?",
+                     "play Surah Al-Padar", "what does bar mean?"):
+            if asma.request(text):
+                problems.append(f"taken in code: {text!r}")
+        lines = client.post("/type", headers=PAGE, json={"text": "what does al-padar mean?"}).text.splitlines()
+        if not any(json.loads(x).get("type") == "asma" and json.loads(x).get("open") == "al-padar" for x in lines if x.strip()):
+            problems.append(f"/type's events: {[json.loads(x).get('type') for x in lines if x.strip()]}")
+    TTS_CALLS.clear()
+    with fake_edge_tts():
+        for r in spoken:
+            speak_like_page(page_speech([], r), "en")
+    lat = [x["transliteration"]["en"].split("-")[-1] for x in names[1:]]
+    for t, _ in TTS_CALLS:
+        if any(w in t for w in lat) or not _no_arabic(t):
+            problems.append(f"edge-tts got {t!r}")
+    return {"problems": problems}
+
+
+def _drain(gen):
+    while True:
+        try:
+            next(gen)
+        except StopIteration as done:
+            return done.value
+
+
+def asma_model_rule():
+    """The model never gives a name's meaning, a count to recite it or a benefit of it: such a reply is rewritten
+    once, then those sentences go; a sentence that only names one is left alone."""
+    problems = []
+    asma_fresh()
+    _script.extend(["Al-Gafiz means the Made-up Kind. Recite it daily.", "They're in your approved list on the Hifz page."])
+    _, reply = _dua_turn("tell me about the names of Allah and their virtues")
+    if reply != "They're in your approved list on the Hifz page." or _script:
+        problems.append(f"rewritten: {reply!r}")
+    _script.extend(["Repeat Ya Padar 100 times for ease. Have a calm day.", "Ya Padar, said 100 times, brings ease."])
+    _, reply = _dua_turn("give me something for stress and the names of Allah's virtues")
+    if reply != asma.strip_reply("", "en") or _script:
+        problems.append(f"dropped: {reply!r}")
+    for ok in ("Surah Al-Mulk is about sovereignty.", "The name Al-Padar is on your Hifz page.", "Al-Padar is in your list."):
+        if asma.reply_problem(ok):
+            problems.append(f"flagged {ok!r}")
+    if not asma.reply_problem("Ar-Padar? No: Al-Padar means the one who sees.") or not asma.reply_problem("Ya Gafiz 33 times a day."):
+        problems.append("a meaning or a count passed")
+    return {"problems": problems}
+
+
+def asma_notes():
+    """His reflection on a name is a note in his Tadabbur notebook, beside his passage notes: saved owner-only,
+    found by its meaning, its transliteration, its tags, listed after the passages, exported in its own section, on
+    the name's card; a mark, an unknown name or an empty note isn't kept; whatever else the file holds stays."""
+    problems = []
+    tafsir_fresh()
+    asma_fresh()
+    tafsir_study.save_note({"first": "67:1", "last": "67:5", "reflection": "A made-up thought on the passage."})
+    n = tafsir_study.save_note({"name": "al-gafiz", "reflection": "A made-up reflection on kindness.", "tags": ["Mercy"]})
+    if n["label"] != f"Name 7: {ASMA_7}" or n["name"] != "al-gafiz" or os.stat(tafsir_study.NOTES_FILE).st_mode & 0o077:
+        problems.append(f"saved: {n}")
+    every = tafsir_study.notes()
+    if [x.get("name") or x["first"] for x in every] != ["67:1", "al-gafiz"]:
+        problems.append(f"the order: {every}")
+    for q, tag in (("kind", ""), ("gafiz", ""), ("reflection", ""), ("", "mercy")):
+        if "al-gafiz" not in [x.get("name") for x in tafsir_study.notes(q, tag)]:
+            problems.append(f"not found by {q or tag!r}")
+    if (asma.name_json(7)["note"] or {}).get("reflection") != "A made-up reflection on kindness.":
+        problems.append("not on the card")
+    md = tafsir_study.export_md()
+    if "## The names of Allah (Asma ul-Husna)" not in md or f"### 7. {asma.get(7)['arabic']} · {ASMA_7}" not in md or \
+            "A made-up reflection on kindness." not in md or "A made-up thought on the passage." not in md:
+        problems.append(f"exported: {md!r}")
+    said, _ = _drain(tafsir_study.notes_answer("mercy", "en"))
+    if f"Name 7: {ASMA_7}" not in said:
+        problems.append(f"by voice: {said!r}")
+    for body in ({"name": "al-gafiz", "reflection": "x", "mark": "studied"}, {"name": "al-nothing", "reflection": "x"},
+                 {"name": "al-gafiz", "reflection": "x" * 5000}):
+        try:
+            tafsir_study.save_note(body)
+            problems.append(f"kept {str(body)[:60]}")
+        except ValueError:
+            pass
+    data = json.load(open(tafsir_study.NOTES_FILE))
+    data["other"] = {"kept": True}
+    json.dump(data, open(tafsir_study.NOTES_FILE, "w"))
+    tafsir_study.save_note({"name": "al-gafiz", "reflection": "", "tags": []})
+    data = json.load(open(tafsir_study.NOTES_FILE))
+    if data.get("other") != {"kept": True} or any(x.get("name") for x in data["notes"]) or len(data["notes"]) != 1:
+        problems.append(f"emptied: {data}")
+    return {"problems": problems}
+
+
+def asma_explain():
+    """Sa'di's explanation is cut from Quran.com's text where the list says he explains the name: from the name he
+    quotes to his first comma (his full stop when he quotes it with another name, or with "Allah"), at most 30
+    words; said so when the text there no longer quotes it; a 503 when Quran.com can't be reached, a 404 when the
+    list has none."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    asma_fresh()
+    names = [asma_entry(n, ASMA_USES.get(n)) for n in range(1, 100)]
+    a7, a9 = asma.get(7)["arabic"], asma.get(9)["arabic"]
+    names[6]["explanation"] = {"source": "made up", "key": "85:14", "quoted": "{ " + a7 + " }", "link": "https://quran.com/85:14/tafsirs/ar-tafseer-al-saddi"}
+    names[8]["explanation"] = {"source": "made up", "key": "51:58", "quoted": "{ إِنَّ اللَّهَ هُوَ " + a9 + " }"}
+    names[2]["explanation"] = {"source": "made up", "key": "2:2", "quoted": "{ " + asma.get(3)["arabic"] + " }"}
+    write_asma_list(asma_data(names))
+    words = fake_dua(50, 45)
+    text = {"85:14": [["قال: ", ""], ["{ " + a7 + " }", "q"], [" أي: " + fake_dua(51, 3) + "، " + fake_dua(52, 4) + ".", ""]],
+            "51:58": [["{ إِنَّ اللَّهَ هُوَ " + a9 + " }", "q"], [" " + fake_dua(53, 2) + "، " + words + ".", ""]],
+            "2:2": [["{ " + fake_dua(54, 1) + " }", "q"], [" " + fake_dua(55, 3), ""]]}
+    state = {"down": False}
+
+    def passage(tid, key, lang="en", fetch=True):
+        if state["down"]:
+            raise tafsir.Unavailable("the fake Quran.com is down")
+        return {"label_en": f"made-up {key}", "link": f"https://quran.com/{key}/tafsirs/ar-tafseer-al-saddi",
+                "fetched": 0, "sections": [{"title": None, "blocks": [{"t": "p", "runs": text[key]}]}]}
+    saved, tafsir.passage = tafsir.passage, passage
+    try:
+        x = asma.explanation(7)
+        if x.get("text") != "أي: " + fake_dua(51, 3) + "،" or x["tafsir"] != tafsir.meta(91)["name_en"]:
+            problems.append(f"to his first comma: {x}")
+        x = asma.explanation(9)
+        if not x.get("text", "").endswith(" …") or len(x["text"].split()) != 41:
+            problems.append(f"with Allah quoted, to his full stop, 40 words: {x.get('text')!r}")
+        if not asma.explanation(3).get("missing"):
+            problems.append("a text that doesn't quote it")
+        if asma.explanation(2) is not None or client.get("/asma/explain/al-vabub", headers=KEYED).status_code != 404:
+            problems.append("no explanation in the list")
+        if client.get("/asma/explain/al-gafiz", headers=KEYED).json().get("text") != "أي: " + fake_dua(51, 3) + "،":
+            problems.append("the route")
+        state["down"] = True
+        if client.get("/asma/explain/al-gafiz", headers=KEYED).status_code != 503:
+            problems.append("Quran.com down isn't a 503")
+    finally:
+        tafsir.passage = saved
+    return {"problems": problems}
+
+
+def asma_routes():
+    """GET /asma needs the key; a mark and the settings need the page's Origin too; bad marks, names, decks and
+    settings are refused with a reason and nothing saved; a name's card has its Quranic duas' text (Quran.com's, six
+    days) and its note; the reply stream passes the asma event on."""
+    from fastapi.testclient import TestClient
+    import server
+    problems, client = [], TestClient(server.app)
+    prayer_fresh()
+    prayer_settings()
+    asma_fresh()
+    with prayer_clock(_dhaka(2026, 11, 25, 12, 0)):
+        if client.get("/asma", headers={"host": "localhost:8000"}).status_code != 401:
+            problems.append("GET /asma without the key")
+        tab = client.get("/asma", headers=KEYED).json()
+        if len(tab["names"]) != 99 or tab["today"] != 1 or not tab["approved"] or set(tab["progress"]) < {"learned", "due", "cycle"} \
+                or len(tab["uthaymeen_only"]) != 1:
+            problems.append(f"GET /asma: {sorted(tab)}")
+        if client.get("/asma/search", params={"q": "৭"}, headers=KEYED).json()["ns"] != [7]:
+            problems.append("the search route")
+        c = client.get("/asma/name/al-gafiz", headers=KEYED).json()
+        q = next((u for u in c.get("use", []) if u["kind"] == "Quranic dua"), {})
+        if c.get("n") != 7 or (q.get("text") or {}).get("text") != " ".join(fake_words(2, 201)) or q["text"]["source"] != "Quran.com":
+            problems.append(f"the card: {c.get('n')}, {q}")
+        if client.get("/asma/name/7", headers=KEYED).json().get("id") != "al-gafiz" or \
+                client.get("/asma/name/al-nothing", headers=KEYED).status_code != 404:
+            problems.append("a card by its number, or one that isn't")
+        if client.get("/asma/deck", params={"which": "everything"}, headers=KEYED).status_code != 400 or \
+                not client.get("/asma/deck", headers=KEYED).json()["cards"]:
+            problems.append("the deck route")
+        if client.post("/asma/mark", headers=KEYED, json={"id": "al-gafiz", "mark": "learned"}).status_code != 403:
+            problems.append("a mark without the page's Origin")
+        r = client.post("/asma/mark", headers=PAGE, json={"id": "al-gafiz", "mark": "learned"})
+        if r.status_code != 200 or r.json()["tab"]["progress"]["learned"] != 1:
+            problems.append(f"a mark: {r.status_code} {r.text[:200]}")
+        for body, code in (({"id": "al-gafiz", "mark": "maybe"}, 400), ({"id": "al-nothing", "mark": "learned"}, 404)):
+            if client.post("/asma/mark", headers=PAGE, json=body).status_code != code:
+                problems.append(f"a mark {body}")
+        for body in ({"daily": 0}, {"daily": "5"}, {"weak_days": 30}, {"morning": "yes"}, {"meaning": "fr"}, {"colour": "red"}):
+            if client.post("/asma/settings", headers=PAGE, json=body).status_code != 400:
+                problems.append(f"settings {body} accepted")
+        if os.path.exists(asma.SETTINGS_FILE):
+            problems.append("a refused setting was saved")
+        r = client.post("/asma/settings", headers=PAGE, json={"daily": 7, "meaning": "bn"})
+        if r.status_code != 200 or r.json()["daily"] != 7 or os.stat(asma.SETTINGS_FILE).st_mode & 0o077:
+            problems.append(f"a setting: {r.text}")
+        if client.post("/asma/settings", headers=KEYED, json={"daily": 5}).status_code != 403:
+            problems.append("settings without the page's Origin")
+        r = client.put("/tafsir/notes", headers=PAGE, json={"name": "al-gafiz", "reflection": "made up"})
+        if r.status_code != 200 or client.get("/asma/name/al-gafiz", headers=KEYED).json()["note"]["reflection"] != "made up":
+            problems.append(f"a note from the card: {r.text[:200]}")
+        if json.loads(server._reply_event("asma", {"open": "al-gafiz"})) != {"type": "asma", "open": "al-gafiz"}:
+            problems.append("the stream drops the asma event")
+    return {"problems": problems}
+
+
 def prayer_config():
     """The settings: what reaches Aladhan (city, country, method, Asr school, offsets), a city change fetching again, a
     broken file keeping the last good settings and saying why, bad values refused, the shipped file checking out."""
@@ -8167,6 +8840,28 @@ CASES += [
          [], [drive_ok], drive=dua_quran_text, script=[]),
     Case("dua: the tab's routes: the key, the page's Origin to write, bad taps and settings refused, pictures by name",
          [], [drive_ok], drive=dua_routes, script=[]),
+    Case("asma: the approved list itself (read only): 99 names, none twice, Arabic, both meanings, sources, sound gradings, no counts",
+         [], [drive_ok], drive=asma_approved_list, script=[]),
+    Case("asma: the list's rules: weak, counted and damaged uses left out; broken names, files and none said; --check; the theme's lines",
+         [], [drive_ok], drive=asma_list, script=[]),
+    Case("asma: the search in every script: a number in four digit sets, Arabic with or without harakat, spellings, meanings, Bangla",
+         [], [drive_ok], drive=asma_search, script=[]),
+    Case("asma: the name of the day: the list in order from the first day, all 99 once, the day turning at Fajr; its morning line",
+         [], [drive_ok], drive=asma_rotation, script=[]),
+    Case("asma: the hifz reminder after Fajr carries the name of the day, its number and meaning, never the name",
+         [], [drive_ok], drive=asma_reminder, script=[]),
+    Case("asma: learned and reviewing spaced as hifz: a cycle, weak days, today's reviews, behind, the deck, 60 days on time",
+         [], [drive_ok], drive=asma_spacing, script=[]),
+    Case("asma: asked by voice, answered in code: meanings, today's name, duas (sound only), alike names; no name ever spoken",
+         [], [drive_ok], drive=asma_voice, script=[]),
+    Case("asma: a model's meaning, count or benefit of a name is rewritten once, then dropped",
+         [], [drive_ok], drive=asma_model_rule, script=[]),
+    Case("asma: reflections in the Tadabbur notebook: saved, found, listed after the passages, exported, on the card",
+         [], [drive_ok], drive=asma_notes, script=[]),
+    Case("asma: Sa'di's explanation cut from Quran.com's text as reviewed; missing, none, Quran.com down",
+         [], [drive_ok], drive=asma_explain, script=[]),
+    Case("asma: the tab's routes: the key, the page's Origin to write, bad marks and settings refused, the card, the event",
+         [], [drive_ok], drive=asma_routes, script=[]),
     Case("prayer: 'when is Ramadan?' in code from Aladhan, moved for Bangladesh; Aladhan down says so",
          [], [drive_ok], drive=ramadan_answers, script=[]),
     Case("file: /upload needs the key and Origin, /uploads lists, /type with the id, detach and DELETE",
@@ -8874,7 +9569,7 @@ CASES += [
          [], [drive_ok], drive=tafsir_routes, script=[]),
 ]
 
-assert len(CASES) == 281, len(CASES)
+assert len(CASES) == 292, len(CASES)
 
 
 def print_token_summary() -> None:

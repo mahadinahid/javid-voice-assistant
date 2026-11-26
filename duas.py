@@ -396,14 +396,16 @@ def group_items(group: str, prayer: str | None = None, s: dict | None = None) ->
 
 def card(prayer: str, s: dict | None = None) -> list[dict]:
     """A prayer's card: the after-salah adhkar and that prayer's own (each on that prayer's counter); after Fajr the
-    morning adhkar too, after Asr the evening's (on theirs). [{id, slot, target, group}]."""
+    morning adhkar too, after Asr the evening's (on theirs). A dua in both lists (Ayat al-Kursi) is on it once, where
+    it comes first. [{id, slot, target, group}]."""
     s = s or settings()
     common = group_items("after_salah", None, s)
     out = [{"item": i, "slot": prayer.lower(), "group": "after_salah" if i in common else AFTER[prayer]}
            for i in group_items("after_salah", prayer, s)]
     extra = {"Fajr": "morning", "Asr": "evening"}.get(prayer)
     if extra:
-        out += [{"item": i, "slot": extra, "group": extra} for i in group_items(extra, None, s)]
+        out += [{"item": i, "slot": extra, "group": extra} for i in group_items(extra, None, s)
+                if all(i is not e["item"] for e in out)]
     return [{"id": e["item"]["id"], "slot": e["slot"], "target": target(e["item"], e["slot"]), "group": e["group"]}
             for e in out]
 
@@ -662,24 +664,21 @@ def _count_text(item: dict, slot: str | None, lang: str) -> str:
 
 
 def telegram_card(extra: dict, lang: str) -> str:
-    """The card as Telegram shows it: the duas by name with their counts (their text comes with "Show the text")."""
+    """The card as Telegram shows it: which prayer's, how many duas, and the button that writes them out (no names
+    in transliteration: the Arabic and its meaning come with "Show the text")."""
     d = extra.get("dua") or {}
     name = d.get("name") or d.get("prayer") or ""
-    found = [(e, get(e["id"])) for e in d.get("entries") or []]
-    found = [(e, i) for e, i in found if i]
+    found = [e for e in d.get("entries") or [] if get(e["id"])]
+    done = _done(found)
     if lang == "bn":
-        lines = [f"{prayers.OF_BN.get(name, prayers.OF_BN.get(d.get('prayer'), ''))} পরের জিকির ({d.get('at_bn', '')})"]
+        head = f"{prayers.OF_BN.get(name, prayers.OF_BN.get(d.get('prayer'), ''))} পরের জিকির ({d.get('at_bn', '')})"
+        size = f"কার্ডে {_num(len(found), 'bn')}টি" + (f", {_num(done, 'bn')}টি হয়ে গেছে" if done else "") + "।"
+        tap = "আরবি আর অর্থ পড়তে “📖 Show the text” চাপো।"
     else:
-        lines = [f"After-{prayers._name(name, 'en')} adhkar ({prayers._name(name, 'en')} began {d.get('at', '')})"]
-    group = None
-    for n, (e, i) in enumerate(found, 1):
-        if e["group"] != group and e["group"] != "after_salah":
-            lines.append(f"— {group_name(e['group'], lang)} —")
-        group = e["group"]
-        times = _count_text(i, e["slot"], lang)
-        lines.append(f"{n}. {i['title']}" + (f" · {times}" if times else ""))
-    lines.append("লেখা দেখতে “লেখা দেখাও” চাপো।" if lang == "bn" else "Tap “Show the text” for the Arabic.")
-    return "\n".join(lines)
+        head = f"After-{prayers._name(name, 'en')} adhkar ({prayers._name(name, 'en')} began {d.get('at', '')})"
+        size = f"{len(found)} on the card" + (f", {done} already done" if done else "") + "."
+        tap = "Tap “📖 Show the text” to read them in Arabic with the meaning."
+    return "\n".join((head, size, tap))
 
 
 def text_lines(item: dict, slot: str | None, lang: str) -> list[str]:
@@ -702,15 +701,81 @@ def text_lines(item: dict, slot: str | None, lang: str) -> list[str]:
     return out
 
 
+def _tg_count(item: dict, slot: str | None, lang: str) -> str:
+    """A count for the written-out card, in numbers only ("33 + 33 + 33 + 1", "3 times"): no transliterated words."""
+    if item["phases"]:
+        return " + ".join(_num(p["count"], lang) for p in item["phases"])
+    return _count_text(item, slot, lang)
+
+
+def _meaning(item: dict, lang: str) -> str:
+    """The meaning his list gives, in the reply language (else the other); for a Quranic dua it lacks, Tanzil's
+    translation of its whole ayahs on this Mac (Saheeh International / Muhiuddin Khan), named."""
+    m = item["meaning"]
+    if m.get(lang) or m.get("bn" if lang == "en" else "en"):
+        return m.get(lang) or m.get("bn" if lang == "en" else "en")
+    q = item["quran"]
+    if not q or q["words"]:
+        return ""
+    quran_text.ensure(fetch=False)          # what's saved on this Mac, never a download from here
+    for tl in (lang, "bn" if lang == "en" else "en"):
+        if quran_text.ready(tl):
+            got = [quran_text._text[tl].get(tuple(map(int, k.split(":")))) for k in q["ayahs"]]
+            if all(got):
+                name = quran_text.SOURCES[tl]["name_bn" if lang == "bn" else "name"]
+                return " ".join(f"{t} ({k.split(':')[1]})" for t, k in zip(got, q["ayahs"])) + f" — {name}, Tanzil"
+    return ""
+
+
+def _ayahs_short(keys: list[str]) -> str:
+    """"112, 113, 114" for whole surahs, "2:255", "2:285-286" otherwise."""
+    by: dict[int, list[int]] = {}
+    for k in keys:
+        su, a = map(int, k.split(":"))
+        by.setdefault(su, []).append(a)
+    out = []
+    for su, ayahs in by.items():
+        whole = sorted(ayahs) == list(range(1, quran.SURAHS[su - 1]["ayahs"] + 1))
+        out.append(str(su) if whole and len(ayahs) > 1 else
+                   f"{su}:{min(ayahs)}" + (f"-{max(ayahs)}" if len(ayahs) > 1 else ""))
+    return ", ".join(out)
+
+
+def telegram_block(item: dict, slot: str | None, lang: str) -> list[str]:
+    """One dua for "Show the text": its Arabic (the source's, or Quran.com's / Tanzil's for an ayah), its
+    meaning and its reference. No transliterated title. Never spoken."""
+    out = []
+    if item["quran"]:
+        segs = quran_segments(item)
+        out.append(" ".join(s["text"] + ("" if not s["whole"] else f" ({s['a']})") for s in segs) if segs
+                   else item["quran"]["link"])
+    elif item["arabic"]:
+        out.append(item["arabic"])
+    meaning = _meaning(item, lang)
+    if meaning:
+        out.append(meaning)
+    if item["quran"]:
+        segs = quran_segments(item)
+        out.append(f"Quran {_ayahs_short(item['quran']['ayahs'])}" + (" · Quran.com" if segs and all(
+            s["source"] == "Quran.com" for s in segs) else " · Tanzil" if segs else ""))
+    elif item["reference"]:
+        out.append(" · ".join(item["reference"][:2]))
+    return out
+
+
 def telegram_texts(extra: dict, lang: str, limit: int = 3800) -> list[str]:
-    """The card's duas written out, as few Telegram messages as fit."""
+    """The card's duas written out (Arabic and meaning), as few Telegram messages as fit."""
     d = extra.get("dua") or {}
-    parts, chunk = [], ""
+    parts, chunk, group = [], "", None
     for n, e in enumerate(d.get("entries") or [], 1):
         item = get(e["id"])
         if not item:
             continue
-        block = f"{n}. " + "\n".join(text_lines(item, e["slot"], lang)) + "\n\n"
+        head = f"— {group_name(e['group'], lang)} —\n" if e["group"] != group and e["group"] != "after_salah" else ""
+        group = e["group"]
+        times = _tg_count(item, e["slot"], lang)
+        first = f"{_num(n, lang)}." + (f" {times}" if times else "")
+        block = head + "\n".join([first, *telegram_block(item, e["slot"], lang)]) + "\n\n"
         if len(chunk) + len(block) > limit and chunk:
             parts.append(chunk.strip())
             chunk = ""

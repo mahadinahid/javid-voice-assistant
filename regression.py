@@ -5309,9 +5309,11 @@ def dua_reminders():
 
 
 def dua_telegram():
-    """On Telegram the card names its duas with their counts (no Arabic in it) and has two buttons: "Show the text"
-    sends each dua's Arabic, the source's, in as few messages as fit; "All done" ticks the card's counters, once. A
-    stranger's press does nothing. Telegram off in the settings: nothing sent; the page off: not listed there."""
+    """On Telegram the card says whose adhkar and how many, with no dua named in transliteration and no Arabic, and
+    has two buttons: "Show the text" sends each dua's Arabic (the source's) with its count and meaning, in as few
+    messages as fit; "All done" ticks the card's counters, once. A dua in the after-salah list and the morning's is on
+    the card once. A stranger's press does nothing. Telegram off in the settings: nothing sent; the page off: not
+    listed there."""
     from fastapi.testclient import TestClient
     import server
     problems, client = [], TestClient(server.app)
@@ -5328,13 +5330,11 @@ def dua_telegram():
         else:
             mid, p = cards[0]
             text = p["text"]
-            for part in ("🤲 After-Fajr adhkar (Fajr began 4:58 AM)", "1. First after salah · 3 times",
-                         "2. The counted one · One 33 + Two 33 + Three 33 + Last 1", "— After Fajr only —",
-                         "— Morning —", "Tap “Show the text” for the Arabic."):
-                if part not in text:
-                    problems.append(f"the card lacks {part!r}: {text!r}")
-            if not _no_arabic(text):
-                problems.append("Arabic in the card itself")
+            if text != ("🤲 After-Fajr adhkar (Fajr began 4:58 AM)\n7 on the card.\n"
+                        "Tap “📖 Show the text” to read them in Arabic with the meaning."):
+                problems.append(f"the card: {text!r}")
+            if not _no_arabic(text) or any(i["title"] in text for i in DUA_ITEMS):
+                problems.append("Arabic or a dua's name in the card itself")
             data = [b["callback_data"] for b in p["reply_markup"]["inline_keyboard"][0]]
             if data != [f"du:t:{raised[0]['id']}", f"du:d:{raised[0]['id']}"]:
                 problems.append(f"the buttons: {data}")
@@ -5343,6 +5343,13 @@ def dua_telegram():
             shown = "\n".join(fake.texts(OWNER)[before:])
             if fake_dua(1) not in shown or fake_dua(4) not in shown or " ".join(fake_words(112, 1)) not in shown:
                 problems.append(f"the text: {shown[:300]!r}")
+            for part in (f"1. 3 times\n{fake_dua(1)}\nThe first, made up.\nHisnul Muslim #1",
+                         f"2. 33 + 33 + 33 + 1\n{fake_dua(2)}", "— After Fajr only —", "— Morning —",
+                         "Quran 112:1-2"):
+                if part not in shown:
+                    problems.append(f"the text lacks {part!r}: {shown[:400]!r}")
+            if any(i["title"] in shown for i in DUA_ITEMS) or "One 33" in shown:
+                problems.append("a transliterated name in the text")
             telegram_bot.handle_update(tg_press(STRANGER, data[1], mid))
             if duas.counts():
                 problems.append("a stranger's press counted")
@@ -5352,6 +5359,13 @@ def dua_telegram():
             telegram_bot.handle_update(tg_press(OWNER, data[1], mid))
             if not fake.answers()[-1].endswith("They were already done."):
                 problems.append(f"pressed twice: {fake.answers()[-1:]}")
+    dua_fresh()
+    write_dua_list([{**i, "when": ["after_salah", "morning", "evening"]} if i["id"] == "salah-a" else i
+                    for i in DUA_ITEMS])
+    for p in ("Fajr", "Asr"):
+        ids = [e["id"] for e in duas.card(p)]
+        if ids.count("salah-a") != 1 or duas.card(p)[ids.index("salah-a")]["group"] != "after_salah":
+            problems.append(f"a dua in two lists, after {p}: {ids}")
     dua_fresh(telegram=False)
     os.remove(timers.TIMERS_FILE)
     with telegram_world() as fake, prayer_clock(_dhaka(2026, 11, 22, 5, 9)):
